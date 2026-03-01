@@ -8,7 +8,7 @@
 
 LemurCam is a macOS app that turns any IP camera into a virtual webcam. Use your RTSP or ONVIF cameras directly in Zoom, Teams, OBS, and any other app that supports camera input.
 
-**Website:** [lemur.cam](https://lemur.cam)
+**Website:** [lemur.cam](https://lemur.cam) · **[Download Latest Release](https://github.com/steelbrain/LemurCam/releases/latest)**
 
 ## Features
 
