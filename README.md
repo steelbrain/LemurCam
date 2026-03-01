@@ -19,6 +19,11 @@ LemurCam is a macOS app that turns any IP camera into a virtual webcam. Use your
 - Menu bar app with quick-access popover
 - Siri Shortcuts integration
 
+## Getting Started
+
+1. **Move LemurCam to `/Applications`** before opening it — macOS does not allow system extensions to load when the app is outside of this folder.
+2. **Allow Local Network access** when prompted — LemurCam needs this to discover and connect to cameras on your Wi-Fi network.
+
 ## Compatible Cameras
 
 LemurCam works with any IP camera that supports RTSP or ONVIF. Some popular options:
