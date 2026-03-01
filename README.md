@@ -42,6 +42,14 @@ If your camera has an RTSP URL or supports ONVIF discovery, it will work with Le
 
 This repository serves as the public issue tracker for LemurCam. If you've found a bug or have a feature request, please [open an issue](https://github.com/AneesIqbal/LemurCam/issues/new).
 
+## Technologies Used
+
+LemurCam builds on several open-source projects, all licensed under the MIT License:
+
+- **[XMLKit](https://github.com/steelbrain/XMLKit)** — XML parsing and composition, a Swift port of [xmltree-rs](https://github.com/eminence/xmltree-rs)
+- **[IPCamKit](https://github.com/steelbrain/IPCamKit)** — RTSP packet depacketization, a Swift port of [Retina](https://github.com/scottlamb/retina)
+- LemurCam itself has roots in **[UniCamEx](https://github.com/creativeIKEP/UniCamEx)**, an Unreal Engine streaming to Virtual Camera demo
+
 ## Author
 
 [Anees Iqbal](https://aneesiqbal.ai) ([@steelbrain](https://github.com/steelbrain))
