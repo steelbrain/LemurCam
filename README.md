@@ -40,7 +40,7 @@ If your camera has an RTSP URL or supports ONVIF discovery, it will work with Le
 
 ## Issue Tracker
 
-This repository serves as the public issue tracker for LemurCam. If you've found a bug or have a feature request, please [open an issue](https://github.com/AneesIqbal/LemurCam/issues/new).
+This repository serves as the public issue tracker for LemurCam. If you've found a bug or have a feature request, please [open an issue](https://github.com/steelbrain/LemurCam/issues/new).
 
 ## Technologies Used
 
