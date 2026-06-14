@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- LaunchDaemon definition for the SMAppService-managed privileged helper.
+	     Lives at Contents/Library/LaunchDaemons/cam.lemur.app.helper.plist inside
+	     the app bundle; registered with SMAppService.daemon(plistName:). launchd
+	     starts it on demand when the app connects to the Mach service. -->
+	<key>Label</key>
+	<string>cam.lemur.app.helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/cam.lemur.app.helper</string>
+	<key>MachServices</key>
+	<dict>
+		<key>cam.lemur.app.helper</key>
+		<true/>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>cam.lemur.app</string>
+	</array>
+</dict>
+</plist>

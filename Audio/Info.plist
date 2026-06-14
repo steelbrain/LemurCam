@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>LemurCam Microphone</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- CFPlugIn wiring: map our factory UUID to the factory C function, and
+	     declare that the factory implements the AudioServerPlugIn type
+	     (kAudioServerPlugInTypeUUID = 443ABAB8-E7B3-491A-B985-BEB9187030DB). -->
+	<key>CFPlugInFactories</key>
+	<dict>
+		<key>82134B15-2E09-4E00-9E20-6FCB6509C987</key>
+		<string>LemurCamAudioDriverFactory</string>
+	</dict>
+	<key>CFPlugInTypes</key>
+	<dict>
+		<key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+		<array>
+			<string>82134B15-2E09-4E00-9E20-6FCB6509C987</string>
+		</array>
+	</dict>
+</dict>
+</plist>

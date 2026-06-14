@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: SwiftLint
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        run: brew install swiftlint
+
+      - name: Lint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  xcode-build:
+    name: Xcode Build
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      # Use the macos-26 image's default Xcode (26.x), matching the dev toolchain.
+      # Pinning an older Xcode pulled in an SDK that lacked Sendable annotations on
+      # Dispatch/CoreImage types, which broke the Swift 6 build.
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build & Test LemurCam
+        # CI runners have no signing certificates or provisioning profiles. The app's
+        # entitlements (system extension, app group) otherwise demand a profile, so
+        # disable code signing — the linker still ad-hoc signs the binaries on arm64,
+        # which is enough to launch the test host and run the unit tests.
+        run: >-
+          xcodebuild test -scheme LemurCam -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO

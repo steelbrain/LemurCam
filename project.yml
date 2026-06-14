@@ -1,0 +1,178 @@
+name: LemurCam
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+
+packages:
+  IPCamKit:
+    url: https://github.com/steelbrain/IPCamKit.git
+    from: "0.3.0"
+  XMLKit:
+    url: https://github.com/steelbrain/XMLKit.git
+    from: "0.1.0"
+
+settings:
+  base:
+    MARKETING_VERSION: "1.3"
+    CURRENT_PROJECT_VERSION: 3
+    DEAD_CODE_STRIPPING: YES
+    DEVELOPMENT_TEAM: 2KG9772KH6
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+    SWIFT_VERSION: 6.0
+    GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  LemurCam:
+    build:
+      targets:
+        LemurCam: all
+        Extension: all
+        Audio: all
+        Helper: all
+        LemurCamTests: [test]
+    run:
+      config: Debug
+      executable: LemurCam
+    test:
+      targets:
+        - LemurCamTests
+
+targets:
+  LemurCam:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Shared
+      # Embed the helper's LaunchDaemon plist where SMAppService expects it.
+      - path: Helper/cam.lemur.app.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: App/LemurCam.entitlements
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "LemurCam needs camera access to preview your virtual camera feed."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "LemurCam connects to IP cameras on your local network to stream their video and audio."
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Anees Iqbal"
+        PRODUCT_BUNDLE_IDENTIFIER: cam.lemur.app
+        REGISTER_APP_GROUPS: YES
+        SWIFT_OBJC_BRIDGING_HEADER: App/LemurCam-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/Shared"
+    dependencies:
+      - sdk: AppIntents.framework
+      - sdk: ServiceManagement.framework
+      - package: IPCamKit
+      - package: XMLKit
+      - target: Extension
+        embed: true
+        codeSign: false
+        removeHeaders: true
+      # Helper executable → Contents/MacOS (matches the plist BundleProgram path).
+      # codeSign: false preserves the target's own signature; re-signing on copy
+      # would re-derive the dotted executable name and mangle the identifier.
+      - target: Helper
+        codeSign: false
+        copy:
+          destination: executables
+      # Audio driver bundle → Contents/Library (inert until the helper installs
+      # it into /Library/Audio/Plug-Ins/HAL; matches bundledDriverPath).
+      - target: Audio
+        codeSign: false
+        copy:
+          destination: wrapper
+          subpath: Contents/Library
+
+  Extension:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: Extension
+      - path: Shared
+        excludes:
+          # App/helper-only XPC contract; not used by the camera extension.
+          - LemurAudioHelper.swift
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Extension/Extension.entitlements
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Extension/Info.plist
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+          - "@executable_path/../../../../Frameworks"
+        PRODUCT_BUNDLE_IDENTIFIER: cam.lemur.app.extension
+        PRODUCT_NAME: cam.lemur.app.extension
+        REGISTER_APP_GROUPS: YES
+        SKIP_INSTALL: YES
+
+  LemurCamTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: LemurCam
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cam.lemur.app.tests
+
+  # Core Audio AudioServerPlugIn (.driver CFPlugIn bundle, written in C). Exposes
+  # the "LemurCam Microphone" virtual input device. Embedded inert in the app and
+  # installed into /Library/Audio/Plug-Ins/HAL by the Helper at runtime.
+  Audio:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: Audio
+    settings:
+      base:
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Audio/Info.plist
+        MACH_O_TYPE: mh_bundle
+        WRAPPER_EXTENSION: driver
+        PRODUCT_BUNDLE_IDENTIFIER: cam.lemur.app.audio
+        PRODUCT_NAME: LemurCamAudio
+        SKIP_INSTALL: YES
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/Shared"
+    dependencies:
+      - sdk: CoreAudio.framework
+      - sdk: CoreFoundation.framework
+
+  # Privileged SMAppService daemon that installs the audio driver into the
+  # root-owned HAL directory and restarts coreaudiod. Executable name matches the
+  # LaunchDaemon BundleProgram (Contents/MacOS/cam.lemur.app.helper).
+  Helper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Helper
+        excludes:
+          - cam.lemur.app.helper.plist
+      - path: Shared/LemurAudioHelper.swift
+    settings:
+      base:
+        ENABLE_HARDENED_RUNTIME: YES
+        PRODUCT_BUNDLE_IDENTIFIER: cam.lemur.app.helper
+        PRODUCT_NAME: cam.lemur.app.helper
+        SKIP_INSTALL: YES
+        # The executable name contains dots, so codesign would otherwise treat
+        # ".helper" as an extension and sign it as "cam.lemur.app". Force the
+        # signing identifier so it matches helperRequirement.
+        OTHER_CODE_SIGN_FLAGS: "$(inherited) -i cam.lemur.app.helper"
+    dependencies:
+      - sdk: Security.framework

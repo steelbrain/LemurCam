@@ -1,0 +1,287 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------------------------------
+   Design tokens
+---------------------------------------------------------------------------- */
+:root {
+  --background: #fbfbfe;
+  --foreground: #15131f;
+  --muted: #6b6880;
+  --card: #ffffff;
+  --border: rgba(20, 16, 40, 0.08);
+
+  /* Brand gradient stops — pulled from the app icon (violet → blue → pink) */
+  --violet: #8b5cf6;
+  --indigo: #6366f1;
+  --blue: #3b82f6;
+  --sky: #38bdf8;
+  --pink: #ec4899;
+
+  --brand-gradient: linear-gradient(
+    115deg,
+    var(--violet) 0%,
+    var(--indigo) 28%,
+    var(--blue) 55%,
+    var(--sky) 75%,
+    var(--pink) 100%
+  );
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-violet: var(--violet);
+  --color-blue: var(--blue);
+  --color-pink: var(--pink);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --animate-marquee: marquee 32s linear infinite;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  scroll-behavior: smooth;
+  /* Solid canvas color: this is what the rubber-band / overscroll area paints
+     (a gradient background-image does NOT extend past the page, a solid color
+     does). The body gradient below blends the hero top and footer into it so
+     the overscroll never flashes white. */
+  background-color: #ece6fb;
+}
+
+body {
+  /* Lavender at the very top and very bottom (matching the html canvas) so
+     overscroll is seamless on both ends; near-white through the middle. */
+  background: linear-gradient(
+    180deg,
+    #ece6fb 0,
+    var(--background) 600px,
+    var(--background) calc(100% - 340px),
+    #ece6fb 100%
+  );
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--violet) 28%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   Utilities
+---------------------------------------------------------------------------- */
+.brand-gradient {
+  background-image: var(--brand-gradient);
+}
+
+.text-gradient {
+  background-image: var(--brand-gradient);
+  background-size: 180% 180%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradient-pan 8s ease infinite;
+}
+
+/* Soft glassy surface for the nav */
+.glass {
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+}
+
+/* Gradient ring/border on cards via mask trick */
+.ring-gradient {
+  position: relative;
+}
+.ring-gradient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--brand-gradient);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.ring-gradient:hover::before {
+  opacity: 1;
+}
+
+/* Primary button shine */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.45),
+    transparent
+  );
+  transform: skewX(-18deg);
+}
+.btn-shine:hover::after {
+  animation: shine 0.9s ease;
+}
+
+/* ----------------------------------------------------------------------------
+   Scroll reveal
+---------------------------------------------------------------------------- */
+.reveal {
+  opacity: 0;
+  transform: translateY(26px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ----------------------------------------------------------------------------
+   Keyframes
+---------------------------------------------------------------------------- */
+@keyframes gradient-pan {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(6%, -8%) scale(1.12);
+  }
+}
+
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-8%, 6%) scale(1.08);
+  }
+}
+
+@keyframes drift-c {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(5%, 7%) scale(1.15);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes shine {
+  to {
+    left: 140%;
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq 1.1s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float-soft 6s ease-in-out infinite;
+}
+.animate-drift-a {
+  animation: drift-a 20s ease-in-out infinite;
+}
+.animate-drift-b {
+  animation: drift-b 24s ease-in-out infinite;
+}
+.animate-drift-c {
+  animation: drift-c 28s ease-in-out infinite;
+}
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
