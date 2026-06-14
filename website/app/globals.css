@@ -158,14 +158,16 @@ body {
   transform: translateY(0);
 }
 
-/* Mobile: phones run these as a single tall column, so per-element stagger
-   delays stack up and the section feels sluggish to settle. Drop the delays,
-   shorten the travel/duration, and kill the GPU-expensive blurred-blob drift
-   so the reveal transitions are not starved by the compositor. */
+/* Mobile: the hero is wrapped in <Reveal>, so above-the-fold content sits at
+   opacity:0 until JS hydrates and the IntersectionObserver fires — on a slow
+   phone that reads as a multi-second white screen. Drop the reveal effect
+   entirely so content paints immediately on first frame (no JS dependency),
+   and kill the GPU-expensive blurred-blob drift. */
 @media (max-width: 640px) {
   .reveal {
-    transform: translateY(16px);
-    transition-duration: 0.45s;
+    opacity: 1;
+    transform: none;
+    transition: none;
     transition-delay: 0ms !important;
   }
   .animate-drift-a,
