@@ -150,13 +150,29 @@ body {
 .reveal {
   opacity: 0;
   transform: translateY(26px);
-  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .reveal.is-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Mobile: phones run these as a single tall column, so per-element stagger
+   delays stack up and the section feels sluggish to settle. Drop the delays,
+   shorten the travel/duration, and kill the GPU-expensive blurred-blob drift
+   so the reveal transitions are not starved by the compositor. */
+@media (max-width: 640px) {
+  .reveal {
+    transform: translateY(16px);
+    transition-duration: 0.45s;
+    transition-delay: 0ms !important;
+  }
+  .animate-drift-a,
+  .animate-drift-b,
+  .animate-drift-c {
+    animation: none;
+  }
 }
 
 /* ----------------------------------------------------------------------------
