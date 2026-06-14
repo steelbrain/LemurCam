@@ -161,8 +161,7 @@ body {
 /* Mobile: the hero is wrapped in <Reveal>, so above-the-fold content sits at
    opacity:0 until JS hydrates and the IntersectionObserver fires — on a slow
    phone that reads as a multi-second white screen. Drop the reveal effect
-   entirely so content paints immediately on first frame (no JS dependency),
-   and kill the GPU-expensive blurred-blob drift. */
+   entirely so content paints immediately on first frame (no JS dependency). */
 @media (max-width: 640px) {
   .reveal {
     opacity: 1;
@@ -170,10 +169,14 @@ body {
     transition: none;
     transition-delay: 0ms !important;
   }
-  .animate-drift-a,
-  .animate-drift-b,
-  .animate-drift-c {
-    animation: none;
+
+  /* The giant decorative circles use a huge blur() radius (110-120px) on
+     30-34rem elements that overlap in the hero. iOS Safari rasterizes those
+     into large offscreen layers and recomposites them every paint, stalling
+     first paint for seconds on iPhone. Drop only those (the blur-[Npx] ones);
+     keep the smaller image halos (blur-2xl/3xl) which are cheap enough. */
+  [class*="blur-["] {
+    display: none;
   }
 }
 
@@ -187,36 +190,6 @@ body {
   }
   50% {
     background-position: 100% 50%;
-  }
-}
-
-@keyframes drift-a {
-  0%,
-  100% {
-    transform: translate(0, 0) scale(1);
-  }
-  50% {
-    transform: translate(6%, -8%) scale(1.12);
-  }
-}
-
-@keyframes drift-b {
-  0%,
-  100% {
-    transform: translate(0, 0) scale(1);
-  }
-  50% {
-    transform: translate(-8%, 6%) scale(1.08);
-  }
-}
-
-@keyframes drift-c {
-  0%,
-  100% {
-    transform: translate(0, 0) scale(1);
-  }
-  50% {
-    transform: translate(5%, 7%) scale(1.15);
   }
 }
 
@@ -274,15 +247,6 @@ body {
 
 .animate-float {
   animation: float-soft 6s ease-in-out infinite;
-}
-.animate-drift-a {
-  animation: drift-a 20s ease-in-out infinite;
-}
-.animate-drift-b {
-  animation: drift-b 24s ease-in-out infinite;
-}
-.animate-drift-c {
-  animation: drift-c 28s ease-in-out infinite;
 }
 .pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;

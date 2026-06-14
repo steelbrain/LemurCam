@@ -134,9 +134,9 @@ export default function Home() {
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
         >
-          <div className="animate-drift-a absolute -top-24 left-[8%] h-[34rem] w-[34rem] rounded-full bg-violet/30 blur-[110px]" />
-          <div className="animate-drift-b absolute top-10 right-[2%] h-[30rem] w-[30rem] rounded-full bg-pink/25 blur-[120px]" />
-          <div className="animate-drift-c absolute -bottom-32 left-[30%] h-[32rem] w-[32rem] rounded-full bg-blue/25 blur-[120px]" />
+          <div className="absolute -top-24 left-[8%] h-[34rem] w-[34rem] rounded-full bg-violet/30 blur-[110px]" />
+          <div className="absolute top-10 right-[2%] h-[30rem] w-[30rem] rounded-full bg-pink/25 blur-[120px]" />
+          <div className="absolute -bottom-32 left-[30%] h-[32rem] w-[32rem] rounded-full bg-blue/25 blur-[120px]" />
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,transparent_40%,var(--background)_92%)]" />
         </div>
 
@@ -212,6 +212,7 @@ export default function Home() {
                 width={1664}
                 height={1352}
                 priority
+                sizes="(max-width: 768px) 100vw, 896px"
                 className="h-auto w-full drop-shadow-2xl"
               />
             </div>
@@ -306,7 +307,7 @@ export default function Home() {
       >
         <div
           aria-hidden
-          className="animate-drift-b pointer-events-none absolute right-[-10%] top-1/4 -z-10 h-[28rem] w-[28rem] rounded-full bg-blue/15 blur-[120px]"
+          className="pointer-events-none absolute right-[-10%] top-1/4 -z-10 h-[28rem] w-[28rem] rounded-full bg-blue/15 blur-[120px]"
         />
         <Reveal className="mx-auto max-w-2xl text-center">
           <p className="text-sm font-semibold text-violet">Up in three steps</p>
@@ -344,6 +345,7 @@ export default function Home() {
                     alt={step.alt}
                     width={step.w}
                     height={step.h}
+                    sizes="(max-width: 768px) 100vw, 448px"
                     className="mx-auto h-auto w-full max-w-md drop-shadow-2xl"
                   />
                 </div>
