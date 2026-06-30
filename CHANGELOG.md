@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.4
+
+- Updated IPCamKit to pull in fixes for TP-Link Tapo cameras
+
 ## v1.3
 
 - Refreshed the Setup & Status screen with at-a-glance device cards that match the guided-setup look, each showing its status and next action in one place
