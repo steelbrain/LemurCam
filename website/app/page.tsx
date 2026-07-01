@@ -5,7 +5,6 @@ import Nav from "./components/Nav";
 import Reveal from "./components/Reveal";
 import Tilt from "./components/Tilt";
 import {
-  ArrowIcon,
   BroadcastIcon,
   CameraIcon,
   CheckIcon,
@@ -99,14 +98,6 @@ const CAMERAS = [
   "Annke",
 ];
 
-function LiveDot({ className = "" }: { className?: string }) {
-  return (
-    <span className={`relative inline-flex h-2 w-2 ${className}`}>
-      <span className="pulse-dot absolute inline-flex h-full w-full rounded-full bg-emerald-500" />
-    </span>
-  );
-}
-
 export default function Home() {
   return (
     <div id="top" className="font-[family-name:var(--font-geist-sans)]">
@@ -125,21 +116,8 @@ export default function Home() {
         />
 
         <div className="mx-auto max-w-3xl text-center">
-          <Reveal>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="group inline-flex items-center gap-2.5 rounded-full border border-border bg-card px-4 py-1.5 font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-muted transition-colors hover:border-border-strong hover:text-foreground"
-            >
-              <LiveDot />
-              Free &amp; open source · macOS 14+
-              <ArrowIcon className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-0.5" />
-            </a>
-          </Reveal>
-
           <Reveal delay={70}>
-            <h1 className="mt-8 text-[2.7rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[4.25rem]">
+            <h1 className="text-[2.7rem] font-semibold leading-[1.05] tracking-[-0.03em] sm:text-[4.25rem]">
               Ditch the cable.
               <br />
               <span className="text-gradient">Keep the camera.</span>
