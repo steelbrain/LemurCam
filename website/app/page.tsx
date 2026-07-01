@@ -187,7 +187,7 @@ export default function Home() {
           <Tilt max={3} className="relative">
             <div
               aria-hidden
-              className="absolute -inset-x-16 -top-12 -bottom-20 -z-10"
+              className="absolute -inset-x-4 -top-12 -bottom-20 -z-10 sm:-inset-x-16"
               style={{
                 background:
                   "radial-gradient(50% 55% at 50% 45%, rgba(139, 107, 255, 0.22), transparent 70%)",

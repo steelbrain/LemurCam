@@ -54,6 +54,11 @@ html {
      ambient layers can sit between the canvas and the content, and so
      rubber-band overscroll matches the page. */
   background-color: var(--background);
+  /* clip (not hidden) keeps decorative bleed from expanding the mobile
+     layout viewport — iOS otherwise widens the page and shifts content
+     off-center. hidden stays as the fallback for old browsers. */
+  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -62,6 +67,7 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  overflow-x: clip;
 }
 
 ::selection {
