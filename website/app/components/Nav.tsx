@@ -28,7 +28,7 @@ export default function Nav() {
     <header
       className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${
         scrolled
-          ? "glass border-b border-border/70 py-2.5"
+          ? "glass border-b border-border py-2.5"
           : "border-b border-transparent py-4"
       }`}
     >
@@ -37,12 +37,12 @@ export default function Nav() {
           <Image
             src="/icon.png"
             alt="LemurCam"
-            width={34}
-            height={34}
-            className="rounded-[9px] shadow-sm transition-transform duration-300 group-hover:-rotate-6"
+            width={30}
+            height={30}
+            className="rounded-lg transition-transform duration-300 group-hover:-rotate-6"
             priority
           />
-          <span className="text-[17px] font-semibold tracking-tight">
+          <span className="text-[16px] font-semibold tracking-tight">
             LemurCam
           </span>
         </a>
@@ -71,7 +71,7 @@ export default function Nav() {
           </a>
           <a
             href={DOWNLOAD_URL}
-            className="btn-shine inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-semibold text-background transition-transform duration-200 hover:scale-[1.03] active:scale-95"
+            className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-[transform,box-shadow] duration-200 hover:shadow-[0_6px_20px_-6px_rgba(110,86,207,0.5)] active:scale-[0.98]"
           >
             <DownloadIcon className="h-4 w-4" />
             Download

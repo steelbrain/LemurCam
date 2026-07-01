@@ -1,29 +1,30 @@
 @import "tailwindcss";
 
 /* ----------------------------------------------------------------------------
-   Design tokens
+   Design tokens — deep ink-violet night, living ambient color, one gradient.
+   The brand gradient (violet → magenta → amber, pulled from the app icon's
+   rim and the lemur's eyes) is reserved for the hero keyword and hairline
+   details. The background itself is alive: two nebula layers drift slowly
+   behind everything, plus film grain. Both are pure gradients animated with
+   transforms — no blur() filters, which stall first paint on iOS.
 ---------------------------------------------------------------------------- */
 :root {
-  --background: #fbfbfe;
-  --foreground: #15131f;
-  --muted: #6b6880;
-  --card: #ffffff;
-  --border: rgba(20, 16, 40, 0.08);
+  --background: #0e0c16;
+  --foreground: #f3f1f8;
+  --muted: #a19bb2;
+  --card: #161222;
+  --border: rgba(243, 241, 248, 0.09);
+  --border-strong: rgba(243, 241, 248, 0.18);
 
-  /* Brand gradient stops — pulled from the app icon (violet → blue → pink) */
-  --violet: #8b5cf6;
-  --indigo: #6366f1;
-  --blue: #3b82f6;
-  --sky: #38bdf8;
-  --pink: #ec4899;
+  --accent: #a78bfa;
+  --accent-ink: #baa7ff;
+  --accent-soft: rgba(167, 139, 250, 0.12);
 
-  --brand-gradient: linear-gradient(
-    115deg,
-    var(--violet) 0%,
-    var(--indigo) 28%,
-    var(--blue) 55%,
-    var(--sky) 75%,
-    var(--pink) 100%
+  --hero-gradient: linear-gradient(
+    100deg,
+    #8f7bff 0%,
+    #d565c8 55%,
+    #ff9e64 100%
   );
 }
 
@@ -33,13 +34,14 @@
   --color-muted: var(--muted);
   --color-card: var(--card);
   --color-border: var(--border);
-  --color-violet: var(--violet);
-  --color-blue: var(--blue);
-  --color-pink: var(--pink);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
-  --animate-marquee: marquee 32s linear infinite;
+  --animate-marquee: marquee 48s linear infinite;
 }
 
 * {
@@ -48,23 +50,14 @@
 
 html {
   scroll-behavior: smooth;
-  /* Solid canvas color: this is what the rubber-band / overscroll area paints
-     (a gradient background-image does NOT extend past the page, a solid color
-     does). The body gradient below blends the hero top and footer into it so
-     the overscroll never flashes white. */
-  background-color: #ece6fb;
+  /* The canvas color lives on <html> (body stays transparent) so the fixed
+     ambient layers can sit between the canvas and the content, and so
+     rubber-band overscroll matches the page. */
+  background-color: var(--background);
 }
 
 body {
-  /* Lavender at the very top and very bottom (matching the html canvas) so
-     overscroll is seamless on both ends; near-white through the middle. */
-  background: linear-gradient(
-    180deg,
-    #ece6fb 0,
-    var(--background) 600px,
-    var(--background) calc(100% - 340px),
-    #ece6fb 100%
-  );
+  background: transparent;
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -72,96 +65,106 @@ body {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--violet) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+/* ----------------------------------------------------------------------------
+   Living background — two drifting nebula layers + film grain
+---------------------------------------------------------------------------- */
+.ambient-a,
+.ambient-b {
+  position: fixed;
+  inset: -25%;
+  z-index: -10;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.ambient-a {
+  background:
+    radial-gradient(38% 32% at 22% 16%, rgba(124, 92, 246, 0.2), transparent 70%),
+    radial-gradient(32% 28% at 84% 22%, rgba(213, 101, 200, 0.11), transparent 70%);
+  animation: drift-a 70s ease-in-out infinite alternate;
+}
+
+.ambient-b {
+  background:
+    radial-gradient(44% 38% at 72% 82%, rgba(80, 96, 220, 0.13), transparent 70%),
+    radial-gradient(24% 20% at 32% 62%, rgba(255, 158, 100, 0.05), transparent 70%);
+  animation: drift-b 90s ease-in-out infinite alternate;
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: -9;
+  pointer-events: none;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes drift-a {
+  from {
+    transform: translate3d(-3%, -2%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(3%, 3%, 0) scale(1.1);
+  }
+}
+
+@keyframes drift-b {
+  from {
+    transform: translate3d(2%, 3%, 0) scale(1.06);
+  }
+  to {
+    transform: translate3d(-3%, -2%, 0) scale(1);
+  }
 }
 
 /* ----------------------------------------------------------------------------
    Utilities
 ---------------------------------------------------------------------------- */
-.brand-gradient {
-  background-image: var(--brand-gradient);
-}
-
 .text-gradient {
-  background-image: var(--brand-gradient);
-  background-size: 180% 180%;
+  background-image: var(--hero-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: gradient-pan 8s ease infinite;
 }
 
-/* Soft glassy surface for the nav */
+/* Thin bar surface for the nav */
 .glass {
-  background: color-mix(in srgb, var(--background) 72%, transparent);
-  backdrop-filter: saturate(180%) blur(14px);
-  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  background: color-mix(in srgb, var(--background) 78%, transparent);
+  backdrop-filter: saturate(140%) blur(12px);
+  -webkit-backdrop-filter: saturate(140%) blur(12px);
 }
 
-/* Gradient ring/border on cards via mask trick */
-.ring-gradient {
-  position: relative;
-}
-.ring-gradient::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: var(--brand-gradient);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-  pointer-events: none;
-}
-.ring-gradient:hover::before {
-  opacity: 1;
-}
-
-/* Primary button shine */
-.btn-shine {
-  position: relative;
-  overflow: hidden;
-}
-.btn-shine::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -120%;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(
-    100deg,
-    transparent,
-    rgba(255, 255, 255, 0.45),
-    transparent
+/* Fading dot grid behind the hero */
+.dot-grid {
+  background-image: radial-gradient(
+    rgba(243, 241, 248, 0.14) 1px,
+    transparent 1px
   );
-  transform: skewX(-18deg);
-}
-.btn-shine:hover::after {
-  animation: shine 0.9s ease;
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse 70% 65% at 50% 0%, #000 30%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 0%, #000 30%, transparent 78%);
 }
 
 /* ----------------------------------------------------------------------------
-   Scroll reveal
+   Scroll reveal — small rise, soft ease, once
 ---------------------------------------------------------------------------- */
 .reveal {
   opacity: 0;
-  transform: translateY(26px);
-  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateY(14px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .reveal.is-visible {
   opacity: 1;
   transform: translateY(0);
 }
 
-/* Mobile: the hero is wrapped in <Reveal>, so above-the-fold content sits at
-   opacity:0 until JS hydrates and the IntersectionObserver fires — on a slow
-   phone that reads as a multi-second white screen. Drop the reveal effect
-   entirely so content paints immediately on first frame (no JS dependency). */
+/* Mobile: content must paint before JS hydrates; drop reveals entirely so a
+   slow phone never sees a blank screen waiting on IntersectionObserver. */
 @media (max-width: 640px) {
   .reveal {
     opacity: 1;
@@ -169,46 +172,11 @@ body {
     transition: none;
     transition-delay: 0ms !important;
   }
-
-  /* The giant decorative circles use a huge blur() radius (110-120px) on
-     30-34rem elements that overlap in the hero. iOS Safari rasterizes those
-     into large offscreen layers and recomposites them every paint, stalling
-     first paint for seconds on iPhone. Drop only those (the blur-[Npx] ones);
-     keep the smaller image halos (blur-2xl/3xl) which are cheap enough. */
-  [class*="blur-["] {
-    display: none;
-  }
 }
 
 /* ----------------------------------------------------------------------------
    Keyframes
 ---------------------------------------------------------------------------- */
-@keyframes gradient-pan {
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
-@keyframes float-soft {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-12px);
-  }
-}
-
-@keyframes shine {
-  to {
-    left: 140%;
-  }
-}
-
 @keyframes marquee {
   from {
     transform: translateX(0);
@@ -225,31 +193,63 @@ body {
     transform: scale(1);
   }
   50% {
-    opacity: 0.55;
-    transform: scale(0.82);
+    opacity: 0.45;
+    transform: scale(0.8);
   }
 }
 
 @keyframes eq {
   0%,
   100% {
-    transform: scaleY(0.28);
+    transform: scaleY(0.3);
   }
   50% {
     transform: scaleY(1);
   }
 }
 
-.eq-bar {
-  transform-origin: bottom;
-  animation: eq 1.1s ease-in-out infinite;
+/* Test-pattern scanline inside the mock preview */
+@keyframes tp-scan {
+  from {
+    transform: translateY(-120%);
+  }
+  to {
+    transform: translateY(620%);
+  }
 }
 
-.animate-float {
-  animation: float-soft 6s ease-in-out infinite;
+.tp-scan {
+  top: 0;
+  animation: tp-scan 6s linear infinite;
 }
+
+/* One-shot pop for the wizard's "ready" icon */
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.anim-pop {
+  animation: pop 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+  animation: pulse-dot 2.4s ease-in-out infinite;
+}
+
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq 1.4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
