@@ -228,9 +228,12 @@ extension AppDelegate {
             openSetup: { [weak self] in self?.openSetupWindow() },
             initialTab: initialTab
         )
+        // The sidebar `NavigationSplitView` needs a full-size content view. Without
+        // it, macOS 27 draws the toolbar's scroll-edge glass over the top of each
+        // pane and parks the sidebar toggle mid-toolbar instead of on the sidebar.
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: Tuning.settingsWindowWidth, height: Tuning.settingsWindowHeight),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
