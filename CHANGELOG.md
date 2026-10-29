@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5
+
+- Fixed the Settings window on macOS 27, where a frosted bar hid the top of each page and the sidebar button sat in the middle of the toolbar
+
 ## v1.4
 
 - Updated IPCamKit to pull in fixes for TP-Link Tapo cameras
