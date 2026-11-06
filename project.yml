@@ -7,10 +7,10 @@ options:
 packages:
   IPCamKit:
     url: https://github.com/steelbrain/IPCamKit.git
-    from: "0.4.0"
+    minorVersion: "0.4.0"
   XMLKit:
     url: https://github.com/steelbrain/XMLKit.git
-    from: "0.1.0"
+    minorVersion: "0.1.0"
 
 settings:
   base:
