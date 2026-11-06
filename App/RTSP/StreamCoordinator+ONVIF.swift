@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// What resolving an ONVIF camera's stream URI produced: the URI, or why there is none.
 /// The failure's error is shown when there is no stored URI to try, or the failure
@@ -58,27 +59,47 @@ internal struct ONVIFResolveParams {
     var environment = ONVIFResolveEnvironment.live
 }
 
+/// Whether a resolve found its camera at another address, shared by the resolve and
+/// the task that ends it at its overall time limit. That failure must rule out the
+/// stored stream URI too (`ONVIFResolveFailure.cameraMoved`): it names the address the
+/// camera left, and the deadline can pass while the camera is asked where it was found.
+internal final class ONVIFResolveProgress: Sendable {
+    private let moveFound = OSAllocatedUnfairLock(initialState: false)
+
+    var cameraMoved: Bool { moveFound.withLock { $0 } }
+
+    func recordMove() {
+        moveFound.withLock { $0 = true }
+    }
+
+    /// `error` as the resolve's failure: a camera found elsewhere once the scan found it.
+    func failure(_ error: any Error) -> ONVIFResolveFailure {
+        ONVIFResolveFailure(error, cameraMoved: cameraMoved)
+    }
+}
+
 extension StreamCoordinator {
     /// Resolves the stream URI within `timeout`; running out of time is reported as
-    /// `ONVIFError.timedOut`.
+    /// `ONVIFError.timedOut`, as a camera found elsewhere when the scan had found it.
     static func resolveONVIFStreamURI(
         params: ONVIFResolveParams,
         timeout: TimeInterval = Tuning.onvifReconnectTimeout
     ) async -> ONVIFStreamURIResult {
+        let progress = ONVIFResolveProgress()
         do {
             return try await withThrowingTaskGroup(of: ONVIFStreamURIResult.self) { group in
-                group.addTask { try await Self.attemptONVIFResolve(params: params) }
+                group.addTask { try await Self.attemptONVIFResolve(params: params, progress: progress) }
                 group.addTask {
                     try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                     Log.rtsp.warning("ONVIF reconnect timed out after \(timeout)s")
-                    return .failure(ONVIFResolveFailure(ONVIFError.timedOut))
+                    return .failure(progress.failure(ONVIFError.timedOut))
                 }
-                let result = try await group.next() ?? .failure(ONVIFResolveFailure(ONVIFError.timedOut))
+                let result = try await group.next() ?? .failure(progress.failure(ONVIFError.timedOut))
                 group.cancelAll()
                 return result
             }
         } catch {
-            return .failure(ONVIFResolveFailure(error))
+            return .failure(progress.failure(error))
         }
     }
 
@@ -154,8 +175,11 @@ extension StreamCoordinator {
     /// only once the camera answered there); otherwise it is used for this connection
     /// only. A failure carries the error from
     /// the saved address, unless the camera was found elsewhere and failed there, which
-    /// the failure records (`ONVIFResolveFailure.cameraMoved`). Throws only when cancelled.
-    static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> ONVIFStreamURIResult {
+    /// the failure records (`ONVIFResolveFailure.cameraMoved`), as `progress` does as
+    /// soon as the scan found it there. Throws only when cancelled.
+    static func attemptONVIFResolve(
+        params: ONVIFResolveParams, progress: ONVIFResolveProgress = ONVIFResolveProgress()
+    ) async throws -> ONVIFStreamURIResult {
         let savedAddressError: any Error
         do {
             return .success(try await fetchStreamURI(from: params.info, params: params))
@@ -185,6 +209,7 @@ extension StreamCoordinator {
             Log.rtsp.info("Device \(uuid) still answers at the saved address")
         case .moved(let moved):
             Log.rtsp.info("Found device at \(moved.host):\(moved.port)")
+            progress.recordMove()
             return try await connect(movedTo: moved, after: savedAddressError, params: params)
         }
         return .failure(ONVIFResolveFailure(savedAddressError))

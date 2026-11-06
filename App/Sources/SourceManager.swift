@@ -273,6 +273,15 @@ internal final class SourceManager {
         persist()
     }
 
+    /// The stream URI saved with an ONVIF camera now, connected to when its stream URI
+    /// can't be resolved. A move WS-Discovery saved rewrote it (`updateONVIFAddress`),
+    /// so it can differ from the one the resolve started with. Nil when none is saved,
+    /// or the source is not an ONVIF camera.
+    func storedONVIFStreamURI(for sourceID: UUID) -> String? {
+        guard case .onvif(let info)? = sources.first(where: { $0.id == sourceID })?.sourceType else { return nil }
+        return info.streamURI
+    }
+
     /// Credentials to connect with; nil when none are saved or they can't be read.
     /// Code that writes credentials back must use `loadCredentials(for:)` instead, so a
     /// failed read is never mistaken for "no authentication".

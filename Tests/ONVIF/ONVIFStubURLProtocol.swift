@@ -23,13 +23,21 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest, Data) -> Reply
 
     private static let handlers = OSAllocatedUnfairLock<[String: Handler]>(initialState: [:])
+    private static let silentHosts = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
     static func register(host: String, handler: @escaping Handler) {
         handlers.withLock { $0[host] = handler }
     }
 
+    /// Makes `host` take every request and never answer, like a camera that hangs: a
+    /// request there ends only when it is cancelled.
+    static func registerSilent(host: String) {
+        _ = silentHosts.withLock { $0.insert(host) }
+    }
+
     static func unregister(host: String) {
         _ = handlers.withLock { $0.removeValue(forKey: host) }
+        _ = silentHosts.withLock { $0.remove(host) }
     }
 
     static func configuration() -> URLSessionConfiguration {
@@ -47,6 +55,7 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        if let host = request.url?.host, Self.silentHosts.withLock({ $0.contains(host) }) { return }
         guard let url = request.url, let host = url.host,
               let handler = Self.handlers.withLock({ $0[host] }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
@@ -69,7 +78,8 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {
-        // Replies are delivered synchronously in startLoading; nothing to cancel.
+        // Replies are delivered synchronously in startLoading, and silent hosts never
+        // reply; nothing to cancel.
     }
 
     static func body(of request: URLRequest) -> Data {

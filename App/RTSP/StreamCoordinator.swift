@@ -343,13 +343,13 @@ private extension StreamCoordinator {
             // Acted on with no suspension after the check: a pause that cancelled this
             // task in a hop between the two still let the result connect.
             guard !Task.isCancelled else { return }
-            self?.handleONVIFResolution(uri: uri, info: info, sourceID: sourceID, credentials: credentials)
+            self?.handleONVIFResolution(uri: uri, sourceID: sourceID, credentials: credentials)
         }
     }
 
-    func handleONVIFResolution(
-        uri: ONVIFStreamURIResult, info: ONVIFSourceInfo, sourceID: UUID, credentials: SourceCredentials?
-    ) {
+    /// A failed resolve falls back to the stream URI saved when it ends, not the copy it
+    /// started with, which can name an address the camera has left.
+    func handleONVIFResolution(uri: ONVIFStreamURIResult, sourceID: UUID, credentials: SourceCredentials?) {
         guard currentSourceID == sourceID, lastDemand else { return }
         switch uri {
         case .success(let resolved):
@@ -359,7 +359,7 @@ private extension StreamCoordinator {
             Log.rtsp.info("Connecting with resolved URI\(target.url == resolved.uri ? "" : ", its login taken out")")
             connectPipeline(url: target.url, credentials: target.credentials)
         case .failure(let failure):
-            if let storedURI = info.streamURI, failure.allowsStoredURI {
+            if failure.allowsStoredURI, let storedURI = sourceManager.storedONVIFStreamURI(for: sourceID) {
                 Log.rtsp.info("Falling back to stored URI")
                 connectPipeline(url: storedURI, credentials: credentials)
                 return
