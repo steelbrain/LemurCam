@@ -63,6 +63,16 @@ internal final class ONVIFMovedStreamURITests: XCTestCase {
             move("rtsp://192.168.1.50/s", "192.168.1.20", "192.168.1.31"), "rtsp://192.168.1.50/s",
             "a stream served from another host stays"
         )
+        // IPCamKit reads no port in a bracketed IPv6 host's `:`s, so the `@` was kept as
+        // reported there, and refused once the camera moved to an IPv4 address.
+        XCTAssertEqual(
+            move("rtsp://[fd00::5]:554/live?password=p@ss", "fd00::5", "192.168.1.31"),
+            "rtsp://192.168.1.31:554/live?password=p%40ss"
+        )
+        XCTAssertEqual(
+            move("rtsp://[fd00::5]/live?password=p@ss", "fd00::5", "192.168.1.31"),
+            "rtsp://192.168.1.31/live?password=p@ss", "without a port, IPCamKit reads the @ in the query"
+        )
         XCTAssertNil(move("not a url", "192.168.1.20", "192.168.1.31"))
         XCTAssertNil(move("rtsp://192.168.1.20/s", "192.168.1.20", "bad host"), "a host the URI can't hold drops it")
     }

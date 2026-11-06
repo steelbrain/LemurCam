@@ -50,7 +50,12 @@ internal extension SourceCredentials {
     /// naming another host (a recorder serving the stream, say) is kept. Nil when the
     /// URI's host can't be read or the new host can't be put in it. The URI is read by
     /// `URLComponents(cameraURL:)`, so an escape next to a non-ASCII character, or to
-    /// another character `URLComponents` encodes, is not encoded again.
+    /// another character `URLComponents` encodes, is not encoded again. An `@` after the
+    /// new host is written `%40` where IPCamKit would refuse it, as for a URI reported
+    /// there (`escapingAtSignsAfterTheHost`): a `:` in a bracketed IPv6 host doesn't
+    /// count, so `rtsp://[fd00::5]:554/live?password=p@ss` was saved as it is, and
+    /// moved to an IPv4 address became a URI IPCamKit refused every time it was the
+    /// fallback.
     static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
         guard var components = URLComponents(cameraURL: uri), let host = components.host else { return nil }
         guard comparableHost(host) == comparableHost(oldHost) else { return uri }
@@ -58,7 +63,7 @@ internal extension SourceCredentials {
         // Setting a host URLComponents would not read back raises an exception.
         guard URLComponents(string: "rtsp://\(encoded)/")?.encodedHost == encoded else { return nil }
         components.encodedHost = encoded
-        return components.string
+        return components.string.map { escapingAtSignsAfterTheHost(of: $0, reportedBy: newHost) }
     }
 
     /// Whether a stream URI an ONVIF camera reported is split at its last `@`, as
