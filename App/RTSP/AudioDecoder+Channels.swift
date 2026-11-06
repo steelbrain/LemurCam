@@ -24,8 +24,9 @@ internal extension AudioDecoder {
 
     /// Which source channels feed the stereo output's left and right: mono into both,
     /// stereo as it is (empty: no map), and from more channels the first two, which
-    /// carry front audio in AAC's and L16's channel orders (center and left for AAC,
-    /// left and right for L16). A discrete layout gives the converter nothing to
+    /// carry front audio in AAC's and L16's channel orders: center and left for AAC;
+    /// for L16 (RFC 3551), left and right with 3 channels, left and center with 4,
+    /// left and left center with 6. A discrete layout gives the converter nothing to
     /// downmix by.
     static func resamplerChannelMap(sourceChannels: Int) -> [NSNumber] {
         switch sourceChannels {

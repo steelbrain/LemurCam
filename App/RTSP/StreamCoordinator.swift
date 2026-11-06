@@ -468,9 +468,9 @@ extension StreamCoordinator {
         cameraConsumerChanged(active: active)
     }
 
-    /// Apply a microphone consumer edge the way `VirtualMicDemand`'s Darwin
-    /// observers do. Tests call this instead of posting the system-wide
-    /// notification, which every other LemurCam process would also receive.
+    /// Apply a microphone consumer edge the way the driver's consumer notifications
+    /// do. Tests call this instead of posting the system-wide notification, which
+    /// every other LemurCam process would also receive.
     func simulateAudioConsumerChange(active: Bool) {
         micDemand.consumerChanged(active: active)
     }
