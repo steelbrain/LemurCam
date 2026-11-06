@@ -4,6 +4,12 @@ import SwiftUI
 
 @MainActor
 internal final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The running app delegate. `@NSApplicationDelegateAdaptor` makes SwiftUI's own
+    /// object `NSApp.delegate` and forwards to this instance, so `NSApp.delegate as?
+    /// AppDelegate` is always nil. Code outside the SwiftUI scene (App Intents,
+    /// `NSApp.relaunch()`) reaches the delegate through this instead.
+    private(set) static weak var shared: AppDelegate?
+
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var streamCoordinator: StreamCoordinator?
@@ -21,6 +27,11 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     /// upgrade-pending state persists.
     private var launchNudgeDismissed = false
     private var globalClickMonitor: Any?
+    /// True once `applicationDidFinishLaunching` got past the launch guards and set
+    /// the app up. A guard that quits before then must not hit the quit prompt.
+    private(set) var hasFinishedLaunching = false
+    /// Set by `relaunch()` so the restart quits without the "Camera in Use" prompt.
+    var isRelaunching = false
 
     /// Owns guided-setup completion, scoped to the running app version. A version
     /// change clears the per-step flags so each new version re-runs setup. See
@@ -32,6 +43,8 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_: Notification) {
+        Self.shared = self
+
         // When the app is only the unit-test host, do no real launch work: system-
         // extension activation, streaming, and the status item can block on OS
         // approval dialogs / IPC and hang the headless test run. The pure logic under
@@ -85,6 +98,7 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
         if let step = setupStateStore.launchStep() {
             openSetupWindow(at: step)
         }
+        hasFinishedLaunching = true
     }
 
     func applicationDidBecomeActive(_: Notification) {
@@ -179,11 +193,14 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
-        let hasConsumers = LemurCamConfig.sharedDefaults?.bool(
-            forKey: LemurCamConfig.hasExternalConsumersKey
-        ) ?? false
-
-        guard hasConsumers else { return .terminateNow }
+        // Consumer state comes from this process's Darwin-notification tracking. The
+        // extension runs as a different user, so app-group defaults can't carry it.
+        let decision = TerminationDecision.evaluate(
+            hasFinishedLaunching: hasFinishedLaunching,
+            isRelaunching: isRelaunching,
+            hasExternalConsumers: streamCoordinator?.hasExternalConsumers ?? false
+        )
+        guard decision == .confirmCameraInUse else { return .terminateNow }
 
         let alert = NSAlert()
         alert.messageText = "Camera in Use"

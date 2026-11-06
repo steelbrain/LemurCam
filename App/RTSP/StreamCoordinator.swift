@@ -30,6 +30,10 @@ internal final class StreamCoordinator {
         _hasConsumers || _hasAudioConsumers || previewStore.isPreviewEnabled
     }
 
+    /// Whether an external app is consuming the virtual camera, as tracked in this
+    /// process from the extension's Darwin consumer notifications. Read-only.
+    var hasExternalConsumers: Bool { _hasConsumers }
+
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() }
