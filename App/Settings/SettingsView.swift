@@ -70,13 +70,19 @@ internal final class SettingsNavigation {
 
 /// Pure rule for in-app preview demand. Only the menu bar popover and the Settings
 /// Preview pane show the live preview, so only they keep the stream connected for
-/// it; Settings on any other pane does not.
+/// it; Settings on any other pane does not. The popover shows it only while the
+/// camera is set up (`ExtensionState.showsLivePreview`). Otherwise it shows a setup or
+/// issue message, and connecting for it logged into the camera for frames nobody saw.
 internal enum PreviewDemandDecision {
     /// - Parameters:
     ///   - popoverOpen: the menu bar popover is showing.
+    ///   - cameraStatus: the camera's setup status, which picks what the popover shows.
     ///   - settingsPane: the pane the Settings window shows, or nil when it's closed.
-    static func isPreviewNeeded(popoverOpen: Bool, settingsPane: SettingsTab?) -> Bool {
-        popoverOpen || settingsPane == .preview
+    static func isPreviewNeeded(
+        popoverOpen: Bool, cameraStatus: CameraExtensionStatus, settingsPane: SettingsTab?
+    ) -> Bool {
+        let popoverShowsPreview = popoverOpen && ExtensionState(cameraStatus: cameraStatus).showsLivePreview
+        return popoverShowsPreview || settingsPane == .preview
     }
 }
 

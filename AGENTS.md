@@ -157,10 +157,15 @@ active because approval happens out of process in System Settings.
 `SetupView` is a guided setup window for the camera and optional microphone
 approval gates. `SettingsView` is a `NavigationSplitView` sidebar, not a `TabView`.
 
-The Preview settings tab and the menu bar popover intentionally create preview
-demand. Showing neither (closing the popover, and closing Settings or switching
-it to another pane) drops preview demand, so streams can pause when no external
-app is using the camera or the microphone.
+The Preview settings tab intentionally creates preview demand, and so does the
+menu bar popover while it shows the live preview: only when the camera is set up
+(`SetupCoordinator.cameraStatus == .ready`); in every other camera state it shows
+a setup or issue message instead. `PreviewDemandDecision` and `PopoverView` share
+that mapping (`ExtensionState`), and `AppDelegate` re-evaluates demand when the
+camera status changes. Showing neither (closing the popover or leaving it on a
+setup or issue message, and closing Settings or switching it to another pane)
+drops preview demand, so streams can pause when no external app is using the
+camera or the microphone.
 
 Resolution and frame-rate choices are stored in the app group and require an app
 restart to apply to the extension stream format.

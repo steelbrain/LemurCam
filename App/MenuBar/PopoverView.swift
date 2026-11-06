@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// What the menu bar popover shows for the camera's setup status. Preview demand
+/// (`PreviewDemandDecision`) reads the same mapping, so the popover keeps the stream
+/// connected only while it shows the live preview.
 internal enum ExtensionState {
     case running
     case settingUp
@@ -7,6 +10,25 @@ internal enum ExtensionState {
     case needsReboot
     case needsAppRestart
     case needsRepair
+
+    /// nil: no `SetupCoordinator` to read the status from.
+    init(cameraStatus: CameraExtensionStatus?) {
+        switch cameraStatus {
+        case .ready: self = .running
+        case .needsReboot: self = .needsReboot
+        case .needsAppRestart: self = .needsAppRestart
+        case .needsRepair: self = .needsRepair
+        case .installing, .unknown: self = .settingUp
+        case .awaitingApproval, .disabled, .notInstalled, .failed, .none:
+            self = .notEnabled
+        }
+    }
+
+    /// Whether the popover shows the live preview: only its running content has it.
+    /// Every other state shows a setup or issue message instead.
+    var showsLivePreview: Bool {
+        self == .running
+    }
 }
 
 internal struct PopoverView: View {
@@ -17,15 +39,7 @@ internal struct PopoverView: View {
     var openSetup: (() -> Void)?
 
     private var state: ExtensionState {
-        switch setup?.cameraStatus {
-        case .ready: return .running
-        case .needsReboot: return .needsReboot
-        case .needsAppRestart: return .needsAppRestart
-        case .needsRepair: return .needsRepair
-        case .installing, .unknown: return .settingUp
-        case .awaitingApproval, .disabled, .notInstalled, .failed, .none:
-            return .notEnabled
-        }
+        ExtensionState(cameraStatus: setup?.cameraStatus)
     }
 
     var body: some View {

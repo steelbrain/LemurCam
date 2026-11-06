@@ -78,9 +78,11 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator?.beginCameraDiscovery()
         }
         // Re-evaluate the proactive launch banner as the async install state
-        // resolves (e.g. an in-place upgrade settling into .needsAppRestart).
+        // resolves (e.g. an in-place upgrade settling into .needsAppRestart), and
+        // preview demand: an open popover shows the preview only while it's ready.
         setupCoordinator.onCameraStatusChange = { [weak self] in
             self?.presentLaunchNudgeIfNeeded()
+            self?.updatePreviewDemand()
         }
         setupCoordinator.start()
 
@@ -324,10 +326,11 @@ extension AppDelegate {
     }
 
     /// Keep the stream connected for the in-app preview only while something shows
-    /// it: the popover, or Settings on its Preview pane.
+    /// it: the popover while the camera is ready, or Settings on its Preview pane.
     private func updatePreviewDemand() {
         streamCoordinator?.previewStore.isPreviewEnabled = PreviewDemandDecision.isPreviewNeeded(
             popoverOpen: isPopoverOpen,
+            cameraStatus: setupCoordinator.cameraStatus,
             settingsPane: settingsWindow == nil ? nil : settingsNavigation.selection
         )
     }
