@@ -210,8 +210,9 @@ internal final class SourceManager {
     /// credentials are left alone, nothing is written when the address is the same,
     /// and no config change is signalled, because the resolve that found the address
     /// goes on to connect there. `updatedAt` marks user edits and stays as it is. What
-    /// the user decided for the old address, a trusted certificate, is dropped
-    /// (`ONVIFSourceInfo.clearAddressDecisions()`): it is asked again at the new one.
+    /// the user decided for the old address, a trusted certificate or plain HTTP
+    /// allowed, is dropped (`ONVIFSourceInfo.clearAddressDecisions()`): it is asked
+    /// again at the new one.
     func updateONVIFAddress(id: UUID, from previous: ONVIFSourceInfo, to moved: ONVIFSourceInfo) {
         guard let index = sources.firstIndex(where: { $0.id == id }),
               case .onvif(var info) = sources[index].sourceType else { return }

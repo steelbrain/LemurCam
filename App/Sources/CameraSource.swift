@@ -32,9 +32,9 @@ extension ONVIFSourceInfo {
     /// Decodes sources saved before a field existed: `useHTTPS`, `serialNumber`,
     /// `pinnedCertificate` and `allowsPlainHTTPOutsideLocalNetwork` were added later
     /// and default to HTTP, nil, nil and not allowed when absent. `host` and `port`
-    /// stay required. A pinned certificate that can't be read
-    /// is dropped, so the camera's certificate is asked about again, rather than the
-    /// whole cameras file failing to load.
+    /// stay required. A pinned certificate that can't be read is dropped, so the
+    /// camera's certificate is asked about again, rather than the whole cameras file
+    /// failing to load.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         deviceUUID = try container.decodeIfPresent(String.self, forKey: .deviceUUID)
