@@ -229,11 +229,19 @@ internal final class SourceManager {
     /// copy of the credentials. So is an ambiguous URL (see
     /// `SourceCredentials.hasAmbiguousUserInfo`) whose source already has saved
     /// credentials: what it holds before its last `@` is only a reading, and may be
-    /// part of the address rather than a login to drop.
+    /// part of the address rather than a login to drop. An ambiguous URL that
+    /// `URLComponents` still reads as an address is never rewritten either: a login in
+    /// the query (`rtsp://192.168.1.5:554/user=admin&password=p@ss`) would be split at
+    /// the `@` in its password and the address lost. IPCamKit refuses such a URL with a
+    /// message saying how to write the `@`, and the edit form asks for the same fix.
     private func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {
             let source = sources[index]
+            if Self.hasAmbiguousURLReadableAsAnAddress(source.sourceType) {
+                Log.app.error("Left the saved URL of '\(source.name)' as it is: it can't be read reliably")
+                continue
+            }
             let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: source.sourceType)
             guard cleanType != source.sourceType else { continue }
             if let urlCredentials {
@@ -256,6 +264,19 @@ internal final class SourceManager {
         guard migrated > 0 else { return }
         storage.save(sources)
         Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
+    }
+
+    /// Whether the saved RTSP URL or ONVIF stream URI has ambiguous userinfo (see
+    /// `SourceCredentials.hasAmbiguousUserInfo`) yet parses as an address, so the part
+    /// before its last `@` may well be address rather than login.
+    private static func hasAmbiguousURLReadableAsAnAddress(_ sourceType: SourceType) -> Bool {
+        let url: String?
+        switch sourceType {
+        case .rtsp(let info): url = info.url
+        case .onvif(let info): url = info.streamURI
+        }
+        guard let url, SourceCredentials.hasAmbiguousUserInfo(url) else { return false }
+        return URLComponents(string: url) != nil
     }
 
     private func persist() {

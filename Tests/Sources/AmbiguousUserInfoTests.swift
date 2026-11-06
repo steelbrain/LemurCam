@@ -176,6 +176,24 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         XCTAssertTrue(credentialStore.writes.isEmpty)
     }
 
+    /// A login in the query with an `@` in its password still parses as an address.
+    /// Splitting it at the last `@` would leave `rtsp://ss&channel=1`, so the saved
+    /// URL is kept for the user to correct, whatever the Keychain holds.
+    func testLoadLeavesAmbiguousURLThatParsesAsAnAddress() throws {
+        let url = "rtsp://192.168.1.5:554/user=admin&password=p@ss&channel=1"
+        let rtsp = CameraSource(name: "DVR", sourceType: .rtsp(RTSPSourceInfo(url: url)))
+        let onvif = CameraSource(name: "Cam", sourceType: .onvif(ONVIFSourceInfo(
+            host: "192.168.1.5", port: 80, streamURI: url
+        )))
+        try seed([rtsp, onvif])
+        let (manager, credentialStore) = try makeManager()
+
+        manager.load()
+
+        XCTAssertEqual(manager.sources.map(\.sourceType), [rtsp.sourceType, onvif.sourceType])
+        XCTAssertTrue(credentialStore.writes.isEmpty)
+    }
+
     /// With other credentials saved, the part before the last `@` can't be moved, and
     /// it may be part of the address: the URL is left for the user to correct.
     func testLoadLeavesAmbiguousURLWhenOtherCredentialsAreSaved() throws {
