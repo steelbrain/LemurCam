@@ -238,7 +238,7 @@ private extension SetupView {
     var micStepState: SetupStepState {
         switch coordinator.micStatus {
         case .ready: return .ready
-        case .installing, .unknown: return .working
+        case .installing, .unknown, .checking: return .working
         case .needsApproval, .notSetUp, .needsReboot: return .actionNeeded
         case .failed: return .failed
         }
@@ -319,6 +319,7 @@ private extension SetupView {
         case .needsApproval:
             return "Approve LemurCam in System Settings → General → Login Items & Extensions, then come back."
         case .installing: return "Setting up… this can take a few seconds."
+        case .checking: return MicrophoneStatusCopy.checking
         case .needsReboot: return MicrophoneStatusCopy.needsReboot
         case .failed(let message): return message
         case .unknown, .notSetUp:
@@ -336,7 +337,7 @@ private extension SetupView {
                 Button("Update Microphone") { coordinator.updateMicrophone() }
                     .buttonStyle(.borderedProminent)
             }
-        case .installing, .unknown, .needsReboot:
+        case .installing, .unknown, .checking, .needsReboot:
             EmptyView()
         case .needsApproval:
             Button("Open System Settings") { coordinator.openMicrophoneSystemSettings() }

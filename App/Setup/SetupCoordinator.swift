@@ -235,7 +235,7 @@ extension SetupCoordinator {
             if let failure { micLastOperation = failure.operation }
             micOperationFailure = nil
             micRetrying = true
-            micStatus = .unknown
+            micStatus = .checking
             queryInstalledDriverVersion()
         }
     }
@@ -250,13 +250,13 @@ extension SetupCoordinator {
 
     /// The microphone half of "Re-check Now". Routine refreshes leave a failed
     /// install's or removal's reason up; this explicit check lets it go and shows
-    /// "Working…" until the check lands, so its result replaces the reason even when
+    /// "Checking…" until the check lands, so its result replaces the reason even when
     /// the helper does not answer. Nothing is redone: that is Try Again
     /// (`retryMicrophone`).
     func recheckMicrophone() {
         if micOperationFailure != nil, !isInstallingDriver {
             micOperationFailure = nil
-            micStatus = .unknown
+            micStatus = .checking
         }
         refreshMicrophoneStatus()
     }

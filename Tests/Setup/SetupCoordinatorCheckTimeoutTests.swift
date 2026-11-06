@@ -35,7 +35,7 @@ internal final class SetupCoordinatorCheckTimeoutTests: XCTestCase {
     func testTryAgainWithAHelperThatNeverAnswersFailsDespiteRefreshes() async throws {
         let harness = try XCTUnwrap(fixture)
         harness.coordinator.retryMicrophone()
-        XCTAssertEqual(harness.coordinator.micStatus, .unknown)
+        XCTAssertEqual(harness.coordinator.micStatus, .checking)
 
         let failed = await refreshRepeatedly(harness) { harness.coordinator.micStatus == unreachable }
         XCTAssertTrue(failed, "the spinner must give way to Try Again")

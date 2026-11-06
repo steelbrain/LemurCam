@@ -55,7 +55,7 @@ internal final class SetupCoordinatorMicRetryTests: XCTestCase {
         harness.coordinator.retryMicrophone()
         XCTAssertEqual(harness.helper.checks.count, 1)
         XCTAssertEqual(harness.helper.installs.count, 1)
-        XCTAssertEqual(harness.coordinator.micStatus, .unknown)
+        XCTAssertEqual(harness.coordinator.micStatus, .checking, "checking, not the first-launch intro")
 
         // It had worked: no second install, so no second coreaudiod restart.
         harness.helper.answerCheck("6")

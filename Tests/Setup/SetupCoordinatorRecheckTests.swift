@@ -27,7 +27,7 @@ internal final class SetupCoordinatorRecheckTests: XCTestCase {
         XCTAssertTrue(failed)
 
         harness.coordinator.recheckMicrophone()
-        XCTAssertEqual(harness.coordinator.micStatus, .unknown, "the check shows as running")
+        XCTAssertEqual(harness.coordinator.micStatus, .checking, "the check shows as running")
         XCTAssertEqual(harness.helper.checks.count, 1)
         harness.helper.answerCheck("6")
         let ready = await waitUntil { harness.coordinator.micStatus == .ready }

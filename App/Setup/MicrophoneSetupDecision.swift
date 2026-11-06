@@ -4,6 +4,9 @@
 internal enum MicrophoneStatus: Equatable {
     /// Not yet queried.
     case unknown
+    /// Checking again at the user's request ("Try Again" checking first, "Re-check
+    /// Now"), from a status already known: shown as checking, not as the first launch.
+    case checking
     /// Helper not registered, or registered+enabled but the driver isn't installed.
     case notSetUp
     /// Helper registered but the user must approve it in System Settings.
@@ -195,7 +198,7 @@ internal enum MicrophoneVersionReply: Equatable {
     /// successful check replaces the failure.
     private static func unreachable(currentStatus: MicrophoneStatus) -> Self {
         switch currentStatus {
-        case .unknown, .installing: return .setStatus(.failed(unreachableMessage))
+        case .unknown, .checking, .installing: return .setStatus(.failed(unreachableMessage))
         case .notSetUp, .needsApproval, .ready, .needsReboot, .failed: return .keepStatus
         }
     }
@@ -222,6 +225,7 @@ internal enum MicrophoneUpdateReason: Equatable {
 
 /// Microphone status copy shared by the setup window and the Settings status card.
 internal enum MicrophoneStatusCopy {
+    static let checking = "Checking the microphone\u{2026}"
     static let needsReboot = "An older copy of LemurCam’s audio helper is still running. "
         + "Restart your Mac to finish installing the microphone."
     static let unsealed = "The installed copy can be modified without administrator rights. "

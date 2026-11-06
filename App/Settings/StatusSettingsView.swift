@@ -123,7 +123,7 @@ internal struct StatusSettingsView: View {
     private var micCardState: SetupStepState {
         switch setup.micStatus {
         case .ready: return .ready
-        case .installing, .unknown: return .working
+        case .installing, .unknown, .checking: return .working
         case .needsApproval, .needsReboot: return .actionNeeded
         case .notSetUp: return .inactive
         case .failed: return .failed
@@ -136,6 +136,7 @@ internal struct StatusSettingsView: View {
         case .needsApproval: return "Needs approval"
         case .needsReboot: return "Restart Mac"
         case .installing, .unknown: return "Working\u{2026}"
+        case .checking: return "Checking\u{2026}"
         case .notSetUp: return "Not set up"
         case .failed: return "Failed"
         }
@@ -145,7 +146,7 @@ internal struct StatusSettingsView: View {
         switch setup.micStatus {
         case .ready:
             return AnyView(micManageButtons)
-        case .installing, .unknown, .needsReboot:
+        case .installing, .unknown, .checking, .needsReboot:
             return nil
         case .needsApproval:
             return button("Open System Settings") { setup.openMicrophoneSystemSettings() }
