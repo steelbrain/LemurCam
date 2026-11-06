@@ -210,7 +210,7 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
             params: params(for: source, scanCounter: counter, scanResult: [device(host: newHost)])
         )
 
-        XCTAssertEqual(try result.get(), "rtsp://192.0.2.31/main")
+        XCTAssertEqual(try result.get().uri, "rtsp://192.0.2.31/main")
         guard case .onvif(let info)? = sourceManager.sources.first?.sourceType else {
             XCTFail("expected ONVIF")
             return

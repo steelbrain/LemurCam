@@ -104,7 +104,7 @@ internal final class ONVIFAddressPersistenceTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.41")])
         )
 
-        XCTAssertEqual(try result.get(), "rtsp://192.168.77.41/main")
+        XCTAssertEqual(try result.get().uri, "rtsp://192.168.77.41/main")
         XCTAssertEqual(harness.manager.sources.first, source)
         XCTAssertEqual(try harness.savedFile(), fileBefore, "the entered address must not be rewritten")
     }
@@ -125,7 +125,7 @@ internal final class ONVIFAddressPersistenceTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.51")])
         )
 
-        XCTAssertEqual(try result.get(), "rtsp://192.168.77.51/main")
+        XCTAssertEqual(try result.get().uri, "rtsp://192.168.77.51/main")
         XCTAssertFalse(schemes.all.isEmpty)
         XCTAssertTrue(schemes.all.allSatisfy { $0 == Data("https".utf8) }, "no request may go over plain HTTP")
         let saved = try XCTUnwrap(harness.savedInfo(source))

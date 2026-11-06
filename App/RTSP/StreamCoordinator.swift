@@ -355,8 +355,10 @@ private extension StreamCoordinator {
         guard currentSourceID == sourceID else { return }
         switch uri {
         case .success(let resolved):
-            let target = Self.connectionTarget(forResolvedURI: resolved, savedCredentials: credentials)
-            Log.rtsp.info("Connecting with resolved URI\(target.url == resolved ? "" : ", its login taken out")")
+            let target = Self.connectionTarget(
+                forResolvedURI: resolved.uri, reportedBy: resolved.onvifHost, savedCredentials: credentials
+            )
+            Log.rtsp.info("Connecting with resolved URI\(target.url == resolved.uri ? "" : ", its login taken out")")
             connectPipeline(url: target.url, credentials: target.credentials)
         case .failure(let error):
             if let storedURI = info.streamURI, Self.mayFallBackToStoredURI(after: error) {

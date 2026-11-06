@@ -51,7 +51,8 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.31")])
         )
 
-        XCTAssertEqual(try result.get(), "rtsp://192.168.77.31/main")
+        XCTAssertEqual(try result.get().uri, "rtsp://192.168.77.31/main")
+        XCTAssertEqual(try result.get().onvifHost, "192.168.77.31", "the URI came from the address the scan found")
         XCTAssertEqual(harness.scanCount, 1)
         XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.31")
         XCTAssertEqual(harness.manager.sources.first?.updatedAt, source.updatedAt, "a move is not a user edit")
@@ -153,7 +154,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.71")])
         )
 
-        XCTAssertEqual(try result.get(), "rtsp://192.168.77.71/main")
+        XCTAssertEqual(try result.get().uri, "rtsp://192.168.77.71/main")
         XCTAssertEqual(harness.scanCount, 1)
         XCTAssertEqual(otherCameraLogins.all.count, 1)
         XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.71")
