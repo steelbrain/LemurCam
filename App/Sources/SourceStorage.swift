@@ -4,6 +4,10 @@ import os
 internal final class SourceStorage {
     private let fileURL: URL
 
+    /// Set when a damaged sources file could not be moved aside. Saving is refused
+    /// for the rest of the session so the only copy of the user's cameras is kept.
+    private var mustNotOverwrite = false
+
     init(fileURL: URL? = nil) {
         if let fileURL {
             self.fileURL = fileURL
@@ -17,22 +21,47 @@ internal final class SourceStorage {
         }
     }
 
+    /// Loads the saved cameras. Each camera is decoded on its own, so one damaged
+    /// entry costs only that entry, and a copy of the file is kept next to it before
+    /// the next save drops the entry. A file that can't be read as a list at all is
+    /// moved aside instead of being overwritten by the next save. Logs name the
+    /// failing field, never its value, since entries hold URLs and hosts.
     func load() -> [CameraSource] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return []
         }
+        let entries: [LossyEntry]
         do {
             let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([CameraSource].self, from: data)
+            entries = try decoder.decode([LossyEntry].self, from: data)
         } catch {
-            Log.app.error("Failed to load sources: \(error)")
+            Log.app.error("Saved cameras could not be read (\(Self.describe(error)))")
+            preserveDamagedFile(move: true)
             return []
         }
+
+        var sources: [CameraSource] = []
+        for (index, entry) in entries.enumerated() {
+            switch entry.result {
+            case .success(let source):
+                sources.append(source)
+            case .failure(let error):
+                Log.app.error("Skipped saved camera #\(index + 1) (\(Self.describe(error)))")
+            }
+        }
+        if sources.count < entries.count {
+            preserveDamagedFile(move: false)
+        }
+        return sources
     }
 
     func save(_ sources: [CameraSource]) {
+        guard !mustNotOverwrite else {
+            Log.app.error("Not saving cameras: the damaged sources file could not be moved aside")
+            return
+        }
         do {
             let dir = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -45,5 +74,72 @@ internal final class SourceStorage {
         } catch {
             Log.app.error("Failed to save sources: \(error)")
         }
+    }
+
+    // MARK: - Damaged files
+
+    /// Keeps the damaged file as `sources.json.corrupt-<UTC timestamp>`: moved when
+    /// nothing could be loaded from it, copied when only some entries were skipped.
+    private func preserveDamagedFile(move: Bool) {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .gmt
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        let stamp = formatter.string(from: Date())
+        let name = fileURL.lastPathComponent
+        let candidates = [
+            "\(name).corrupt-\(stamp)",
+            "\(name).corrupt-\(stamp)-\(UUID().uuidString.prefix(8))"
+        ]
+        for candidate in candidates {
+            let destination = fileURL.deletingLastPathComponent().appendingPathComponent(candidate)
+            do {
+                if move {
+                    try FileManager.default.moveItem(at: fileURL, to: destination)
+                } else {
+                    try FileManager.default.copyItem(at: fileURL, to: destination)
+                }
+                Log.app.error("Kept the damaged sources file as \(candidate)")
+                return
+            } catch {
+                continue
+            }
+        }
+        Log.app.error("Could not keep a copy of the damaged sources file")
+        mustNotOverwrite = true
+    }
+
+    /// One array element, decoded without failing the whole array.
+    private struct LossyEntry: Decodable {
+        let result: Result<CameraSource, any Error>
+
+        init(from decoder: any Decoder) {
+            result = Result { try CameraSource(from: decoder) }
+        }
+    }
+
+    /// The kind of decoding failure and where it happened, by key name only. Values
+    /// (URLs, hosts) never appear, since they can carry credentials.
+    static func describe(_ error: any Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return String(describing: type(of: error))
+        }
+        switch decodingError {
+        case .keyNotFound(let key, let context):
+            return "missing \(key.stringValue) at \(path(of: context))"
+        case .typeMismatch(_, let context):
+            return "wrong type at \(path(of: context))"
+        case .valueNotFound(_, let context):
+            return "missing value at \(path(of: context))"
+        case .dataCorrupted(let context):
+            return "invalid data at \(path(of: context))"
+        @unknown default:
+            return "decoding error"
+        }
+    }
+
+    private static func path(of context: DecodingError.Context) -> String {
+        let keys = context.codingPath.map { key in key.intValue.map { "[\($0)]" } ?? key.stringValue }
+        return keys.isEmpty ? "top level" : keys.joined(separator: ".")
     }
 }
