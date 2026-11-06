@@ -264,7 +264,7 @@ private extension DiscoveryView {
 
     func selectDevice(_ device: DiscoveredDevice) {
         selectedDevice = device
-        deviceUUID = device.id
+        deviceUUID = device.endpointUUID
         username = ""
         password = ""
         hasCredentials = false

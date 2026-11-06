@@ -38,9 +38,10 @@ internal final class ONVIFDiscovery: Sendable {
         var timeout = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-        guard sendProbe(sock) else { return [] }
+        let messageID = "uuid:\(UUID().uuidString)"
+        guard sendProbe(sock, messageID: messageID) else { return [] }
 
-        return collectResponses(sock)
+        return collectResponses(sock, messageID: messageID)
     }
 
     private static func bindSocket(_ sock: Int32) -> Bool {
@@ -62,14 +63,14 @@ internal final class ONVIFDiscovery: Sendable {
         return true
     }
 
-    private static func sendProbe(_ sock: Int32) -> Bool {
+    private static func sendProbe(_ sock: Int32, messageID: String) -> Bool {
         var destAddr = sockaddr_in()
         destAddr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         destAddr.sin_family = sa_family_t(AF_INET)
         destAddr.sin_port = multicastPort.bigEndian
         inet_pton(AF_INET, multicastAddress, &destAddr.sin_addr)
 
-        let probe = Array(buildProbeMessage().utf8)
+        let probe = Array(buildProbeMessage(messageID: messageID).utf8)
 
         let sent = probe.withUnsafeBufferPointer { buf in
             withUnsafePointer(to: &destAddr) { addrPtr in
@@ -86,9 +87,10 @@ internal final class ONVIFDiscovery: Sendable {
         return true
     }
 
-    private static func collectResponses(_ sock: Int32) -> [DiscoveredDevice] {
+    private static func collectResponses(_ sock: Int32, messageID: String) -> [DiscoveredDevice] {
         var devices: [DiscoveredDevice] = []
-        var seenUUIDs: Set<String> = []
+        var seen: Set<String> = []
+        var ignored = 0
         var buffer = [UInt8](repeating: 0, count: 65_536)
         let deadline = Date().addingTimeInterval(scanDuration)
 
@@ -105,11 +107,12 @@ internal final class ONVIFDiscovery: Sendable {
 
             switch receiveOutcome(received: received, errnoValue: errnoValue) {
             case .process(let count):
-                let data = Data(buffer[0..<count])
-                if let xml = String(data: data, encoding: .utf8),
-                   let device = parseProbeMatch(xml: xml),
-                   !seenUUIDs.contains(device.id) {
-                    seenUUIDs.insert(device.id)
+                guard let device = device(fromReply: Data(buffer[0..<count]), sender: senderAddr, messageID: messageID)
+                else {
+                    ignored += 1
+                    continue
+                }
+                if seen.insert(device.id).inserted {
                     devices.append(device)
                 }
             case .retry:
@@ -123,20 +126,28 @@ internal final class ONVIFDiscovery: Sendable {
             }
         }
 
+        if ignored > 0 {
+            Log.app.info("WS-Discovery: ignored \(ignored) reply(s) that did not answer this probe")
+        }
         return devices
+    }
+
+    private static func device(fromReply data: Data, sender: sockaddr_in, messageID: String) -> DiscoveredDevice? {
+        guard sender.sin_family == sa_family_t(AF_INET),
+              let senderIP = format(sender.sin_addr),
+              let xml = String(bytes: data, encoding: .utf8) else { return nil }
+        return parseProbeMatch(xml: xml, context: ReplyContext(probeMessageID: messageID, sender: senderIP))
     }
 
     // MARK: - WS-Discovery Probe
 
-    private static func buildProbeMessage() -> String {
-        let messageID = UUID().uuidString
-
+    private static func buildProbeMessage(messageID: String) -> String {
         var action = XElement.build("Action", attributes: ["s:mustUnderstand": "1"]) {
             "http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe"
         }
         action.prefix = "a"
 
-        var msgID = XElement.build("MessageID") { "uuid:\(messageID)" }
+        var msgID = XElement.build("MessageID") { messageID }
         msgID.prefix = "a"
 
         var replyAddr = XElement.build("Address") {
@@ -173,71 +184,6 @@ internal final class ONVIFDiscovery: Sendable {
 
         return envelope.write()
     }
-
-    // MARK: - Response Parsing
-
-    static func parseProbeMatch(xml: String) -> DiscoveredDevice? {
-        guard let root = try? ONVIFXML.parse(xml) else { return nil }
-
-        var uuid: String?
-        var xaddrs: String?
-        var scopes: String?
-
-        root.findElements(named: "EndpointReference") { epRef in
-            if let addr = epRef["Address"] {
-                uuid = addr.getText()
-            }
-        }
-        root.findElements(named: "XAddrs") { el in
-            xaddrs = el.getText()
-        }
-        root.findElements(named: "Scopes") { el in
-            scopes = el.getText()
-        }
-
-        guard let uuid, let xaddrs else { return nil }
-
-        // Parse host and port from XAddrs URL
-        let endpointURL = xaddrs.components(separatedBy: " ").first ?? xaddrs
-        var host = ""
-        var port = Tuning.defaultHTTPPort
-        if let urlComponents = URLComponents(string: endpointURL) {
-            host = urlComponents.host ?? ""
-            port = urlComponents.port
-                ?? (urlComponents.scheme == "https" ? Tuning.defaultHTTPSPort : Tuning.defaultHTTPPort)
-        }
-        guard !host.isEmpty else { return nil }
-
-        // Parse scopes for device metadata
-        let scopesStr = scopes ?? ""
-        let name = extractScope(from: scopesStr, key: "name")
-        let manufacturer = extractScope(from: scopesStr, key: "hardware")
-            ?? extractScope(from: scopesStr, key: "manufacturer")
-        let model = extractScope(from: scopesStr, key: "model")
-
-        // Clean UUID — strip "urn:uuid:" prefix if present
-        let cleanUUID = uuid.replacingOccurrences(of: "urn:uuid:", with: "")
-
-        return DiscoveredDevice(
-            id: cleanUUID,
-            endpointURL: endpointURL,
-            name: name?.removingPercentEncoding,
-            manufacturer: manufacturer?.removingPercentEncoding,
-            model: model?.removingPercentEncoding,
-            host: host,
-            port: port
-        )
-    }
-
-    static func extractScope(from scopes: String, key: String) -> String? {
-        let prefix = "onvif://www.onvif.org/\(key)/"
-        for scope in scopes.components(separatedBy: " ") where scope.hasPrefix(prefix) {
-            let value = String(scope.dropFirst(prefix.count))
-            return value.isEmpty ? nil : value
-        }
-        return nil
-    }
-
 }
 
 // MARK: - Receive Error Handling

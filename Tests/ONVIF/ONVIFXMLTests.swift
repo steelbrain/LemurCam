@@ -86,7 +86,8 @@ internal final class ONVIFXMLTests: XCTestCase {
     // MARK: - Network-facing parsers
 
     func testProbeMatchParserRejectsDeepReply() {
-        XCTAssertNil(ONVIFDiscovery.parseProbeMatch(xml: nested(20_000, name: "XAddrs")))
+        let context = ONVIFDiscovery.ReplyContext(probeMessageID: "uuid:x", sender: "192.0.2.1")
+        XCTAssertNil(ONVIFDiscovery.parseProbeMatch(xml: nested(20_000, name: "XAddrs"), context: context))
     }
 
     func testClientParsersRejectDeepResponses() {

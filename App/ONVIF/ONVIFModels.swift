@@ -1,13 +1,17 @@
 import Foundation
 
 internal struct DiscoveredDevice: Identifiable {
-    let id: String           // UUID from wsa:Address
-    let endpointURL: String  // XAddrs (the ONVIF service URL)
+    let endpointUUID: String // From wsa:Address, without "urn:uuid:"
+    let endpointURL: String  // Chosen XAddr (the device service URL), on the replying host
     let name: String?        // Parsed from scopes (onvif://www.onvif.org/name/...)
     let manufacturer: String? // From scopes
     let model: String?       // From scopes
-    let host: String         // Extracted from endpoint URL
+    let host: String         // The host the reply came from
     let port: Int            // Extracted from endpoint URL
+
+    /// Two replies can claim the same endpoint UUID (a device and an impostor), so a
+    /// device is identified by its UUID and address together.
+    var id: String { "\(endpointUUID)@\(host):\(port)" }
 
     /// Whether the device service URL is HTTPS.
     var useHTTPS: Bool {

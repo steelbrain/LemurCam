@@ -128,13 +128,15 @@ internal final class ONVIFServiceAddressTests: XCTestCase {
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
                         xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
                         xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <s:Header><wsa:RelatesTo>uuid:probe-1</wsa:RelatesTo></s:Header>
               <s:Body><d:ProbeMatches><d:ProbeMatch>
                 <wsa:EndpointReference><wsa:Address>urn:uuid:https-cam</wsa:Address></wsa:EndpointReference>
                 <d:XAddrs>https://192.0.2.7/onvif/device_service</d:XAddrs>
               </d:ProbeMatch></d:ProbeMatches></s:Body>
             </s:Envelope>
             """
-        let device = try XCTUnwrap(ONVIFDiscovery.parseProbeMatch(xml: xml))
+        let context = ONVIFDiscovery.ReplyContext(probeMessageID: "uuid:probe-1", sender: "192.0.2.7")
+        let device = try XCTUnwrap(ONVIFDiscovery.parseProbeMatch(xml: xml, context: context))
         XCTAssertTrue(device.useHTTPS)
         XCTAssertEqual(device.port, 443)
     }

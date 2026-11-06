@@ -5,12 +5,21 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
 
     // MARK: - parseProbeMatch
 
+    private static let probeID = "uuid:6F1A2B3C-0000-4000-8000-00000000ABCD"
+
+    private func parse(_ xml: String, sender: String) -> DiscoveredDevice? {
+        ONVIFDiscovery.parseProbeMatch(
+            xml: xml, context: ONVIFDiscovery.ReplyContext(probeMessageID: Self.probeID, sender: sender)
+        )
+    }
+
     func testParseValidProbeMatch() {
         let xml = """
             <?xml version="1.0" encoding="UTF-8"?>
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
                         xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
                         xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <s:Header><wsa:RelatesTo>\(Self.probeID)</wsa:RelatesTo></s:Header>
               <s:Body>
                 <d:ProbeMatches>
                   <d:ProbeMatch>
@@ -25,10 +34,10 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             </s:Envelope>
             """
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "192.168.1.50")
 
         XCTAssertNotNil(device)
-        XCTAssertEqual(device?.id, "abcd-1234")
+        XCTAssertEqual(device?.endpointUUID, "abcd-1234")
         XCTAssertEqual(device?.host, "192.168.1.50")
         XCTAssertEqual(device?.port, 8080)
         XCTAssertEqual(device?.name, "FrontDoor")
@@ -43,8 +52,8 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             xaddrs: "http://10.0.0.1/onvif/device_service"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
-        XCTAssertEqual(device?.id, "12345678-abcd-efgh-ijkl-000000000001")
+        let device = parse(xml, sender: "10.0.0.1")
+        XCTAssertEqual(device?.endpointUUID, "12345678-abcd-efgh-ijkl-000000000001")
     }
 
     func testParseProbeMatchDefaultsPortTo80() {
@@ -53,7 +62,7 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             xaddrs: "http://192.168.1.10/onvif/device_service"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "192.168.1.10")
         XCTAssertEqual(device?.port, 80)
     }
 
@@ -63,17 +72,17 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             xaddrs: "https://192.168.1.10/onvif/device_service"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "192.168.1.10")
         XCTAssertEqual(device?.port, 443)
     }
 
-    func testParseProbeMatchPicksFirstXAddrs() {
+    func testParseProbeMatchPicksFirstXAddrsWhenSeveralMatchTheSender() {
         let xml = probeMatchXML(
             uuid: "test-uuid",
-            xaddrs: "http://192.168.1.10:80/onvif http://10.0.0.1:8080/onvif"
+            xaddrs: "http://192.168.1.10:80/onvif http://192.168.1.10:8080/onvif"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "192.168.1.10")
         XCTAssertEqual(device?.endpointURL, "http://192.168.1.10:80/onvif")
         XCTAssertEqual(device?.host, "192.168.1.10")
     }
@@ -85,14 +94,16 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             scopes: "onvif://www.onvif.org/name/Front%20Door"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "10.0.0.1")
         XCTAssertEqual(device?.name, "Front Door")
     }
 
     func testParseProbeMatchReturnsNilForMissingUUID() {
         let xml = """
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
                         xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <s:Header><wsa:RelatesTo>\(Self.probeID)</wsa:RelatesTo></s:Header>
               <s:Body>
                 <d:ProbeMatches>
                   <d:ProbeMatch>
@@ -103,26 +114,30 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             </s:Envelope>
             """
 
-        XCTAssertNil(ONVIFDiscovery.parseProbeMatch(xml: xml))
+        XCTAssertNil(parse(xml, sender: "10.0.0.1"))
     }
 
     func testParseProbeMatchReturnsNilForMissingXAddrs() {
         let xml = """
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
-                        xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing">
+                        xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
+                        xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+              <s:Header><wsa:RelatesTo>\(Self.probeID)</wsa:RelatesTo></s:Header>
               <s:Body>
-                <wsa:EndpointReference>
-                  <wsa:Address>urn:uuid:abc</wsa:Address>
-                </wsa:EndpointReference>
+                <d:ProbeMatches><d:ProbeMatch>
+                  <wsa:EndpointReference>
+                    <wsa:Address>urn:uuid:abc</wsa:Address>
+                  </wsa:EndpointReference>
+                </d:ProbeMatch></d:ProbeMatches>
               </s:Body>
             </s:Envelope>
             """
 
-        XCTAssertNil(ONVIFDiscovery.parseProbeMatch(xml: xml))
+        XCTAssertNil(parse(xml, sender: "10.0.0.1"))
     }
 
     func testParseProbeMatchReturnsNilForMalformedXML() {
-        XCTAssertNil(ONVIFDiscovery.parseProbeMatch(xml: "not xml at all"))
+        XCTAssertNil(parse("not xml at all", sender: "10.0.0.1"))
     }
 
     func testParseProbeMatchWithManufacturerScope() {
@@ -132,7 +147,7 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             scopes: "onvif://www.onvif.org/manufacturer/Hikvision"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "10.0.0.1")
         XCTAssertEqual(device?.manufacturer, "Hikvision")
     }
 
@@ -146,7 +161,7 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
             scopes: "onvif://www.onvif.org/hardware/HW-Brand onvif://www.onvif.org/manufacturer/Mfr-Brand"
         )
 
-        let device = ONVIFDiscovery.parseProbeMatch(xml: xml)
+        let device = parse(xml, sender: "10.0.0.1")
         XCTAssertEqual(device?.manufacturer, "HW-Brand")
     }
 
@@ -205,11 +220,15 @@ internal final class ONVIFDiscoveryTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func probeMatchXML(uuid: String, xaddrs: String, scopes: String = "") -> String {
-        """
+    private func probeMatchXML(
+        uuid: String, xaddrs: String, scopes: String = "", relatesTo: String? = probeID
+    ) -> String {
+        let header = relatesTo.map { "<s:Header><wsa:RelatesTo>\($0)</wsa:RelatesTo></s:Header>" } ?? ""
+        return """
         <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
                     xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing"
                     xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery">
+          \(header)
           <s:Body>
             <d:ProbeMatches>
               <d:ProbeMatch>

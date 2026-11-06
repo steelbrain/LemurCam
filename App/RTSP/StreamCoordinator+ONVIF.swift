@@ -54,7 +54,7 @@ extension StreamCoordinator {
         let devices = await ONVIFDiscovery().scan()
         try Task.checkCancellation()
 
-        guard let match = devices.first(where: { $0.id == uuid }) else { return nil }
+        guard let match = devices.first(where: { $0.endpointUUID == uuid }) else { return nil }
         Log.rtsp.info("Found device at \(match.host):\(match.port)")
 
         var updated = params.info
