@@ -28,6 +28,8 @@ import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
    - The two cameras and their stream details are samples. Log messages are the
      app's real Log calls, filled in with those samples; timestamps use the
      en-US format the app shows on an English (US) Mac.
+   - No other app is using the virtual camera or microphone, and there is no
+     menu bar popover, so only the Preview pane keeps the stream connected.
    - The preview shows a test pattern in place of camera video.
    - Connecting a camera and removing/enabling the microphone run on short
      timers instead of real network and install work.
@@ -42,6 +44,7 @@ const ACCENT = "#007aff";
 const GREEN = "#28cd41";
 const GREEN_TEXT = "#1d9d43"; // darker than systemGreen so the text stays legible
 const ORANGE = "#ff9500";
+const RED = "#ff3b30";
 
 const BARS = [
   "#c8c8c8",
@@ -110,14 +113,16 @@ const SOURCES: Source[] = [
 const CODEC_NAME = { h264: "H.264", h265: "H.265" } as const;
 
 // ConnectionStatusHelpers.swift (only the states this recreation reaches)
-type ConnectionStatus = "connecting" | "connected";
+type ConnectionStatus = "connecting" | "connected" | "disconnected";
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting",
   connected: "Connected",
+  disconnected: "Disconnected",
 };
 const STATUS_COLOR: Record<ConnectionStatus, string> = {
   connecting: ORANGE,
   connected: GREEN,
+  disconnected: RED,
 };
 
 // LemurCamConfig.Resolution / FrameRate, with their defaults.
@@ -136,8 +141,8 @@ type LogEntry = {
 };
 
 // What a launch looks like up to the stream feeding the preview: sources load,
-// the coordinator starts with no demand, opening Settings adds preview demand,
-// and the active camera connects.
+// the coordinator starts with no demand, opening the Preview pane adds preview
+// demand, and the active camera connects.
 const LAUNCH_LOG: [string, LogCategory, string][] = [
   ["9:41:00.208 AM", "app", "Loaded 2 source(s)"],
   ["9:41:00.214 AM", "rtsp", "No demand — skipping RTSP connection"],
@@ -980,6 +985,31 @@ function LogsPane({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
 // Window
 // ---------------------------------------------------------------------------
 
+function Sidebar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void }) {
+  return (
+    <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/8 bg-[#ecebf1] p-2 sm:w-[200px] sm:flex-col sm:border-b-0 sm:border-r sm:p-2.5">
+      {TABS.map((t) => {
+        const Icon = t.icon;
+        const selected = tab === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onSelect(t.id)}
+            aria-pressed={selected}
+            className={`flex shrink-0 cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+              selected ? "bg-[#007aff] font-medium text-white" : "text-black/70 hover:bg-black/5"
+            }`}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="whitespace-nowrap">{t.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function AppWindow() {
   const [tab, setTab] = useState<TabId>("preview");
 
@@ -1016,17 +1046,11 @@ export default function AppWindow() {
     setLogs((prev) => [...prev, entry]);
   };
 
-  // StreamCoordinator.syncToActiveSource → connectToSource → RTSPStreamPipeline.
-  const selectSource = (id: string | null) => {
-    if (id === activeId) return;
+  // StreamCoordinator.syncToActiveSource with demand → connectToSource →
+  // RTSPStreamPipeline.
+  const connect = (id: string | null) => {
     connectTimers.cancelAll();
-    // A connection abandoned mid-way goes back to its earlier reachable status.
-    setStatuses((prev) =>
-      Object.fromEntries(Object.keys(prev).map((key) => [key, "connected" as const]))
-    );
-    setActiveId(id);
     setStreaming(false);
-
     const source = SOURCES.find((s) => s.id === id);
     if (!source) {
       log("rtsp", "No active source, starting fallback generator");
@@ -1055,6 +1079,34 @@ export default function AppWindow() {
     });
   };
 
+  // PreviewDemandDecision: of the Settings panes only Preview creates demand,
+  // and StreamCoordinator.reconcileDemand acts on its edges.
+  const selectTab = (to: TabId) => {
+    if (to === tab) return;
+    setTab(to);
+    if (to === "preview") {
+      log("rtsp", "Demand detected — resuming RTSP pipeline");
+      connect(activeId);
+    } else if (tab === "preview") {
+      log("rtsp", "No demand — pausing RTSP pipeline");
+      connectTimers.cancelAll();
+      setStreaming(false);
+      // With no live connection, the badge shows what handlePipelineStateChanged
+      // maps .idle/.disconnected to: ConnectionStatus.disconnected, "Disconnected"
+      // in red (ConnectionStatusHelpers.swift).
+      if (activeId) setStatuses((prev) => ({ ...prev, [activeId]: "disconnected" }));
+    }
+  };
+
+  // Cameras is not a demand pane, so SourceManager.setActiveSource →
+  // syncToActiveSource only records the new source; it connects when the
+  // Preview pane brings demand back.
+  const selectSource = (id: string | null) => {
+    if (id === activeId) return;
+    setActiveId(id);
+    log("rtsp", "No demand — skipping RTSP connection");
+  };
+
   const changeMic = (to: MicStatus) => {
     micTimers.cancelAll();
     setMicStatus("working");
@@ -1078,27 +1130,7 @@ export default function AppWindow() {
       </div>
 
       <div className="flex flex-col sm:h-[480px] sm:flex-row">
-        {/* Sidebar */}
-        <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/8 bg-[#ecebf1] p-2 sm:w-[200px] sm:flex-col sm:border-b-0 sm:border-r sm:p-2.5">
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            const selected = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                aria-pressed={selected}
-                className={`flex shrink-0 cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
-                  selected ? "bg-[#007aff] font-medium text-white" : "text-black/70 hover:bg-black/5"
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="whitespace-nowrap">{t.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        <Sidebar tab={tab} onSelect={selectTab} />
 
         {/* Content */}
         <div className="min-h-[380px] flex-1 overflow-y-auto bg-[#fbfafc] sm:min-h-0">
