@@ -129,7 +129,8 @@ internal final class LogLineRecorder: Sendable {
 
 /// A `StreamCoordinator` wired to a `FakeStreamPipeline` and a `SourceManager` with
 /// throwaway storage. `SourceManager` persists the active source in the host app's
-/// standard defaults, so `cleanUp()` restores that value.
+/// standard defaults, so `cleanUp()` restores that value. Its `LemurCamModel`
+/// finds no consumer at discovery and never reads a real CMIO device.
 @MainActor
 internal final class CoordinatorHarness {
     let manager: SourceManager
@@ -148,7 +149,7 @@ internal final class CoordinatorHarness {
         pipeline = fakePipeline
         coordinator = StreamCoordinator(
             sourceManager: sourceManager, audioConsumerProbe: { false }, cameraConsumerProbe: { false },
-            pipeline: fakePipeline
+            model: LemurCamModel(consumerProbe: { _ in false }), pipeline: fakePipeline
         )
     }
 

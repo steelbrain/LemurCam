@@ -32,16 +32,19 @@ internal final class StreamCoordinator {
     }
 
     /// Whether an external app is consuming the virtual camera, as tracked in this
-    /// process from the extension's Darwin consumer notifications. Read-only.
+    /// process from the extension's Darwin consumer notifications and what
+    /// `LemurCamModel` learns from CMIO (device loss, discovery). Read-only.
     var hasExternalConsumers: Bool { _hasConsumers }
 
+    /// `model` is injectable so tests can give it a consumer probe that never
+    /// reads a real CMIO device.
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
         cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
+        model streamModel: LemurCamModel = LemurCamModel(),
         pipeline: any StreamPipeline = RTSPStreamPipeline()
     ) {
-        let streamModel = LemurCamModel()
         let previews = PreviewStore()
 
         self.model = streamModel
@@ -179,6 +182,15 @@ private extension StreamCoordinator {
             },
             LemurCamConfig.consumerStoppedNotification, nil, .deliverImmediately
         )
+
+        // The extension posts nothing when it dies or its device is replaced, and
+        // the model's discovery probe decides whether the sink stream starts: take
+        // both from the model, so a consumer that is gone stops the stream and one
+        // the sink serves gets frames.
+        model.onExternalConsumerChange = { [weak self] hasConsumer in
+            self?._hasConsumers = hasConsumer
+            self?.demandChanged()
+        }
     }
 
     /// Observe the virtual-microphone driver's consumer notifications, mirroring the
@@ -425,6 +437,13 @@ extension StreamCoordinator {
     /// Whether a reconnect is scheduled and not yet run or cancelled.
     var hasPendingRetry: Bool {
         retryTask != nil
+    }
+
+    /// Apply a camera consumer edge the way `observeConsumerChanges`' Darwin
+    /// observers do, without posting the system-wide notification.
+    func simulateCameraConsumerChange(active: Bool) {
+        _hasConsumers = active
+        demandChanged()
     }
 
     /// Apply a microphone consumer edge the way `observeAudioConsumers`' Darwin

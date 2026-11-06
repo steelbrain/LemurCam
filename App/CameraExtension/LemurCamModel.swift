@@ -26,6 +26,22 @@ internal final class LemurCamModel: Sendable {
     /// callbacks run on `discoveryQueue`, serialized with discovery itself.
     private let deviceListObserver = OSAllocatedUnfairLock<CMIODeviceListObserver?>(uncheckedState: nil)
 
+    private let externalConsumerHandler = OSAllocatedUnfairLock<(@MainActor @Sendable (Bool) -> Void)?>(
+        initialState: nil
+    )
+
+    /// Told on the main thread whether an external app is using the virtual camera,
+    /// each time this model learns it other than from the extension's consumer
+    /// notifications: false when the cached device goes away, since an extension
+    /// that crashes, is disabled, replaced or repaired never posts
+    /// `consumerStopped`; and after each discovery of a new device, the consumer
+    /// probe's answer, which also decides whether the sink stream starts. Set by
+    /// `StreamCoordinator`, so its camera demand agrees with the sink stream.
+    var onExternalConsumerChange: (@MainActor @Sendable (Bool) -> Void)? {
+        get { externalConsumerHandler.withLock { $0 } }
+        set { externalConsumerHandler.withLock { $0 = newValue } }
+    }
+
     init(
         consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
@@ -114,7 +130,9 @@ internal final class LemurCamModel: Sendable {
 
     /// Applies a discovery result on the main thread, preserving single-threaded
     /// ownership of the device/stream/ready state. Reschedules a retry on a miss.
-    private func applyDiscoveryResult(
+    /// Internal so tests can apply results without CMIO.
+    @MainActor
+    func applyDiscoveryResult(
         _ result: (deviceID: CMIODeviceID, streamID: CMIOStreamID)?
     ) {
         switch streamState.applyDiscoveryResult(result) {
@@ -127,7 +145,10 @@ internal final class LemurCamModel: Sendable {
             // Zoom had it open, or its consumerStarted notification fired before
             // discovery finished), start immediately. The app hasn't started its own
             // sink stream on this device yet, so "running somewhere" is external.
-            if consumerProbe(deviceID) {
+            // Only `.ready` probes: it means a new device, with no sink stream of ours.
+            let hasConsumer = consumerProbe(deviceID)
+            onExternalConsumerChange?(hasConsumer)
+            if hasConsumer {
                 Log.ipc.info("Device discovered with an active consumer, starting sink stream")
                 startStream()
             } else {
@@ -168,15 +189,22 @@ internal final class LemurCamModel: Sendable {
 
     /// The extension was disabled, re-enabled, repaired, replaced or crashed: the
     /// cached device/stream IDs (and a sink stream stuck "streaming" because no
-    /// `consumerStopped` arrived) belong to a device that no longer exists.
-    private func applyDeviceListChange(_ lemurDeviceID: CMIODeviceID?) {
+    /// `consumerStopped` arrived) belong to a device that no longer exists. Its
+    /// consumers went with it. Internal so tests can apply changes without CMIO.
+    @MainActor
+    func applyDeviceListChange(_ lemurDeviceID: CMIODeviceID?) {
         switch streamState.deviceListChanged(lemurDeviceID: lemurDeviceID) {
         case .unchanged:
             return
         case .deviceLost:
             Log.ipc.info("Virtual camera device went away; dropped its cached CMIO IDs and sink stream")
+            onExternalConsumerChange?(false)
+        case .deviceReplaced:
+            Log.ipc.info("Virtual camera device was replaced; dropped its cached CMIO IDs and re-running discovery")
+            onExternalConsumerChange?(false)
+            scheduleRetry()
         case .rediscover:
-            Log.ipc.info("Virtual camera device appeared or changed; re-running discovery")
+            Log.ipc.info("Virtual camera device appeared; running discovery")
             scheduleRetry()
         }
     }
@@ -238,9 +266,11 @@ internal final class LemurCamModel: Sendable {
         CMIODeviceStopStream(snapshot.deviceID, snapshot.streamID)
         Log.ipc.info("Sink stream stopped (no consumers)")
     }
+}
 
-    // MARK: - Consumer Observation
+// MARK: - Consumer Observation
 
+extension LemurCamModel {
     private func observeConsumerChanges() {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
         let observer = Unmanaged.passUnretained(self).toOpaque()

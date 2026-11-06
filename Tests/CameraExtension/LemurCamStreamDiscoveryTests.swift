@@ -160,7 +160,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
         try connect(state)
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .rediscover)
+        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .deviceReplaced)
         XCTAssertFalse(state.isReady)
         XCTAssertFalse(state.isStreaming)
         XCTAssertFalse(state.hasStreamResources)

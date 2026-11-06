@@ -77,7 +77,10 @@ internal final class LemurCamStreamState: Sendable {
         /// The cached device went away. Its IDs and sink stream are dropped; wait
         /// for the device to come back.
         case deviceLost
-        /// The device appeared, or replaced the cached one: run discovery.
+        /// Another device replaced the cached one. The old IDs and sink stream are
+        /// dropped; run discovery for the new one.
+        case deviceReplaced
+        /// The device appeared while none was cached: run discovery.
         case rediscover
     }
 
@@ -290,7 +293,7 @@ extension LemurCamStreamState {
                     return (.deviceLost, dropped)
                 }
                 state.armDiscovery()
-                return (.rediscover, nil)
+                return (.deviceReplaced, nil)
             }
             guard state.discoveryRequested, lemurDeviceID != nil, !state.isDiscovering else {
                 return (.unchanged, nil)
