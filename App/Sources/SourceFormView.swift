@@ -18,14 +18,10 @@ internal struct SourceFormView: View {
     @State private var saveError: String?
     @State private var isProbing = false
     @State private var probeError: String?
-    @State private var onvifProfiles: [ONVIFProfile] = []
-    @State private var selectedProfileToken: String?
-    @State private var streamURI: String?
+    @State private var onvifDetails = SourceFormONVIFDetails()
     @State private var onvifHost: String = ""
     @State private var onvifPort: Int = Tuning.defaultHTTPPort
     @State private var onvifUseHTTPS = false
-    @State private var deviceUUID: String?
-    @State private var serialNumber: String?
     @State private var urlFieldEdits = SourceFormURLFieldEdits()
     @State private var fetchTickets = SourceFormFetchTickets()
     @State private var onvifAddressEdits = SourceFormONVIFAddressEdits()
@@ -116,14 +112,12 @@ internal struct SourceFormView: View {
                 .textContentType(.URL)
                 .onChange(of: inputText) { _, newValue in
                     guard urlFieldEdits.isUserEdit(newValue) else { return }
-                    // What is still being fetched is for the URL as it was.
+                    // What is still being fetched, and what was read, is for the URL as it was.
                     fetchTickets.invalidate()
                     isProbing = false
+                    onvifDetails.clear()
                     if resolvedType != nil {
                         resolvedType = nil
-                        onvifProfiles = []
-                        selectedProfileToken = nil
-                        streamURI = nil
                         probeError = nil
                     }
                 }
@@ -192,14 +186,14 @@ internal struct SourceFormView: View {
 
     @ViewBuilder
     private var onvifProfilePicker: some View {
-        if !onvifProfiles.isEmpty {
-            Picker("Profile", selection: $selectedProfileToken) {
+        if !onvifDetails.profiles.isEmpty {
+            Picker("Profile", selection: $onvifDetails.selectedProfileToken) {
                 Text("Select a profile").tag(nil as String?)
-                ForEach(onvifProfiles) { profile in
+                ForEach(onvifDetails.profiles) { profile in
                     Text(profile.displayName).tag(profile.token as String?)
                 }
             }
-            .onChange(of: selectedProfileToken) { _, newToken in
+            .onChange(of: onvifDetails.selectedProfileToken) { _, newToken in
                 if let token = newToken { fetchStreamURI(profileToken: token) }
             }
         }
@@ -207,7 +201,7 @@ internal struct SourceFormView: View {
 
     @ViewBuilder
     private var streamURILabel: some View {
-        if let streamURI {
+        if let streamURI = onvifDetails.streamURI {
             LabeledContent("Stream URL") {
                 Text(DisplayedURL.redacted(streamURI))
                     .font(.caption)
@@ -230,14 +224,14 @@ private extension SourceFormView {
             switch editSourceType {
             case .rtsp: return isValidRTSPURL(inputText)
             case .onvif:
-                return !onvifHost.isEmpty && selectedProfileToken != nil
+                return !onvifHost.isEmpty && onvifDetails.selectedProfileToken != nil
                     && onvifAddressEdits.allowsSave(at: onvifAddress)
             case nil: return false
             }
         }
         switch resolvedType {
         case .rtsp: return isValidRTSPURL(inputText)
-        case .onvif: return selectedProfileToken != nil
+        case .onvif: return onvifDetails.selectedProfileToken != nil
         case nil: return false
         }
     }
@@ -259,17 +253,9 @@ private extension SourceFormView {
         case .keep:
             return
         case .clear:
-            onvifProfiles = []
-            selectedProfileToken = nil
-            streamURI = nil
-            deviceUUID = nil
-            serialNumber = nil
+            onvifDetails.clear()
         case .restore(let saved):
-            onvifProfiles = []
-            selectedProfileToken = saved.selectedProfileToken
-            streamURI = saved.streamURI
-            deviceUUID = saved.deviceUUID
-            serialNumber = saved.serialNumber
+            onvifDetails = SourceFormONVIFDetails(saved: saved)
         }
         probeError = nil
     }
@@ -326,6 +312,8 @@ private extension SourceFormView {
         onvifHost = host
         onvifUseHTTPS = components.scheme?.lowercased() == "https"
         onvifPort = components.port ?? (onvifUseHTTPS ? Tuning.defaultHTTPSPort : Tuning.defaultHTTPPort)
+        // Connect is for the camera at this URL, which need not be the one before.
+        onvifDetails.clear()
         fetchProfiles()
     }
 
@@ -333,9 +321,7 @@ private extension SourceFormView {
         let ticket = fetchTickets.issue()
         isProbing = true
         probeError = nil
-        onvifProfiles = []
-        selectedProfileToken = nil
-        streamURI = nil
+        onvifDetails.startFetchingProfiles()
         let address = onvifAddress
         let client = makeONVIFClient()
         Task {
@@ -346,14 +332,9 @@ private extension SourceFormView {
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
                     onvifAddressEdits.fetchSucceeded(at: address)
-                    onvifProfiles = fetched.profiles
+                    onvifDetails.profilesFetched(fetched)
                     isProbing = false
                     resolvedType = .onvif
-                    let serial = fetched.info?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
-                    if let serial { serialNumber = serial }
-                    deviceUUID = ONVIFSourceInfo.resolvedDeviceUUID(
-                        current: deviceUUID, serialNumber: serial, endpointReference: fetched.endpointReference
-                    )
                 }
             } catch {
                 await MainActor.run {
@@ -375,7 +356,7 @@ private extension SourceFormView {
                 }
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
-                    streamURI = uri
+                    onvifDetails.streamURIFetched(uri)
                 }
             } catch {
                 await MainActor.run {
@@ -409,9 +390,9 @@ private extension SourceFormView {
             return .rtsp(RTSPSourceInfo(url: RTSPURLInput.normalized(inputText)))
         }
         return .onvif(ONVIFSourceInfo(
-            deviceUUID: deviceUUID, host: onvifHost, port: onvifPort,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: onvifUseHTTPS,
-            serialNumber: serialNumber
+            deviceUUID: onvifDetails.deviceUUID, host: onvifHost, port: onvifPort,
+            selectedProfileToken: onvifDetails.selectedProfileToken, streamURI: onvifDetails.streamURI,
+            useHTTPS: onvifUseHTTPS, serialNumber: onvifDetails.serialNumber
         ))
     }
 
@@ -448,17 +429,12 @@ private extension SourceFormView {
             onvifHost = info.host
             onvifPort = info.port
             onvifUseHTTPS = info.useHTTPS
-            selectedProfileToken = info.selectedProfileToken
-            streamURI = info.streamURI
-            deviceUUID = info.deviceUUID
-            serialNumber = info.serialNumber
-            onvifAddressEdits = SourceFormONVIFAddressEdits(
-                savedAt: onvifAddress,
-                details: .init(
-                    selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
-                    deviceUUID: info.deviceUUID, serialNumber: info.serialNumber
-                )
+            let saved = SourceFormONVIFAddressEdits.SavedDetails(
+                selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
+                deviceUUID: info.deviceUUID, serialNumber: info.serialNumber
             )
+            onvifDetails = SourceFormONVIFDetails(saved: saved)
+            onvifAddressEdits = SourceFormONVIFAddressEdits(savedAt: onvifAddress, details: saved)
         }
         do {
             if let creds = try sourceManager.loadCredentials(for: source.id) {
