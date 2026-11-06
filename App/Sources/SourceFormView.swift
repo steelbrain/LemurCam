@@ -7,7 +7,7 @@ internal struct SourceFormView: View {
     let editing: CameraSource?
     /// Called with what to tell the user when Save saved the camera with a problem
     /// (`SourceFormSaveOutcome.savedWithProblem`); the form then closes.
-    let onSavedWithProblem: ((String) -> Void)?
+    let onSavedWithProblem: ((SavedEditProblem) -> Void)?
 
     @State private var name: String = ""
     @State private var inputText: String = ""
@@ -33,7 +33,7 @@ internal struct SourceFormView: View {
 
     init(
         sourceManager: SourceManager, editing: CameraSource? = nil,
-        onSavedWithProblem: ((String) -> Void)? = nil
+        onSavedWithProblem: ((SavedEditProblem) -> Void)? = nil
     ) {
         self.sourceManager = sourceManager
         self.editing = editing
@@ -437,7 +437,7 @@ private extension SourceFormView {
         }
         let outcome = SourceFormSaveOutcome(error: failure)
         if case .notSaved(let message) = outcome { saveError = message }
-        if case .savedWithProblem(let message) = outcome { onSavedWithProblem?(message) }
+        if case .savedWithProblem(let problem) = outcome { onSavedWithProblem?(problem) }
         return outcome.closesForm
     }
 

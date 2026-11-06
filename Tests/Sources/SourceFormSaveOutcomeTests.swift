@@ -22,19 +22,22 @@ internal final class SourceFormSaveOutcomeTests: XCTestCase {
 
             let outcome = SourceFormSaveOutcome(error: error)
 
-            XCTAssertEqual(outcome, .savedWithProblem(error.localizedDescription))
+            let expected = SavedEditProblem(title: "Login Not Saved", message: error.localizedDescription)
+            XCTAssertEqual(outcome, .savedWithProblem(expected))
             XCTAssertTrue(outcome.closesForm, "the edit is saved (old login removed: \(oldLoginRemoved))")
         }
     }
 
     /// An edit that turned the login off is saved too when the Keychain couldn't
-    /// remove the login and the file couldn't be put back.
+    /// remove the login and the file couldn't be put back. The login is still saved,
+    /// so the alert's title says it wasn't removed, not that it wasn't saved.
     func testAnEditSavedWithItsOldLoginClosesTheFormAndSaysWhy() {
         let error = EditSavedWithOldLoginError()
 
         let outcome = SourceFormSaveOutcome(error: error)
 
-        XCTAssertEqual(outcome, .savedWithProblem(error.localizedDescription))
+        let expected = SavedEditProblem(title: "Login Not Removed", message: error.localizedDescription)
+        XCTAssertEqual(outcome, .savedWithProblem(expected))
         XCTAssertTrue(outcome.closesForm)
     }
 

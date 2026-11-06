@@ -9,9 +9,9 @@ internal struct SourceListView: View {
     @State private var removeError: String?
     /// What an edit saved with a problem (`SourceFormSaveOutcome.savedWithProblem`)
     /// must tell the user, held until its form has closed.
-    @State private var pendingEditProblem: String?
+    @State private var pendingEditProblem: SavedEditProblem?
     /// The same, shown over the list once the form is gone.
-    @State private var editProblem: String?
+    @State private var editProblem: SavedEditProblem?
 
     /// While saving is refused, cameras can't be added, edited or removed (the banner
     /// says why), so the actions that would are disabled.
@@ -66,13 +66,13 @@ internal struct SourceListView: View {
         } message: {
             Text(removeError ?? "")
         }
-        .alert("Login Not Saved", isPresented: Binding(
+        .alert(editProblem?.title ?? "", isPresented: Binding(
             get: { editProblem != nil },
             set: { if !$0 { editProblem = nil } }
         )) {
             Button("OK") { editProblem = nil }
         } message: {
-            Text(editProblem ?? "")
+            Text(editProblem?.message ?? "")
         }
     }
 

@@ -12,20 +12,21 @@ internal enum SourceFormSaveOutcome: Equatable {
     /// Saved: the form closes.
     case saved
     /// Saved, with a problem the user has to act on: the form closes and the camera
-    /// list shows `message`.
-    case savedWithProblem(String)
+    /// list shows it.
+    case savedWithProblem(SavedEditProblem)
     /// Nothing was saved: the form stays open with what was entered and shows `message`.
     case notSaved(String)
 
     /// The outcome of a save that threw `error`, or of one that worked when nil.
     init(error: (any Error)?) {
-        guard let error else {
+        switch error {
+        case nil:
             self = .saved
-            return
-        }
-        if error is EditSavedWithoutLoginError || error is EditSavedWithOldLoginError {
-            self = .savedWithProblem(error.localizedDescription)
-        } else {
+        case let error as EditSavedWithoutLoginError:
+            self = .savedWithProblem(SavedEditProblem(title: "Login Not Saved", message: error.localizedDescription))
+        case let error as EditSavedWithOldLoginError:
+            self = .savedWithProblem(SavedEditProblem(title: "Login Not Removed", message: error.localizedDescription))
+        case let error?:
             self = .notSaved(error.localizedDescription)
         }
     }
@@ -37,4 +38,12 @@ internal enum SourceFormSaveOutcome: Equatable {
         case .notSaved: false
         }
     }
+}
+
+/// What the camera list shows about an edit saved with a problem: an alert `title`
+/// and `message`. The list showed "Login Not Saved" for every such edit, also for
+/// `EditSavedWithOldLoginError`, where the login the user turned off is still saved.
+internal struct SavedEditProblem: Equatable {
+    let title: String
+    let message: String
 }
