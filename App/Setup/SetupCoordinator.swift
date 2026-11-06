@@ -52,6 +52,7 @@ internal final class SetupCoordinator {
     @ObservationIgnored private lazy var bundledDriverVersion: String? = audioInstaller.bundledDriverVersion
     @ObservationIgnored private var livenessPollTask: Task<Void, Never>?
     @ObservationIgnored private var micInstallTimeout: Task<Void, Never>?
+    @ObservationIgnored private var micQueryTimeout: Task<Void, Never>?
     /// Set when the user starts mic setup, so once the helper becomes approved we
     /// install the driver automatically instead of making them click again.
     @ObservationIgnored private var autoInstallDriver = false
@@ -71,6 +72,10 @@ internal final class SetupCoordinator {
     /// Fail an in-progress driver install if the privileged helper vends a proxy
     /// but never replies (e.g. it crashes mid-request), so `micStatus` can't stick.
     private static let micInstallTimeoutNs: UInt64 = 30_000_000_000
+    /// Treat a version query the helper accepted but never answered as unreachable,
+    /// so a status waiting on it cannot spin forever. A reply that arrives later
+    /// still applies.
+    private static let micQueryTimeoutNs: UInt64 = 10_000_000_000
 
     /// The camera is the core feature and is required; the microphone is optional.
     var isCameraReady: Bool { cameraStatus == .ready }
@@ -286,9 +291,17 @@ extension SetupCoordinator {
     private func queryInstalledDriverVersion() {
         micRefreshToken += 1
         let token = micRefreshToken
+        micQueryTimeout?.cancel()
+        micQueryTimeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.micQueryTimeoutNs)
+            guard let self, !Task.isCancelled else { return }
+            self.applyDriverCheck(.unreachable, token: token)
+        }
         audioInstaller.installedDriver { [weak self] check in
             Task { @MainActor in
-                self?.applyDriverCheck(check, token: token)
+                guard let self else { return }
+                if token == self.micRefreshToken { self.micQueryTimeout?.cancel() }
+                self.applyDriverCheck(check, token: token)
             }
         }
     }

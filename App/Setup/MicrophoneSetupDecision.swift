@@ -63,12 +63,15 @@ internal enum MicrophoneVersionReply: Equatable {
         return .setStatus(.ready)
     }
 
-    /// Once the status is known, an unreachable helper is a hiccup, not "not
-    /// installed", so keep it. Before that, waiting would leave a spinner with no
-    /// action forever; fail so "Try Again" is offered. A later successful query
-    /// (poll or reactivation) replaces the failure.
+    /// A known status survives an unreachable helper: it is a hiccup, not "not
+    /// installed". A spinner with no action (still checking, or an operation waiting
+    /// for its result) would stay forever, so fail and offer "Try Again". A later
+    /// successful check replaces the failure.
     private static func unreachable(currentStatus: MicrophoneStatus) -> Self {
-        currentStatus == .unknown ? .setStatus(.failed(unreachableMessage)) : .keepStatus
+        switch currentStatus {
+        case .unknown, .installing: return .setStatus(.failed(unreachableMessage))
+        case .notSetUp, .needsApproval, .ready, .needsReboot, .failed: return .keepStatus
+        }
     }
 }
 

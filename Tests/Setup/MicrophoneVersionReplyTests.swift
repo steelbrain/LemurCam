@@ -27,6 +27,16 @@ internal final class MicrophoneVersionReplyTests: XCTestCase {
         XCTAssertEqual(decide(.unreachable, .unknown), .setStatus(.failed(MicrophoneVersionReply.unreachableMessage)))
     }
 
+    func testUnreachableHelperAfterAnOperationFailsInsteadOfSpinning() {
+        // After an install or removal succeeds, the follow-up check runs while the
+        // status is still `.installing`, which has no button. Keeping it would leave
+        // "Working…" up for good.
+        XCTAssertEqual(
+            decide(.unreachable, .installing) { $0.verifyingInstall = true },
+            .setStatus(.failed(MicrophoneVersionReply.unreachableMessage))
+        )
+    }
+
     func testUnreachableHelperKeepsAKnownStatus() {
         let known: [MicrophoneStatus] = [.ready, .notSetUp, .needsApproval, .needsReboot, .failed("earlier")]
         for status in known {
