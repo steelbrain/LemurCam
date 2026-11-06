@@ -13,6 +13,12 @@ internal enum Tuning {
     /// Stream-stall watchdog timeout (nanoseconds). Also used by BootSanityChecker.
     static let streamStallTimeoutNs: UInt64 = 10_000_000_000
 
+    /// Video-decode stall timeout (nanoseconds): how long video frames may keep
+    /// arriving without one being decoded before the stream is reconnected. Twice the
+    /// stream-stall timeout, because decoding legitimately waits for the next keyframe
+    /// at stream start and after packet loss.
+    static let videoDecodeStallTimeoutNs: UInt64 = 20_000_000_000
+
     /// ONVIF HTTP request timeout (seconds).
     static let onvifRequestTimeout: TimeInterval = 10
 

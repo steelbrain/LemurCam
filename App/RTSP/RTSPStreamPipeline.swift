@@ -24,6 +24,12 @@ internal final class RTSPStreamPipeline: Sendable {
         }
     }
 
+    struct VideoDecodeStallError: LocalizedError {
+        var errorDescription: String? {
+            "Video stalled — no frame decoded for \(Tuning.videoDecodeStallTimeoutNs / 1_000_000_000) seconds"
+        }
+    }
+
     struct NoVideoStreamError: LocalizedError {
         var errorDescription: String? {
             "Camera session has no supported video stream"
@@ -123,8 +129,9 @@ internal final class RTSPStreamPipeline: Sendable {
                 throw NoVideoStreamError()
             }
 
+            let watchdog = StreamWatchdog()
             let processor = makeProcessor(for: video)
-            let decoder = makeVideoDecoder()
+            let decoder = makeVideoDecoder(watchdog: watchdog)
             defer { decoder.tearDown() }
             let audioDecoder = description.audio.map(makeAudioDecoder)
             defer { audioDecoder?.tearDown() }
@@ -134,7 +141,7 @@ internal final class RTSPStreamPipeline: Sendable {
             publishStreamInfo(video)
 
             try await consumeFrames(
-                session: session, processor: processor,
+                session: session, watchdog: watchdog, processor: processor,
                 decoder: decoder, audioDecoder: audioDecoder
             )
 
@@ -162,9 +169,10 @@ internal final class RTSPStreamPipeline: Sendable {
         )
     }
 
-    private func makeVideoDecoder() -> VideoDecoder {
+    private func makeVideoDecoder(watchdog: StreamWatchdog) -> VideoDecoder {
         let decoder = VideoDecoder()
         decoder.onDecodedFrame = { [weak self] pixelBuffer in
+            watchdog.markFrameDecoded()
             self?.emitPixelBuffer(pixelBuffer)
         }
         return decoder
@@ -243,29 +251,31 @@ internal final class RTSPStreamPipeline: Sendable {
 private extension RTSPStreamPipeline {
     func consumeFrames(
         session: RTSPClientSession,
+        watchdog: StreamWatchdog,
         processor: NALProcessor,
         decoder: VideoDecoder,
         audioDecoder: AudioDecoder?
     ) async throws {
-        let watchdog = StreamWatchdog()
         let stallTask = makeStallTask(session: session, watchdog: watchdog)
         defer { stallTask.cancel() }
 
         do {
             for try await item in session.frames() {
                 if Task.isCancelled { break }
-                await consumeFrameItem(
+                consumeFrameItem(
                     item, watchdog: watchdog, processor: processor,
                     decoder: decoder, audioDecoder: audioDecoder
                 )
             }
         } catch {
-            if await watchdog.didStall { throw StreamStallError() }
+            if let stall = watchdog.stall { throw stall.error }
             throw error
         }
-        if await watchdog.didStall { throw StreamStallError() }
+        if let stall = watchdog.stall { throw stall.error }
     }
 
+    /// Stops the session when the watchdog sees a stall, which ends `frames()` so
+    /// `consumeFrames` throws the stall's error into the normal retry path.
     func makeStallTask(
         session: RTSPClientSession, watchdog: StreamWatchdog
     ) -> Task<Void, Never> {
@@ -276,8 +286,8 @@ private extension RTSPStreamPipeline {
                 } catch {
                     return
                 }
-                if await watchdog.isStalled(timeout: Tuning.streamStallTimeoutNs) {
-                    await watchdog.markStalled()
+                if let stall = watchdog.checkForStall() {
+                    Log.rtsp.warning("Stream watchdog: \(stall.error.localizedDescription)")
                     await session.stop()
                     return
                 }
@@ -291,12 +301,12 @@ private extension RTSPStreamPipeline {
         processor: NALProcessor,
         decoder: VideoDecoder,
         audioDecoder: AudioDecoder?
-    ) async {
+    ) {
         switch item {
         case .video(let frame):
-            await watchdog.markFrameReceived()
+            watchdog.markFrameReceived()
             guard let processed = processor.process(frame) else { return }
-            decoder.updateFormatDescription(processed.formatDescription)
+            decoder.updateFormatDescription(processed.formatDescription, isKeyframe: processed.isKeyframe)
             decoder.decode(
                 blockBuffer: processed.blockBuffer,
                 formatDescription: processed.formatDescription,
@@ -310,24 +320,74 @@ private extension RTSPStreamPipeline {
     }
 }
 
-private actor StreamWatchdog {
-    private var lastFrameTime: UInt64 = DispatchTime.now().uptimeNanoseconds
-    private var stalled = false
+// MARK: - Stall Watchdog
 
-    func markFrameReceived() {
-        lastFrameTime = DispatchTime.now().uptimeNanoseconds
+/// Tracks a stream's progress for the stall check: when the last video frame arrived
+/// and when the decoder last produced a picture. Frames are marked on the frame loop
+/// and decodes on VideoToolbox's output thread, hence the lock. Times are uptime
+/// nanoseconds, passed in by tests.
+internal final class StreamWatchdog: Sendable {
+    enum Stall: Equatable, Sendable {
+        /// No video frame arrived within `Tuning.streamStallTimeoutNs`.
+        case noData
+        /// Video frames kept arriving, but none decoded within
+        /// `Tuning.videoDecodeStallTimeoutNs`: the decoder or its format description
+        /// failed, or the stream never delivers a keyframe. Packets alone would keep
+        /// the status at "streaming" with the picture frozen.
+        case noDecodedVideo
+
+        var error: any Error {
+            switch self {
+            case .noData: return RTSPStreamPipeline.StreamStallError()
+            case .noDecodedVideo: return RTSPStreamPipeline.VideoDecodeStallError()
+            }
+        }
     }
 
-    func isStalled(timeout: UInt64) -> Bool {
-        let now = DispatchTime.now().uptimeNanoseconds
-        return (now - lastFrameTime) >= timeout
+    private struct State: Sendable {
+        var lastFrame: UInt64
+        var lastDecoded: UInt64
+        var stall: Stall?
     }
 
-    func markStalled() {
-        stalled = true
+    private let state: OSAllocatedUnfairLock<State>
+
+    /// Both clocks start now: a stream that never decodes a frame counts from here.
+    init(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        state = OSAllocatedUnfairLock(initialState: State(lastFrame: now, lastDecoded: now))
     }
 
-    var didStall: Bool {
-        stalled
+    /// The stall the last `checkForStall` found, if any. Once found it stays.
+    var stall: Stall? {
+        state.withLock { $0.stall }
+    }
+
+    func markFrameReceived(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        state.withLock { $0.lastFrame = max($0.lastFrame, now) }
+    }
+
+    func markFrameDecoded(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        state.withLock { $0.lastDecoded = max($0.lastDecoded, now) }
+    }
+
+    /// Record and return a stall, or nil while the stream is progressing. A missing
+    /// frame flow is reported first: without frames there is nothing to decode.
+    func checkForStall(
+        now: UInt64 = DispatchTime.now().uptimeNanoseconds,
+        dataTimeout: UInt64 = Tuning.streamStallTimeoutNs,
+        decodeTimeout: UInt64 = Tuning.videoDecodeStallTimeoutNs
+    ) -> Stall? {
+        state.withLock { state in
+            guard state.stall == nil else { return state.stall }
+            // A mark can land between reading `now` and taking the lock, so a
+            // timestamp may be later than `now`; count that as no time passed.
+            func elapsed(since time: UInt64) -> UInt64 { now > time ? now - time : 0 }
+            if elapsed(since: state.lastFrame) >= dataTimeout {
+                state.stall = .noData
+            } else if elapsed(since: state.lastDecoded) >= decodeTimeout {
+                state.stall = .noDecodedVideo
+            }
+            return state.stall
+        }
     }
 }

@@ -15,17 +15,28 @@ internal final class VideoDecoder {
     private let outputErrors = DecodeErrorDeduper()
     private let submitErrors = DecodeErrorDeduper()
     private var session: VTDecompressionSession?
+    /// The format the current session decodes; nil while there is no session.
     private var currentFormatDescription: CMVideoFormatDescription?
 
-    func updateFormatDescription(_ formatDescription: CMVideoFormatDescription) {
+    var hasSession: Bool {
+        session != nil
+    }
+
+    func updateFormatDescription(_ formatDescription: CMVideoFormatDescription, isKeyframe: Bool) {
         if let current = currentFormatDescription,
            CMFormatDescriptionEqual(current, otherFormatDescription: formatDescription) {
             return
         }
+        // With no session (the last creation failed) retry only at a keyframe: a new
+        // session can't decode the frames before one, so trying on each of them would
+        // just repeat the failure at the frame rate.
+        guard session != nil || isKeyframe else { return }
 
-        currentFormatDescription = formatDescription
         tearDown()
-        createSession(formatDescription: formatDescription)
+        // Remember the format only once a session decodes it. A failed creation used
+        // to be remembered too, so every later frame compared equal and was dropped.
+        let created = createSession(formatDescription: formatDescription)
+        currentFormatDescription = created ? formatDescription : nil
     }
 
     func decode(blockBuffer: CMBlockBuffer, formatDescription: CMVideoFormatDescription, isKeyframe: Bool) {
@@ -129,7 +140,7 @@ internal final class VideoDecoder {
         }
     }
 
-    private func createSession(formatDescription: CMVideoFormatDescription) {
+    private func createSession(formatDescription: CMVideoFormatDescription) -> Bool {
         // Request the decoder's native NV12 (4:2:0 biplanar, video range) output so
         // VideoToolbox skips the per-frame YUV->BGRA pixel transfer. The virtual
         // camera vends NV12 end to end, so no conversion is needed downstream.
@@ -152,7 +163,7 @@ internal final class VideoDecoder {
 
         guard status == noErr, let newSession else {
             Log.rtsp.error("Failed to create decompression session: \(status)")
-            return
+            return false
         }
 
         VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
@@ -165,6 +176,7 @@ internal final class VideoDecoder {
         // (clearing `isActive`) before creating this one on a mid-stream format change.
         deliveryGate.activate()
         Log.rtsp.info("Created decompression session")
+        return true
     }
 }
 
