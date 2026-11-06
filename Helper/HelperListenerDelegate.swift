@@ -14,6 +14,14 @@ internal final class HelperListenerDelegate: NSObject, NSXPCListenerDelegate {
 
     func listener(_: NSXPCListener,
                   shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
+        // The requirement set below is enforced per message, so a process that
+        // opens a connection and never sends anything would pass it, and could
+        // keep the helper (and whatever version it runs) up for good. Check the
+        // peer before counting its connection.
+        if case .failure(let failure) = CallerCode.appBundlePath(of: newConnection) {
+            log.error("refused connection: \(failure.description, privacy: .public)")
+            return false
+        }
         // Already exiting: refuse, so the client fails now and its retry reaches
         // the next launch instead of a process about to end.
         guard let activity = idle.begin() else { return false }
