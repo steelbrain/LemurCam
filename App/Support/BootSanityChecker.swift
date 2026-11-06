@@ -28,25 +28,23 @@ internal final class BootSanityChecker {
                     group.addTask {
                         let reachable = await Self.probe(source: source, credentials: credentials)
                         await MainActor.run {
-                            if reachable {
-                                self.sourceManager.updateConnectionStatus(
-                                    for: source.id, status: .connected
-                                )
-                                self.sourceManager.updateErrorMessage(for: source.id, message: nil)
-                            } else {
-                                self.sourceManager.updateConnectionStatus(
-                                    for: source.id, status: .error
-                                )
-                                self.sourceManager.updateErrorMessage(
-                                    for: source.id, message: "Unreachable"
-                                )
-                            }
+                            self.recordProbeResult(reachable: reachable, for: source.id)
                         }
                     }
                 }
             }
             Log.app.info("Boot sanity check complete")
         }
+    }
+
+    /// Shows a probe's result in the source list. A probe can finish many seconds after
+    /// launch; by then the user may have made that camera the active one, whose status
+    /// belongs to the live stream, or deleted it. In both cases the result is dropped.
+    func recordProbeResult(reachable: Bool, for sourceID: UUID) {
+        guard sourceID != sourceManager.activeSourceID,
+              sourceManager.sources.contains(where: { $0.id == sourceID }) else { return }
+        sourceManager.updateConnectionStatus(for: sourceID, status: reachable ? .connected : .error)
+        sourceManager.updateErrorMessage(for: sourceID, message: reachable ? nil : "Unreachable")
     }
 
     private static func probe(source: CameraSource, credentials: SourceCredentials?) async -> Bool {

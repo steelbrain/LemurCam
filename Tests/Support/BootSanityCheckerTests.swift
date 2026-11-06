@@ -65,4 +65,49 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
         XCTAssertEqual(sourceManager.connectionStatuses[activeID], .disconnected)
     }
+
+    // MARK: - Late probe results
+
+    func testProbeResultIsRecordedForInactiveSource() throws {
+        let sourceManager = try XCTUnwrap(manager)
+        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let checker = BootSanityChecker(sourceManager: sourceManager)
+
+        checker.recordProbeResult(reachable: false, for: otherID)
+
+        XCTAssertEqual(sourceManager.connectionStatuses[otherID], .error)
+        XCTAssertEqual(sourceManager.errorMessages[otherID], "Unreachable")
+    }
+
+    /// A probe that finishes after the user switched to that camera must not
+    /// overwrite the live stream's status with "Unreachable".
+    func testLateResultDoesNotOverwriteNowActiveSource() throws {
+        let sourceManager = try XCTUnwrap(manager)
+        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let checker = BootSanityChecker(sourceManager: sourceManager)
+        sourceManager.setActiveSource(id: otherID)
+        sourceManager.updateConnectionStatus(for: otherID, status: .connected)
+
+        checker.recordProbeResult(reachable: false, for: otherID)
+
+        XCTAssertEqual(sourceManager.connectionStatuses[otherID], .connected)
+        XCTAssertNil(sourceManager.errorMessages[otherID])
+    }
+
+    func testLateResultForDeletedSourceIsDropped() throws {
+        let sourceManager = try XCTUnwrap(manager)
+        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let checker = BootSanityChecker(sourceManager: sourceManager)
+        sourceManager.removeSource(id: otherID)
+
+        checker.recordProbeResult(reachable: true, for: otherID)
+
+        XCTAssertNil(sourceManager.connectionStatuses[otherID])
+    }
 }
