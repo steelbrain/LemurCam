@@ -3,10 +3,11 @@ import Foundation
 /// Decides when a saved ONVIF camera should be looked for again with WS-Discovery,
 /// and what to do with what the scan finds.
 ///
-/// Rediscovery used to run after any failed GetStreamUri and to save the scan result
-/// even when the camera had not moved. Saving fired a source-config change, which
-/// restarted the resolve, which failed again: an endless loop of WS-Security logins,
-/// multicast scans and `sources.json` rewrites that could lock the camera's account.
+/// Rediscovery once saved the scan result even when the camera had not moved, and
+/// saving fired a source-config change, which restarted the resolve, which failed
+/// again: an endless loop of WS-Security logins, multicast scans and `sources.json`
+/// rewrites that could lock the camera's account. An unmoved camera now saves nothing,
+/// and saving a new address never signals a config change.
 internal enum ONVIFRediscovery {
     enum Outcome: Equatable {
         /// No reply claimed the saved device UUID (or the source has none).
@@ -19,11 +20,21 @@ internal enum ONVIFRediscovery {
         case moved(ONVIFSourceInfo)
     }
 
-    /// Only a request that got no answer at all suggests the camera moved. An answer
-    /// such as a rejected login, a SOAP fault or an HTTP error means it was reached at
-    /// the saved address.
+    /// Whether the saved address may no longer be the camera's. After a DHCP change it
+    /// can answer nothing at all (a transport failure), or belong to another device
+    /// that answers with something other than this camera's ONVIF service: an HTTP
+    /// error status, or a reply that is not a usable ONVIF document (a web page, an
+    /// oversized or malformed body). A rejected login or a SOAP fault is the camera
+    /// itself answering, so its address is right and no scan is made.
     static func shouldRediscover(after error: Error) -> Bool {
-        (error as? ONVIFError)?.isTransportFailure ?? false
+        if error is ONVIFXML.Rejection { return true }
+        guard let onvifError = error as? ONVIFError else { return false }
+        switch onvifError {
+        case .networkError, .timedOut, .httpStatus, .parseError:
+            return true
+        case .invalidURL, .soapFault, .authenticationFailed:
+            return false
+        }
     }
 
     static func outcome(for info: ONVIFSourceInfo, among devices: [DiscoveredDevice]) -> Outcome {

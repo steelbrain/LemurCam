@@ -14,14 +14,19 @@ internal final class ONVIFRediscoveryDecisionTests: XCTestCase {
         )
     }
 
-    func testOnlyTransportFailuresTriggerRediscovery() {
+    /// No answer, or an answer that is not this camera's ONVIF service (another device
+    /// now at the address), triggers a scan. The camera's own refusals do not.
+    func testWhichFailuresTriggerRediscovery() {
         XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.networkError("refused")))
         XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.timedOut))
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(404)))
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(500)))
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.parseError))
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.malformed))
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.tooDeep))
         XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.authenticationFailed))
         XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.soapFault("Sender not authorized")))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(500)))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.parseError))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.tooDeep))
+        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.invalidURL))
         XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: CancellationError()))
     }
 

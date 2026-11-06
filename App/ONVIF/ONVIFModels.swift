@@ -61,7 +61,7 @@ internal enum ONVIFError: LocalizedError {
     case timedOut
 
     /// True when no answer came back from the device at all, as opposed to the
-    /// device answering with an error. Only these suggest the device may have moved.
+    /// device answering with an error.
     var isTransportFailure: Bool {
         switch self {
         case .networkError, .timedOut:
