@@ -67,8 +67,8 @@ Core commands:
 ```bash
 xcodegen generate       # Regenerate LemurCam.xcodeproj from project.yml
 swiftlint lint --strict # Lint only; warnings are errors
-scripts/ci.sh           # Full local CI: SwiftLint, clean build, unused imports, tests (signed)
-scripts/ci.sh --unsigned # Same, with CODE_SIGNING_ALLOWED=NO like GitHub CI
+bash scripts/ci.sh      # Full local CI: SwiftLint, clean build, unused imports, tests (signed)
+bash scripts/ci.sh --unsigned # Same, with CODE_SIGNING_ALLOWED=NO like GitHub CI
 scripts/dev-run.sh      # Build Debug, install to /Applications, launch
 scripts/dev-camera.sh   # Fake RTSP + ONVIF camera for testing without hardware
 scripts/dev-clean.sh    # Dry-run cleanup for local extension/app state
@@ -83,10 +83,12 @@ npm run build
 npm run lint
 ```
 
-`scripts/ci.sh` runs SwiftLint, generates the Xcode project, builds the app and
-test targets from clean, checks for unused imports on that build's log
-(`scripts/check-unused-imports.sh`), and runs the tests on the same build. Do not
-weaken SwiftLint or build settings to make a change pass; fix the code.
+`scripts/ci.sh` runs SwiftLint, generates the Xcode project, and builds the app
+and test targets from clean. Then it runs the unused-import check on that
+build's log (`scripts/check-unused-imports.sh`) in the background while the
+tests run on the same build, prints the check's output when both are done, and
+fails if either failed. Do not weaken SwiftLint or build settings to make a
+change pass; fix the code.
 
 The unused-import check runs `swiftlint analyze --strict --only-rule
 unused_import`. Only that rule is enforced; the other `analyzer_rules` in
@@ -94,11 +96,24 @@ unused_import`. Only that rule is enforced; the other `analyzer_rules` in
 from the xcodebuild log and silently skips a file it finds none for, and an
 incremental build logs only the files it recompiles. So the build always starts
 clean, and the script fails unless analyze covered as many files as
-`swiftlint lint` does. It is the slowest step of `scripts/ci.sh`, at about a
-second per Swift file. Fix an unused import by removing it, and check that the
-file still compiles in every target that builds it (`Shared/` files go into
-several; `project.yml` says which). For an import the rule flags but the file
-needs, add `// swiftlint:disable:next unused_import` with a one-line reason.
+`swiftlint lint` does. Analyze is the longest part of CI, which is why it runs
+alongside the tests. It takes about a second a file in one process, so the
+script analyzes the Swift files under `.swiftlint.yml`'s `included` paths in
+runs of 20, each in a new process, min(physical cores / 2, available memory /
+2.5 GB) at a time (at least 1, at most 2 on GitHub; `LEMURCAM_ANALYZE_JOBS`
+overrides it). The coverage check adds up the runs' counts.
+
+Start CI as `bash scripts/ci.sh`, not `scripts/ci.sh`. On macOS 27, analyze
+processes stop scaling when any of their ancestors was started through a `#!`
+line: on a 16-core Mac, 8 processes took 342 s that way and 156 s without,
+while a single process is as fast either way. Why is not known; the time goes
+to SourceKit's file path lookups (`realpath`). For the same reason, `ci.sh`
+starts the check with `bash`, and the check starts its runs with `bash`.
+
+Fix an unused import by removing it, and check that the file still compiles in
+every target that builds it (`Shared/` files go into several; `project.yml`
+says which). For an import the rule flags but the file needs, add
+`// swiftlint:disable:next unused_import` with a one-line reason.
 
 SwiftLint must be exactly the version `.swiftlint.yml` pins with
 `swiftlint_version` (0.65.1). Any other version makes `swiftlint lint` exit 2
@@ -110,10 +125,9 @@ way the GitHub workflow does (`.github/actions/install-swiftlint`; steps in
 SwiftLint, bump `swiftlint_version` and the workflow's `SWIFTLINT_VERSION`
 together, along with the version README.md and this guide name.
 
-The GitHub workflow runs SwiftLint, then a clean build for testing, the same
-unused-import check on that build's log, and the tests, on macOS with code
-signing disabled for CI. Local app runs and distribution builds require proper
-Apple signing configuration.
+The GitHub workflow runs SwiftLint in one job and `bash scripts/ci.sh --unsigned`
+in another, on macOS with code signing disabled for CI. Local app runs and
+distribution builds require proper Apple signing configuration.
 
 ## Running Locally
 

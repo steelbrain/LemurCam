@@ -50,12 +50,12 @@ formats, including AAC, G.711, and L16.
 
 LemurCam is an XcodeGen project. `project.yml` is the source of truth for the
 Xcode project. `scripts/ci.sh` runs SwiftLint, generates the project, builds
-it from clean, checks for unused imports with `swiftlint analyze`, and runs the
-tests:
+it from clean, then checks for unused imports with `swiftlint analyze` while it
+runs the tests. The GitHub workflow runs it too:
 
 ```bash
-scripts/ci.sh             # signed with the team in project.yml
-scripts/ci.sh --unsigned  # no Apple signing identity needed
+bash scripts/ci.sh             # signed with the team in project.yml
+bash scripts/ci.sh --unsigned  # no Apple signing identity needed
 ```
 
 `--unsigned` builds with `CODE_SIGNING_ALLOWED=NO`, like the GitHub workflow.
@@ -66,8 +66,11 @@ or the audio driver.
 
 The unused-import check (`scripts/check-unused-imports.sh`) reads each file's
 compiler arguments from the build's log, and an incremental build logs only the
-files it recompiles, so `scripts/ci.sh` always builds from clean. The tests then
-run on that build.
+files it recompiles, so `scripts/ci.sh` always builds from clean. The check
+runs while the tests do, in several processes sized to the Mac's cores and free
+memory, and its output prints after the tests finish. Start `scripts/ci.sh`
+with `bash`, as above: on macOS 27, when it starts through its `#!` line, those
+processes take about twice as long.
 
 `scripts/ci.sh` needs XcodeGen and SwiftLint 0.65.1. `.swiftlint.yml` pins that
 exact version (`swiftlint_version`), and any other SwiftLint version fails the

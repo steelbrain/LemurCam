@@ -78,34 +78,21 @@ jobs:
           fi
           dirname "$bin" >> "$GITHUB_PATH"
 
-      - name: Generate Xcode project
-        run: xcodegen generate
-
+      # The unused-import check needs SwiftLint here too.
       - name: Install SwiftLint ${{ env.SWIFTLINT_VERSION }}
         uses: ./.github/actions/install-swiftlint
         with:
           version: ${{ env.SWIFTLINT_VERSION }}
 
+      # The same steps as a local run: SwiftLint (again, a few seconds), project
+      # generation, a clean build for testing, then the unused-import check
+      # (swiftlint analyze on the build's log) alongside the tests, since a job's
+      # steps can't run at the same time. Unused imports show as annotations.
+      #
       # CI runners have no signing certificates or provisioning profiles. The app's
       # entitlements (system extension, app group) otherwise demand a profile, so
-      # disable code signing — the linker still ad-hoc signs the binaries on arm64,
-      # which is enough to launch the test host and run the unit tests.
-      #
-      # The unused-import check (swiftlint analyze) reads each Swift file's
-      # compiler arguments from this build's log, and a build logs only the files
-      # it compiles, so it starts clean, as scripts/ci.sh does, even though a new
-      # runner has nothing built.
-      - name: Build LemurCam for testing
-        run: >-
-          xcodebuild clean build-for-testing -scheme LemurCam -destination 'platform=macOS'
-          CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild.log"
-
-      - name: Check for unused imports
-        run: >-
-          scripts/check-unused-imports.sh "$RUNNER_TEMP/xcodebuild.log"
-          --reporter github-actions-logging
-
-      - name: Test LemurCam
-        run: >-
-          xcodebuild test-without-building -scheme LemurCam -destination 'platform=macOS'
-          CODE_SIGNING_ALLOWED=NO
+      # build with code signing disabled (CODE_SIGNING_ALLOWED=NO) — the linker
+      # still ad-hoc signs the binaries on arm64, which is enough to launch the
+      # test host and run the unit tests.
+      - name: Build, check imports, and test LemurCam
+        run: bash scripts/ci.sh --unsigned
