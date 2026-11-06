@@ -67,6 +67,7 @@ require() {
   fi
 }
 require ffmpeg "Install it with: brew install ffmpeg"
+require ffprobe "It ships with ffmpeg: brew install ffmpeg"
 require node "Install Node.js, e.g.: brew install node"
 require nc "Expected /usr/bin/nc on macOS"
 
@@ -91,6 +92,27 @@ case "$VIDEO_CODEC" in
     ;;
 esac
 
+# --- Ports -------------------------------------------------------------------
+# Fail before starting anything if a port is taken: otherwise the readiness
+# checks below would find the other listener and report success.
+
+if [ "$RTSP_PORT" = "$ONVIF_PORT" ]; then
+  echo "error: RTSP_PORT and ONVIF_PORT must differ (both are ${RTSP_PORT})" >&2
+  exit 1
+fi
+
+require_free_port() {
+  local name="$1" port="$2"
+  if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+    echo "error: port ${port} (${name}) is already in use, perhaps by another" \
+      "dev-camera.sh. See who holds it: lsof -nP -iTCP:${port} -sTCP:LISTEN" >&2
+    echo "       Stop that process or set ${name} to a free port." >&2
+    exit 1
+  fi
+}
+require_free_port RTSP_PORT "$RTSP_PORT"
+require_free_port ONVIF_PORT "$ONVIF_PORT"
+
 # --- Workspace & cleanup -----------------------------------------------------
 
 WORKDIR="$(mktemp -d -t lemurcam-devcam)"
@@ -111,14 +133,30 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Wait until <port> accepts connections while <pid> is still alive. Returns 1
+# as soon as the process exits (e.g. it could not bind), or after ~5s.
 wait_for_port() {
-  local port="$1" tries="${2:-50}"
+  local port="$1" pid="$2" tries="${3:-50}"
   while [ "$tries" -gt 0 ]; do
-    if nc -z 127.0.0.1 "$port" 2>/dev/null; then return 0; fi
+    kill -0 "$pid" 2>/dev/null || return 1
+    if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+      if kill -0 "$pid" 2>/dev/null; then return 0; fi
+      return 1
+    fi
     tries=$((tries - 1))
     sleep 0.1
   done
   return 1
+}
+
+# Exit with the tail of <log> if <pid> is no longer running.
+require_running() {
+  local pid="$1" name="$2" log="$3"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "error: ${name} exited unexpectedly. Log:" >&2
+    tail -n 20 "$log" >&2
+    exit 1
+  fi
 }
 
 # --- mediamtx (RTSP server) --------------------------------------------------
@@ -144,9 +182,10 @@ EOF
 
 echo "Starting mediamtx (RTSP on :${RTSP_PORT})..."
 mediamtx "$MTX_CONFIG" > "$WORKDIR/mediamtx.log" 2>&1 &
-PIDS+=($!)
+MTX_PID=$!
+PIDS+=("$MTX_PID")
 
-if ! wait_for_port "$RTSP_PORT"; then
+if ! wait_for_port "$RTSP_PORT" "$MTX_PID"; then
   echo "error: mediamtx did not start. Log:" >&2
   cat "$WORKDIR/mediamtx.log" >&2
   exit 1
@@ -171,11 +210,13 @@ ffmpeg -hide_banner -loglevel warning -re \
   "${VCODEC_ARGS[@]}" -g "${FPS}" -keyint_min "${FPS}" \
   -c:a aac -b:a 128k -ar 48000 -ac 2 \
   -f rtsp -rtsp_transport tcp "$PUBLISH_URL" > "$WORKDIR/ffmpeg.log" 2>&1 &
-PIDS+=($!)
+FFMPEG_PID=$!
+PIDS+=("$FFMPEG_PID")
 
 stream_ready() {
   local tries="${1:-40}"
   while [ "$tries" -gt 0 ]; do
+    kill -0 "$FFMPEG_PID" 2>/dev/null || return 1
     if ffprobe -v error -rtsp_transport tcp -i "$PUBLISH_URL" \
         -select_streams v:0 -show_streams >/dev/null 2>&1; then
       return 0
@@ -192,6 +233,7 @@ if ! stream_ready; then
   tail -n 20 "$WORKDIR/ffmpeg.log" >&2
   exit 1
 fi
+require_running "$MTX_PID" mediamtx "$WORKDIR/mediamtx.log"
 
 # --- Virtual ONVIF device ----------------------------------------------------
 # A dependency-free Node responder: answers WS-Discovery probes and the handful
@@ -363,8 +405,15 @@ CAMERA_HOST="$CAMERA_HOST" ONVIF_PORT="$ONVIF_PORT" RTSP_PORT="$RTSP_PORT" \
   RTSP_PATH="$RTSP_PATH" CAMERA_NAME="$CAMERA_NAME" VIDEO_SIZE="$VIDEO_SIZE" \
   ONVIF_ENCODING="$ONVIF_ENCODING" \
   node "$ONVIF_JS" > "$WORKDIR/onvif.log" 2>&1 &
-PIDS+=($!)
-wait_for_port "$ONVIF_PORT" || true
+ONVIF_PID=$!
+PIDS+=("$ONVIF_PID")
+if ! wait_for_port "$ONVIF_PORT" "$ONVIF_PID"; then
+  echo "error: the virtual ONVIF device did not start. Log:" >&2
+  cat "$WORKDIR/onvif.log" >&2
+  exit 1
+fi
+require_running "$MTX_PID" mediamtx "$WORKDIR/mediamtx.log"
+require_running "$FFMPEG_PID" ffmpeg "$WORKDIR/ffmpeg.log"
 
 # --- Ready -------------------------------------------------------------------
 
