@@ -32,6 +32,11 @@ internal final class AudioDecoder {
     /// input proc vends. Allocated lazily on the first AAC frame, freed in `tearDown`.
     private var aacPacket: AACPacket?
     private var loggedUnsupported = false
+    /// A broken stream fails every access unit, 15 to 47 a second, which flooded the
+    /// in-app log. Like `VideoDecoder`, a run of identical failures logs once. The
+    /// decoder lives for one stream, so each new session starts with fresh dedupers.
+    private let aacDecodeErrors = DecodeErrorDeduper()
+    private let resampleErrors = DecodeErrorDeduper()
 
     static let outputSampleRate: Double = 48_000
     static let outputChannels: AVAudioChannelCount = 2
@@ -64,7 +69,7 @@ internal final class AudioDecoder {
                 asc: stream.extraData ?? Data(), sdpRate: sdpRate, sdpChannels: sdpChannels
             )
             self.init(sourceRate: geometry.rate, sourceChannels: geometry.channels)
-            setUpAAC(stream)
+            setUpAAC(asc: stream.extraData)
         } else {
             self.init(sourceRate: sdpRate, sourceChannels: sdpChannels)
         }
@@ -153,10 +158,11 @@ internal final class AudioDecoder {
         let status = converter.convert(to: outBuf, error: &error) { _, inStatus in
             input.next(status: inStatus)
         }
-        if status == .error {
-            if let error { Log.rtsp.error("AudioDecoder: resample failed: \(error.localizedDescription)") }
-            return
+        let failure = status == .error ? Self.resampleFailureStatus(error) : noErr
+        if resampleErrors.shouldLog(failure) {
+            Log.rtsp.error("AudioDecoder: resample failed: \(error?.localizedDescription ?? "status \(failure)")")
         }
+        if status == .error { return }
         let outFrames = Int(outBuf.frameLength)
         guard outFrames > 0, let out = outBuf.floatChannelData?[0] else { return }
         onPCM?(out, outFrames)
@@ -178,6 +184,13 @@ internal final class AudioDecoder {
             if let base = src.baseAddress { inChannel[0].update(from: base, count: inFrames * sourceChannels) }
         }
         return inBuf
+    }
+
+    /// The status a failed resample is deduplicated by: the converter's error code, or
+    /// a stand-in when it reported none, since zero would read as success.
+    static func resampleFailureStatus(_ error: NSError?) -> OSStatus {
+        let status = OSStatus(truncatingIfNeeded: error?.code ?? 0)
+        return status == noErr ? kAudioConverterErr_UnspecifiedError : status
     }
 
     private func logUnsupportedOnce(_ codec: PublicAudioCodec) {
@@ -317,9 +330,12 @@ internal extension AudioDecoder {
 
 // MARK: - AAC
 
-private extension AudioDecoder {
-    func setUpAAC(_ stream: AudioStream) {
-        guard let asc = stream.extraData, !asc.isEmpty else {
+// Not `private`: tests set up a real AAC decoder from an AudioSpecificConfig and feed
+// it access units through `decodeAAC`, since IPCamKit's `AudioStream` and
+// `PublicAudioFrame` can't be built outside IPCamKit.
+internal extension AudioDecoder {
+    func setUpAAC(asc: Data?) {
+        guard let asc, !asc.isEmpty else {
             Log.rtsp.error("AudioDecoder: AAC stream has no AudioSpecificConfig; no microphone audio")
             return
         }
@@ -378,12 +394,12 @@ private extension AudioDecoder {
                 Unmanaged.passUnretained(packet).toOpaque(), &frameCount, &abl, nil
             )
         }
-        guard frameCount > 0 else {
-            if status != noErr, status != Self.aacInputEnded {
-                Log.rtsp.error("AudioDecoder: AAC decode failed (\(status))")
-            }
-            return
+        // A unit that decoded, or that ran out of input without an error, ends a run.
+        let failure = frameCount > 0 || status == Self.aacInputEnded ? noErr : status
+        if aacDecodeErrors.shouldLog(failure) {
+            Log.rtsp.error("AudioDecoder: AAC decode failed (\(status))")
         }
+        guard frameCount > 0 else { return }
         resampleAndEmit(aacPCMScratch[0 ..< Int(frameCount) * channels])
     }
 
