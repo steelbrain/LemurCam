@@ -143,11 +143,11 @@ internal final class SetupCoordinator {
         refreshMicrophoneStatus()
     }
 
-    /// "Re-check Now": `refreshAll`, but the user asked to look again, so the
-    /// microphone shows what its check finds even over a failure held up for them
-    /// (see `recheckMicrophone`).
+    /// "Re-check Now": `refreshAll`, but the user asked to look again, so the camera
+    /// and the microphone show what their checks find even over a failure held up for
+    /// them (see `CameraExtensionController.recheckStatus` and `recheckMicrophone`).
     func recheckAll() {
-        cameraController.refreshStatus()
+        cameraController.recheckStatus()
         recheckMicrophone()
     }
 

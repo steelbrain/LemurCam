@@ -20,13 +20,17 @@ internal enum CameraStateDerivation {
     /// Map the install topology to a resolution. `isBusy` is true while one of our
     /// own activation/deactivation requests is in flight — the empty/duplicate
     /// classifications are then transient and must not clobber the in-flight state.
+    /// `holdingFailure` is true while a failed request's reason is shown and the user
+    /// has not acted on it (`FailureHold`): a reply that still finds nothing installed
+    /// says nothing the reason doesn't, so the reason stays up.
     static func resolveInstall(
         _ classification: ExtensionInstallClassification,
-        isBusy: Bool
+        isBusy: Bool,
+        holdingFailure: Bool
     ) -> InstallResolution {
         switch classification {
         case .notInstalled:
-            return isBusy ? .keepCurrent : .status(.notInstalled)
+            return isBusy || holdingFailure ? .keepCurrent : .status(.notInstalled)
         case .awaitingApproval:
             return .status(.awaitingApproval)
         case .multipleVersions:
@@ -74,6 +78,34 @@ internal enum CameraStateDerivation {
 
     static func resolvePollTimeout(restartAlreadyTried: Bool) -> PollTimeoutOutcome {
         restartAlreadyTried ? .escalateReboot : .promptRestart
+    }
+
+    /// Keeps a failed activation's or repair's reason up through routine refreshes.
+    /// The setup window re-queries every 2.5 s and the app re-queries whenever it
+    /// becomes active; a reply that still found nothing installed replaced the reason
+    /// (a system policy blocked the install, say) with "Required. Enable the camera…"
+    /// within seconds. The hold ends on the user's next camera action (Enable or Try
+    /// Again, Repair, Re-check Now), whose outcome then shows, or as soon as the status
+    /// is anything but the failure (a reply found the extension awaiting approval,
+    /// enabled, duplicated, …).
+    struct FailureHold: Equatable {
+        private(set) var isHolding = false
+
+        /// A request failed; its reason is (about to be) the status.
+        mutating func requestFailed() {
+            isHolding = true
+        }
+
+        /// The user acted on the camera: what their action finds replaces the reason.
+        mutating func release() {
+            isHolding = false
+        }
+
+        /// The status changed. Only a failure keeps the hold.
+        mutating func statusChanged(to status: CameraExtensionStatus) {
+            if case .failed = status { return }
+            isHolding = false
+        }
     }
 
     /// Decides whether the setup coordinator's liveness-poll timeout may act, and

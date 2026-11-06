@@ -49,6 +49,7 @@ internal final class CameraExtensionController: NSObject {
             let transition = "\(String(describing: oldValue)) → \(String(describing: self.status))"
             Log.app.info("Camera extension status: \(transition)")
             pollTimeoutGate.statusChanged()
+            failureHold.statusChanged(to: status)
             onStatusChange?(status)
         }
     }
@@ -62,6 +63,9 @@ internal final class CameraExtensionController: NSObject {
 
     /// Holds a liveness-poll timeout back while a request is in flight.
     private var pollTimeoutGate = CameraStateDerivation.PollTimeoutGate()
+
+    /// Keeps a failed request's reason up until the user acts on the camera.
+    private var failureHold = CameraStateDerivation.FailureHold()
 
     /// The in-flight activation request, if any. Tracked by reference so callbacks
     /// can tell an activation result apart from a properties-query result (both
@@ -119,6 +123,7 @@ internal final class CameraExtensionController: NSObject {
     /// delegate returns `.cancel` (surfaced as `requestCanceled`), and both paths
     /// resolve to the real enabled/live state.
     func activate() {
+        failureHold.release()
         switch status {
         case .unknown, .notInstalled, .failed, .disabled:
             status = .installing
@@ -142,6 +147,7 @@ internal final class CameraExtensionController: NSObject {
         // deactivation racing a concurrent activation would fight over the install.
         guard !isBusy else { return }
         Log.app.info("Repairing camera extension: deactivating all installed versions")
+        failureHold.release()
         status = .installing
         let request = OSSystemExtensionRequest.deactivationRequest(
             forExtensionWithIdentifier: LemurCamConfig.cameraExtensionID,
@@ -168,6 +174,13 @@ internal final class CameraExtensionController: NSObject {
         )
         request.delegate = self
         OSSystemExtensionManager.shared.submitRequest(request)
+    }
+
+    /// "Re-check Now": `refreshStatus`, but the user asked to look again, so the
+    /// reply shows what it finds even over a failure's reason held up for them.
+    func recheckStatus() {
+        failureHold.release()
+        refreshStatus()
     }
 
     // MARK: - State Derivation
@@ -288,7 +301,7 @@ internal final class CameraExtensionController: NSObject {
             + "awaiting=\(summary.awaitingApproval) rebootPending=\(self.rebootPending)"
         )
         switch CameraStateDerivation.resolveInstall(
-            ExtensionUpgradeDecision.classifyInstall(summary), isBusy: isBusy
+            ExtensionUpgradeDecision.classifyInstall(summary), isBusy: isBusy, holdingFailure: failureHold.isHolding
         ) {
         case .status(let resolved):
             status = resolved
@@ -397,9 +410,11 @@ extension CameraExtensionController: OSSystemExtensionRequestDelegate {
         if isActivation {
             Log.app.error("Camera extension activation failed: \(error.localizedDescription)")
             repairReactivationPending = false
+            failureHold.requestFailed()
             status = .failed(Self.message(for: nsError))
         } else if isDeactivation {
             Log.app.error("Camera extension repair failed: \(error.localizedDescription)")
+            failureHold.requestFailed()
             status = .failed(Self.message(for: nsError))
         } else {
             Log.app.error("Camera extension properties query failed: \(error.localizedDescription)")

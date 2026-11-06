@@ -11,53 +11,57 @@ internal final class CameraStateDerivationTests: XCTestCase {
 
     func testNotInstalledOnlyWhenIdle() {
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.notInstalled, isBusy: false),
+            CameraStateDerivation.resolveInstall(.notInstalled, isBusy: false, holdingFailure: false),
             .status(.notInstalled)
         )
         // A racing empty reply mid-activation must not clobber the in-flight state.
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.notInstalled, isBusy: true),
+            CameraStateDerivation.resolveInstall(.notInstalled, isBusy: true, holdingFailure: false),
             .keepCurrent
         )
     }
 
     func testMultipleVersionsNeedsRepairOnlyWhenIdle() {
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.multipleVersions, isBusy: false),
+            CameraStateDerivation.resolveInstall(.multipleVersions, isBusy: false, holdingFailure: false),
             .status(.needsRepair)
         )
         // Transient duplicate while our own request is in flight: don't flag repair.
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.multipleVersions, isBusy: true),
+            CameraStateDerivation.resolveInstall(.multipleVersions, isBusy: true, holdingFailure: false),
             .keepCurrent
         )
     }
 
     func testAwaitingApprovalIsAlwaysSurfaced() {
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.awaitingApproval, isBusy: false),
+            CameraStateDerivation.resolveInstall(.awaitingApproval, isBusy: false, holdingFailure: false),
             .status(.awaitingApproval)
         )
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.awaitingApproval, isBusy: true),
+            CameraStateDerivation.resolveInstall(.awaitingApproval, isBusy: true, holdingFailure: false),
             .status(.awaitingApproval)
         )
     }
 
     func testEnabledDefersToLivenessDerivation() {
-        XCTAssertEqual(CameraStateDerivation.resolveInstall(.enabled, isBusy: false), .deriveEnabled)
-        XCTAssertEqual(CameraStateDerivation.resolveInstall(.enabled, isBusy: true), .deriveEnabled)
+        XCTAssertEqual(
+            CameraStateDerivation.resolveInstall(.enabled, isBusy: false, holdingFailure: false), .deriveEnabled
+        )
+        XCTAssertEqual(
+            CameraStateDerivation.resolveInstall(.enabled, isBusy: true, holdingFailure: false), .deriveEnabled
+        )
     }
 
     func testDisabledShowsDistinctDisabledIdleAndInstallingWhenBusy() {
         // M2: a switched-off (or uninstalling) single extension is its own state, not
         // "awaiting approval" — the user already approved it once and turned it off.
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.disabled, isBusy: false),
+            CameraStateDerivation.resolveInstall(.disabled, isBusy: false, holdingFailure: false),
             .status(.disabled)
         )
         XCTAssertEqual(
-            CameraStateDerivation.resolveInstall(.disabled, isBusy: true),
+            CameraStateDerivation.resolveInstall(.disabled, isBusy: true, holdingFailure: false),
             .status(.installing)
         )
     }
