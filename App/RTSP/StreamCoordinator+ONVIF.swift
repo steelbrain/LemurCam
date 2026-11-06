@@ -50,6 +50,23 @@ extension StreamCoordinator {
         }
     }
 
+    /// What to connect to for a stream URI the camera just reported. IPCamKit refuses
+    /// a URI whose login `URLComponents` can't parse (a `#` or `?` in the password, as
+    /// in `rtsp://user:p#ss@192.0.2.5/stream`), so such a camera could never stream.
+    /// That URI is split at its last `@`, as saved URLs are
+    /// (`SourceCredentials.extractingFromRTSPURL`), and connected to without its
+    /// login, which is used only when the source has no saved credentials. Any other
+    /// URI is connected to as reported, with the saved credentials.
+    nonisolated static func connectionTarget(
+        forResolvedURI uri: String, savedCredentials: SourceCredentials?
+    ) -> (url: String, credentials: SourceCredentials?) {
+        guard URLComponents(string: uri) == nil, SourceCredentials.hasAmbiguousUserInfo(uri) else {
+            return (uri, savedCredentials)
+        }
+        let split = SourceCredentials.extractingFromRTSPURL(uri)
+        return (split.url, savedCredentials ?? split.credentials)
+    }
+
     /// The message shown for a camera whose stream URI could not be resolved. ONVIF
     /// errors describe what the camera answered (or that it did not answer); they never
     /// contain a URL or credentials.

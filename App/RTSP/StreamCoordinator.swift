@@ -24,6 +24,8 @@ internal final class StreamCoordinator {
     private let audioRing: AudioRingBuffer
     /// Whether an external app is already using the virtual camera; injected for testability.
     private let cameraConsumerProbe: () -> Bool
+    /// The ONVIF stream-URI resolve's network operations; injected for testability.
+    private let onvifEnvironment: ONVIFResolveEnvironment
     /// The aggregate-demand value we last acted on. Demand changes that don't cross
     /// the zero/non-zero boundary leave an already-running stream alone, so toggling
     /// one consumer never tears down and reconnects a stream another consumer needs.
@@ -51,7 +53,8 @@ internal final class StreamCoordinator {
         },
         audioRing: AudioRingBuffer = AudioRingBuffer(),
         model streamModel: LemurCamModel = LemurCamModel(),
-        pipeline: any StreamPipeline = RTSPStreamPipeline()
+        pipeline: any StreamPipeline = RTSPStreamPipeline(),
+        onvifEnvironment: ONVIFResolveEnvironment = .live
     ) {
         let previews = PreviewStore()
 
@@ -59,6 +62,7 @@ internal final class StreamCoordinator {
         self.previewStore = previews
         self.sourceManager = sourceManager
         self.pipeline = pipeline
+        self.onvifEnvironment = onvifEnvironment
         self.micDemand = VirtualMicDemand(probe: audioConsumerProbe, makeDeviceListObserver: audioDeviceListObserver)
         self.audioRing = audioRing
         self.cameraConsumerProbe = cameraConsumerProbe
@@ -280,9 +284,8 @@ private extension StreamCoordinator {
 // MARK: - Connection Management
 
 private extension StreamCoordinator {
-    /// Bring the pipeline (or the "No camera available" placeholder) in line with
-    /// the active source. `force` redoes it even when the active source is the one
-    /// already handled: at launch, on resuming after a pause and for a reconnect.
+    /// Bring the pipeline (or the "No camera available" placeholder) in line with the
+    /// active source; `force` redoes it for the source already handled (launch, resume, retry).
     func syncToActiveSource(force: Bool = false) {
         let activeID = sourceManager.activeSourceID
         let activeSource = activeID.flatMap { id in
@@ -352,7 +355,8 @@ private extension StreamCoordinator {
         fallbackGenerator.start(message: "Connecting in LemurCam")
         let params = ONVIFResolveParams(
             info: info, token: token, credentials: credentials,
-            sourceID: sourceID, sourceName: sourceName, sourceManager: sourceManager
+            sourceID: sourceID, sourceName: sourceName, sourceManager: sourceManager,
+            environment: onvifEnvironment
         )
         onvifTask = Task { [weak self] in
             let uri = await Self.resolveONVIFStreamURI(params: params)
@@ -371,8 +375,9 @@ private extension StreamCoordinator {
         guard currentSourceID == sourceID else { return }
         switch uri {
         case .success(let resolved):
-            Log.rtsp.info("Connecting with resolved URI")
-            connectPipeline(url: resolved, credentials: credentials)
+            let target = Self.connectionTarget(forResolvedURI: resolved, savedCredentials: credentials)
+            Log.rtsp.info("Connecting with resolved URI\(target.url == resolved ? "" : ", its login taken out")")
+            connectPipeline(url: target.url, credentials: target.credentials)
         case .failure(let error):
             if let storedURI = info.streamURI {
                 Log.rtsp.info("Falling back to stored URI")

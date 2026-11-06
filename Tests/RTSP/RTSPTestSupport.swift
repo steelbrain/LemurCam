@@ -38,6 +38,7 @@ internal final class FakeStreamPipeline: StreamPipeline {
         var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
         var connectedURLs: [String] = []
+        var connectedCredentials: [SourceCredentials?] = []
         var latestConnection = StreamConnectionID.initial
         var silentCancels = 0
     }
@@ -69,6 +70,11 @@ internal final class FakeStreamPipeline: StreamPipeline {
         state.withLock { $0.connectedURLs }
     }
 
+    /// The credentials passed with each URL in `connectedURLs`.
+    var connectedCredentials: [SourceCredentials?] {
+        state.withLock { $0.connectedCredentials }
+    }
+
     var silentCancels: Int {
         state.withLock { $0.silentCancels }
     }
@@ -78,9 +84,10 @@ internal final class FakeStreamPipeline: StreamPipeline {
         state.withLock { $0.latestConnection }
     }
 
-    func connect(url: String, credentials _: SourceCredentials?) -> StreamConnectionID {
+    func connect(url: String, credentials: SourceCredentials?) -> StreamConnectionID {
         let connection = state.withLock { state in
             state.connectedURLs.append(url)
+            state.connectedCredentials.append(credentials)
             state.latestConnection = state.latestConnection.next()
             return state.latestConnection
         }
@@ -165,10 +172,13 @@ internal final class CoordinatorHarness {
     private let ringName = "/lc-test-\(UUID().uuidString.prefix(8))"
     private let audioDeviceListChange = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
+    /// `onvifEnvironment` stands in for the network when an ONVIF camera's stream
+    /// URI is resolved; the default is the real one.
     init(
         rtspSources: [String] = [],
         cameraConsumerProbe: @escaping () -> Bool = { false },
-        audioConsumerProbe: @escaping @Sendable () -> Bool = { false }
+        audioConsumerProbe: @escaping @Sendable () -> Bool = { false },
+        onvifEnvironment: ONVIFResolveEnvironment = .live
     ) {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -190,7 +200,8 @@ internal final class CoordinatorHarness {
             },
             audioRing: AudioRingBuffer(name: ringName),
             model: LemurCamModel(consumerProbe: { _ in false }),
-            pipeline: fakePipeline
+            pipeline: fakePipeline,
+            onvifEnvironment: onvifEnvironment
         )
     }
 
