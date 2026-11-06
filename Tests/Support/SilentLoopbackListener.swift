@@ -38,6 +38,30 @@ internal final class SilentLoopbackListener: Sendable {
         port = Int(UInt16(bigEndian: address.sin_port))
     }
 
+    /// Takes the next connection, reads the first line the client sends (an RTSP
+    /// request line) without answering, and closes that connection. Blocks the calling
+    /// thread for up to `timeout` at each wait; nil when no connection or no full line
+    /// comes in time.
+    func readRequestLine(timeout: TimeInterval = 5) -> String? {
+        let milliseconds = Int32(timeout * 1000)
+        var listening = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        guard poll(&listening, 1, milliseconds) == 1 else { return nil }
+        let client = accept(descriptor, nil, nil)
+        guard client >= 0 else { return nil }
+        defer { Darwin.close(client) }
+        var received: [UInt8] = []
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        while !received.contains(UInt8(ascii: "\n")) {
+            var readable = pollfd(fd: client, events: Int16(POLLIN), revents: 0)
+            guard poll(&readable, 1, milliseconds) == 1 else { return nil }
+            let count = recv(client, &buffer, buffer.count, 0)
+            guard count > 0 else { return nil }
+            received += buffer[..<count]
+        }
+        let line = received.prefix { $0 != UInt8(ascii: "\r") && $0 != UInt8(ascii: "\n") }
+        return String(bytes: line, encoding: .utf8)
+    }
+
     func close() {
         Darwin.close(descriptor)
     }

@@ -17,8 +17,7 @@ internal extension SourceCredentials {
     /// `admin`, port 1234. Such a URL is split at its last `@` instead (see
     /// `ambiguousUserInfo`). Any other URL that can't be parsed is returned unchanged.
     /// A URL without a login, or what is left of one split at its last `@`, is kept as
-    /// written, unless IPCamKit would encode its escapes a second time
-    /// (`writtenForIPCamKit`); one whose login `URLComponents` reads is written as
+    /// written; one whose login `URLComponents` reads is written as
     /// `URLComponents(cameraURL:)` reads it once the login is taken out.
     static func extractingFromRTSPURL(
         _ urlString: String
@@ -32,7 +31,7 @@ internal extension SourceCredentials {
     /// an empty one (`admin:@cam`, but not `admin@cam`). Nil when both parts are empty.
     static func extractingLoginFromRTSPURL(_ urlString: String) -> (url: String, login: URLLogin?) {
         if let split = AmbiguousUserInfo(urlString) {
-            return (writtenForIPCamKit(split.urlWithout), split.login)
+            return (split.urlWithout, split.login)
         }
         return extractingReadableLogin(from: urlString)
     }
@@ -143,11 +142,11 @@ private extension SourceCredentials {
     /// `URLComponents(cameraURL:)`: the login with each escape in it decoded once (a
     /// user name or password whose escapes are not UTF-8 as written, so a login is
     /// never left in the URL), and the URL written with each character `URLComponents`
-    /// encodes percent-encoded. A URL without a login goes by `writtenForIPCamKit`.
+    /// encodes percent-encoded. A URL without a login is returned as written.
     static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
         guard var components = URLComponents(cameraURL: urlString),
               components.user != nil || components.password != nil else {
-            return (writtenForIPCamKit(urlString), nil)
+            return (urlString, nil)
         }
         let login = URLLogin(username: components.user ?? "", password: components.password)
         components.user = nil
@@ -155,32 +154,13 @@ private extension SourceCredentials {
         return (components.string ?? urlString, login)
     }
 
-    /// `url`, which holds no login, as IPCamKit has to be given it to send what it
-    /// says. IPCamKit writes a URL whose host is non-ASCII or percent-encoded out again
-    /// through `URLComponents` (its `asciiURL`, for the `xn--` form of the host), which
-    /// encodes the `%` of the escapes in a part that also holds a character it must
-    /// encode: `rtsp://café.local/live/a{%20b` went as `/live/a%7B%2520b`. Such a URL,
-    /// when it holds such a character, is written as `URLComponents(cameraURL:)` reads
-    /// it, as one with a login is once the login is taken out:
-    /// `rtsp://caf%C3%A9.local/live/a%7B%20b`. Any other URL is kept as written:
-    /// IPCamKit sends it as written, with only its non-ASCII characters
-    /// percent-encoded, or `URLComponents` encodes no escape in it.
-    static func writtenForIPCamKit(_ url: String) -> String {
-        guard let components = URLComponents(cameraURL: url), let host = components.encodedHost,
-              !host.hasPrefix("["), host.contains("%"),
-              URLComponents.percentEncodingForParsing(url) != URLComponents.percentEncodingNonASCII(url),
-              let written = components.string else { return url }
-        return written
-    }
-
     /// `url`, a stream URI an ONVIF camera reported, its login taken out, written as
     /// `URLComponents(cameraURL:)` writes it when it holds a space or a control
     /// character, which IPCamKit refuses in a URL to connect to (its
     /// `checkURLCharacters`); otherwise as it is. `rtsp://192.168.1.20:554/Front Door`
-    /// was refused on every connect, though the same URI with a login, or with a host
-    /// IPCamKit writes out again, went with `%20`, and an ONVIF camera has no URL field
-    /// where it could be corrected. Other characters `URLComponents` encodes go as
-    /// reported.
+    /// was refused on every connect, though the same URI with a login went with `%20`,
+    /// and an ONVIF camera has no URL field where it could be corrected. Other
+    /// characters `URLComponents` encodes go as reported.
     static func escapingSpaces(in url: String) -> String {
         guard url.unicodeScalars.contains(where: { $0.value <= 0x20 || $0.value == 0x7F }),
               let written = URLComponents(cameraURL: url)?.string else { return url }

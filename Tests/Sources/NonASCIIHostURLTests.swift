@@ -1,14 +1,16 @@
+import IPCamKit
 @testable import LemurCam
 import XCTest
 
-/// IPCamKit writes a URL whose host is non-ASCII or percent-encoded out again through
-/// `URLComponents`, for the `xn--` form of the host, and that encodes the `%` of the
-/// escapes in a part that also holds a character it must encode. A URL with a login
-/// was saved as `URLComponents(cameraURL:)` reads it once the login was taken out, so
-/// IPCamKit sent it right, but one without a login was saved as typed:
-/// `rtsp://café.local/live/a{%20b` was sent as `/live/a%7B%2520b`. Such a URL is now
-/// saved as one with a login is; any other is still kept as typed. Keychain access goes
-/// to an in-memory store.
+/// IPCamKit 0.4 wrote a URL whose host is non-ASCII or percent-encoded out again
+/// through `URLComponents`, for the `xn--` form of the host, and that encoded the `%`
+/// of the escapes in a part that also held a character it must encode:
+/// `rtsp://café.local/live/a{%20b` was sent as `/live/a%7B%2520b`. The app saved such
+/// a URL as `URLComponents(cameraURL:)` reads it (`rtsp://caf%C3%A9.local/live/a%7B%20b`)
+/// so IPCamKit sent it right. IPCamKit 0.5 replaces only the host and sends the path
+/// and query as written, so such a URL is kept as typed again, and one saved in the
+/// written form is left as it is: it is sent as saved. Keychain access goes to an
+/// in-memory store.
 @MainActor
 internal final class NonASCIIHostURLTests: XCTestCase {
     private var directory: URL?
@@ -32,76 +34,69 @@ internal final class NonASCIIHostURLTests: XCTestCase {
     }
 
     private static let typed = "rtsp://café.local/live/a{%20b"
+    /// How the app saved `typed` while it used IPCamKit 0.4.
     private static let written = "rtsp://caf%C3%A9.local/live/a%7B%20b"
-    private static let ordinary = [
+    private static let typedURLs = [
+        typed, written,
+        "rtsp://caf%C3%A9.local/live/a{%20b", "rtsp://café.local:8554/s?q={%26}#f",
         "rtsp://192.168.1.10/cam/realmonitor?channel=1&subtype=0",
         "rtsps://camera.local:322/Streaming/Channels/101?transportmode=unicast",
-        // A non-ASCII host, but nothing `URLComponents` encodes: IPCamKit sends it right.
         "rtsp://café.local/live", "rtsp://café.local/caméra%20one",
-        // An ASCII or IPv6 host: IPCamKit sends it as written.
         "rtsp://cam/a{%20b", "rtsp://[fe80::1%en0]/s|1%20"
     ]
+    private static let typedSourceTypes = typedURLs.map { SourceType.rtsp(RTSPSourceInfo(url: $0)) }
 
-    /// Written as the same URL with a login is once the login is taken out.
-    func testAURLWithoutALoginIsWrittenSoIPCamKitDecodesItsEscapesOnce() {
-        let cases = [
-            Self.typed: Self.written,
-            "rtsp://caf%C3%A9.local/live/a{%20b": Self.written,
-            "rtsp://admin:pw@café.local/live/a{%20b": Self.written,
-            "rtsp://café.local:8554/s?q={%26}#f": "rtsp://caf%C3%A9.local:8554/s?q=%7B%26%7D#f"
-        ]
-        for (url, expected) in cases {
+    func testAURLWithoutALoginIsKeptAsTyped() {
+        for url in Self.typedURLs {
             XCTAssertNil(RTSPURLInput.problem(with: url), url)
-            XCTAssertEqual(SourceCredentials.extractingFromRTSPURL(url).url, expected, url)
-            XCTAssertEqual(SourceCredentials.extractingFromRTSPURL(expected).url, expected, "kept once written")
-        }
-    }
-
-    func testAnyOtherURLWithoutALoginIsKeptAsTyped() {
-        for url in Self.ordinary {
             let extracted = SourceCredentials.extractingLoginFromRTSPURL(url)
             XCTAssertEqual(extracted.url, url)
             XCTAssertNil(extracted.login, url)
         }
     }
 
-    /// A URL split at its last `@` (a `#` in the password) is left without a login
-    /// too: a reported stream URI, or one an older version saved.
-    func testWhatASplitLeavesIsWrittenSo() {
+    /// A login is taken out as `URLComponents(cameraURL:)` reads the URL, which writes
+    /// the rest as it reads it.
+    func testAURLWithALoginIsWrittenWithoutIt() {
+        let extracted = SourceCredentials.extractingFromRTSPURL("rtsp://admin:pw@café.local/live/a{%20b")
+        XCTAssertEqual(extracted.url, Self.written)
+        XCTAssertEqual(extracted.credentials, SourceCredentials(username: "admin", password: "pw"))
+    }
+
+    /// A URL split at its last `@` (a `#` in the password) keeps the rest as written:
+    /// a reported stream URI, or one an older version saved.
+    func testWhatASplitLeavesIsKeptAsWritten() {
         let split = SourceCredentials.extractingLoginFromRTSPURL("rtsp://admin:p#ss@café.local/live/a{%20b")
-        XCTAssertEqual(split.url, Self.written)
+        XCTAssertEqual(split.url, Self.typed)
         XCTAssertEqual(split.login?.credentials, SourceCredentials(username: "admin", password: "p#ss"))
     }
 
-    /// What is saved is what is connected to.
-    func testAReportedURIWithoutALoginIsSavedAndConnectedToSo() {
+    /// What is saved is what is connected to: the URI as reported.
+    func testAReportedURIWithoutALoginIsSavedAndConnectedToAsReported() {
         let target = StreamCoordinator.connectionTarget(
             forResolvedURI: Self.typed, reportedBy: "café.local", savedCredentials: nil
         )
-        XCTAssertEqual(target.url, Self.written)
+        XCTAssertEqual(target.url, Self.typed)
         XCTAssertNil(target.credentials)
         assertConnectsWhereSaved(Self.typed, reportedBy: "café.local")
     }
 
-    func testAnAddedCameraIsSavedSo() throws {
+    func testAnAddedCameraIsSavedAsTyped() throws {
         let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
         let manager = SourceManager(storage: SourceStorage(fileURL: fileURL), keychain: InMemoryCredentialStore())
 
-        for url in [Self.typed] + Self.ordinary {
+        for url in Self.typedURLs {
             try manager.addSource(name: "Porch", sourceType: .rtsp(RTSPSourceInfo(url: url)))
         }
 
-        XCTAssertEqual(manager.sources.map(\.sourceType), ([Self.written] + Self.ordinary).map {
-            SourceType.rtsp(RTSPSourceInfo(url: $0))
-        })
+        XCTAssertEqual(manager.sources.map(\.sourceType), Self.typedSourceTypes)
     }
 
-    /// An older version saved such a URL as typed; loading writes it as the add form
-    /// saves it now. The app can't tell it from one a camera's double-encoded path
-    /// happened to match.
-    func testASavedURLIsWrittenSoOnLoad() throws {
+    /// A URL saved as typed by a version before the workaround, and one saved in the
+    /// form it wrote, are both left as they are on load.
+    func testASavedURLIsLeftAsItIsOnLoad() throws {
         let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
-        let sources = ([Self.typed] + Self.ordinary).map {
+        let sources = Self.typedURLs.map {
             CameraSource(name: "Porch", sourceType: .rtsp(RTSPSourceInfo(url: $0)))
         }
         SourceStorage(fileURL: fileURL).save(sources)
@@ -110,9 +105,25 @@ internal final class NonASCIIHostURLTests: XCTestCase {
 
         manager.load()
 
-        XCTAssertEqual(manager.sources.map(\.sourceType), ([Self.written] + Self.ordinary).map {
-            SourceType.rtsp(RTSPSourceInfo(url: $0))
-        })
+        XCTAssertEqual(manager.sources.map(\.sourceType), Self.typedSourceTypes)
         XCTAssertTrue(keychain.writes.isEmpty)
+    }
+
+    /// IPCamKit itself: a URL with a percent-encoded host takes the same path as one
+    /// with a Unicode host (the host goes in its ASCII form), and its path and query
+    /// reach the request line as written. A percent-encoded loopback address shows it
+    /// without leaving this machine. IPCamKit 0.4 sent `/live/a%7B%2520b?q=x%7C%252Fy`.
+    func testIPCamKitSendsThePathAndQueryOfAPercentEncodedHostAsWritten() async throws {
+        let listener = try SilentLoopbackListener()
+        defer { listener.close() }
+        let url = "rtsp://127%2E0%2E0%2E1:\(listener.port)/live/a{%20b?q=x|%2Fy"
+        let session = RTSPClientSession(url: url)
+
+        let start = Task { try await session.start() }
+        let requestLine = await Task.detached { listener.readRequestLine() }.value
+        start.cancel()
+        _ = await start.result
+
+        XCTAssertEqual(requestLine, "OPTIONS rtsp://127.0.0.1:\(listener.port)/live/a{%20b?q=x|%2Fy RTSP/1.0")
     }
 }
