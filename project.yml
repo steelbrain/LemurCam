@@ -101,6 +101,8 @@ targets:
         excludes:
           # App/helper-only XPC contract; not used by the camera extension.
           - LemurAudioHelper.swift
+          # Helper install pipeline (in the app only for its unit tests).
+          - DriverInstall/**
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Extension/Extension.entitlements
@@ -164,6 +166,7 @@ targets:
         excludes:
           - cam.lemur.app.helper.plist
       - path: Shared/LemurAudioHelper.swift
+      - path: Shared/DriverInstall
     settings:
       base:
         ENABLE_HARDENED_RUNTIME: YES
