@@ -2,11 +2,12 @@
 import os
 import XCTest
 
-/// Stands in for IPCamKit's `RTSPClientSession`: `start()` ignores task
-/// cancellation and returns only once `stop()` is called.
+/// Stands in for IPCamKit's `RTSPClientSession`: `start()` waits until `stop()` is
+/// called, and then throws, or until its task is cancelled, and then throws
+/// `CancellationError` at once, as IPCamKit's does.
 private final class StubRTSPSession: Sendable {
     private struct State {
-        var stopped = false
+        var ended = false
         var stops = 0
         var waiter: CheckedContinuation<Void, Never>?
     }
@@ -18,21 +19,30 @@ private final class StubRTSPSession: Sendable {
     var stopCount: Int { state.withLock { $0.stops } }
 
     func start() async throws {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let resumeNow = state.withLock { state -> Bool in
-                if state.stopped { return true }
-                state.waiter = continuation
-                return false
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let resumeNow = state.withLock { state -> Bool in
+                    if state.ended { return true }
+                    state.waiter = continuation
+                    return false
+                }
+                if resumeNow { continuation.resume() }
             }
-            if resumeNow { continuation.resume() }
+        } onCancel: {
+            end(stopping: false)
         }
+        try Task.checkCancellation()
         throw Stopped()
     }
 
     func stop() {
+        end(stopping: true)
+    }
+
+    private func end(stopping: Bool) {
         let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
-            state.stopped = true
-            state.stops += 1
+            state.ended = true
+            if stopping { state.stops += 1 }
             defer { state.waiter = nil }
             return state.waiter
         }
@@ -184,9 +194,10 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
     // MARK: - RTSP probe timeout
 
-    /// IPCamKit's `start()` ignores cancellation, so the probe's timeout used to wait
-    /// for it to finish on its own. The timeout now stops the session.
-    func testRTSPProbeTimeoutStopsAStartThatIgnoresCancellation() async {
+    /// The probe's timeout cancels `start()`, which then throws `CancellationError`.
+    /// The probe reports the timeout, not that, which would read "Unreachable", and
+    /// stops the session.
+    func testRTSPProbeTimeoutEndsStartAndReportsTheTimeout() async {
         let session = StubRTSPSession()
         // Safety net so a regression fails on the elapsed-time check instead of hanging.
         let safety = Task {
@@ -206,6 +217,7 @@ internal final class BootSanityCheckerTests: XCTestCase {
             XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: error), ONVIFError.timedOut.localizedDescription)
         }
         XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertEqual(session.stopCount, 1)
     }
 
     /// A session that started is stopped again; the probe only checks reachability.

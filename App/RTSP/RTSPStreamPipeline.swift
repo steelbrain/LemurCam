@@ -197,6 +197,9 @@ internal final class RTSPStreamPipeline: StreamPipeline {
                 Log.rtsp.info("Stream ended normally")
             }
         } catch {
+            // A connection cancelled while connecting (a source switch, demand gone)
+            // ends with `start()` throwing `CancellationError`: no failure to show or
+            // retry, as nothing reports a cancelled connection.
             if !Task.isCancelled {
                 setState(Self.failureState(for: error, afterSetup: setUp), connection: connection)
                 Log.rtsp.error("Stream error: \(error)")
@@ -233,11 +236,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
     private func connectWithTimeout(
         session: RTSPClientSession
     ) async throws -> SessionDescription {
-        try await Self.withConnectTimeout(
-            nanoseconds: Tuning.connectionTimeoutNs,
-            start: { try await session.start() },
-            abort: { await session.stop() }
-        )
+        try await Self.withConnectTimeout(nanoseconds: Tuning.connectionTimeoutNs) { try await session.start() }
     }
 
     private func publishStreamInfo(_ video: VideoStream, connection: StreamConnectionID) {
@@ -357,42 +356,28 @@ private extension RTSPStreamPipeline {
 // MARK: - Connect Timeout
 
 extension RTSPStreamPipeline {
-    /// Run `start`, failing with `TimeoutError` once `timeoutNs` passes. IPCamKit's
-    /// `RTSPClientSession.start()` ignores task cancellation, so cancelling it would
-    /// leave the task group waiting for it past the timeout. `abort` ends it instead:
-    /// the session's `stop()` during `start()` closes the connection at once and makes
-    /// `start()` throw. A cancelled caller aborts the same way. After a timeout the
-    /// result is `TimeoutError`, whatever `start` returns or throws afterwards.
+    /// Run `start`, failing with `TimeoutError` once `timeoutNs` passes. Whichever
+    /// comes first, `start`'s result or the timeout, is the result, and the other is
+    /// cancelled, as `start` is when the caller is cancelled. IPCamKit's
+    /// `RTSPClientSession.start()` ends at once when cancelled: it closes the
+    /// connection, as `stop()` does, and throws `CancellationError`. So the limit
+    /// holds, and a source switch doesn't leave a connect to the old camera running.
+    /// After a timeout the result is `TimeoutError`, whatever `start` returns or
+    /// throws afterwards.
     static func withConnectTimeout<Value: Sendable>(
         nanoseconds timeoutNs: UInt64,
-        start: @escaping @Sendable () async throws -> Value,
-        abort: @escaping @Sendable () async -> Void
+        start: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
-        let timedOut = OSAllocatedUnfairLock(initialState: false)
-        let outcome: Result<Value, any Error>
-        do {
-            let value = try await withTaskCancellationHandler {
-                try await withThrowingTaskGroup(of: Value.self) { group -> Value in
-                    group.addTask { try await start() }
-                    group.addTask {
-                        try await Task.sleep(nanoseconds: timeoutNs)
-                        timedOut.withLock { $0 = true }
-                        await abort()
-                        throw TimeoutError()
-                    }
-                    guard let value = try await group.next() else { throw TimeoutError() }
-                    group.cancelAll()
-                    return value
-                }
-            } onCancel: {
-                Task { await abort() }
+        try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await start() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutNs)
+                throw TimeoutError()
             }
-            outcome = .success(value)
-        } catch {
-            outcome = .failure(error)
+            defer { group.cancelAll() }
+            guard let value = try await group.next() else { throw TimeoutError() }
+            return value
         }
-        if timedOut.withLock({ $0 }) { throw TimeoutError() }
-        return try outcome.get()
     }
 }
 

@@ -105,18 +105,17 @@ internal final class BootSanityChecker {
         )
     }
 
-    /// Runs `start` within `timeoutNs`, then `stop`. IPCamKit's `start()` ignores task
-    /// cancellation, so cancelling it at the timeout left the probe waiting for as long
-    /// as `start()` took. As in the stream pipeline, the timeout calls `stop`, which
-    /// makes a running `start()` throw at once, and the probe fails with
-    /// `RTSPStreamPipeline.TimeoutError`.
+    /// Runs `start` within `timeoutNs`, then `stop`. As in the stream pipeline, the
+    /// timeout cancels a running `start()`, which IPCamKit ends at once, and the probe
+    /// fails with `RTSPStreamPipeline.TimeoutError`, not the `CancellationError` that
+    /// `start()` throws then.
     nonisolated static func probeRTSPStart(
         timeoutNs: UInt64,
         start: @escaping @Sendable () async throws -> Void,
-        stop: @escaping @Sendable () async -> Void
+        stop: @Sendable () async -> Void
     ) async throws {
         do {
-            try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: timeoutNs, start: start, abort: stop)
+            try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: timeoutNs, start: start)
         } catch {
             await stop()
             throw error

@@ -1,144 +1,84 @@
 import Foundation
+import IPCamKit
 @testable import LemurCam
 import os
 import XCTest
 
-/// A one-shot latch a fake `start()` waits on. The wait ignores task cancellation,
-/// like IPCamKit's `RTSPClientSession.start()`, so only `open()` ends it.
-private final class Gate: Sendable {
-    private struct State {
-        var isOpen = false
-        var waiters: [CheckedContinuation<Void, Never>] = []
+private final class Flag: Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: false)
+
+    var isSet: Bool {
+        state.withLock { $0 }
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
-
-    func wait() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let resumeNow = state.withLock { state -> Bool in
-                if state.isOpen { return true }
-                state.waiters.append(continuation)
-                return false
-            }
-            if resumeNow { continuation.resume() }
-        }
-    }
-
-    func open() {
-        let waiters = state.withLock { state -> [CheckedContinuation<Void, Never>] in
-            state.isOpen = true
-            defer { state.waiters.removeAll() }
-            return state.waiters
-        }
-        for waiter in waiters { waiter.resume() }
+    func set() {
+        state.withLock { $0 = true }
     }
 }
 
-private final class Counter: Sendable {
-    private let count = OSAllocatedUnfairLock(initialState: 0)
-
-    var value: Int {
-        count.withLock { $0 }
-    }
-
-    func increment() {
-        count.withLock { $0 += 1 }
-    }
-}
-
-private struct AbortedStart: Error {}
 private struct RefusedStart: Error {}
 
-/// Locks the connect timeout. It cancelled `session.start()` on timeout, but
-/// IPCamKit's `start()` ignores cancellation, so the task group kept waiting for it
-/// and the 15 s limit wasn't enforced. The timeout now calls `abort` (the session's
-/// `stop()`, which makes a running `start()` throw) and reports `TimeoutError`.
+/// Locks the connect timeout. IPCamKit's `start()` used to ignore task cancellation,
+/// so the timeout called the session's `stop()` to end it. Since IPCamKit 0.5.0 a
+/// cancelled `start()` closes the connection at once and throws `CancellationError`,
+/// so the timeout cancels it, as a cancelled caller does.
 internal final class ConnectTimeoutTests: XCTestCase {
     private let shortTimeout: UInt64 = 50_000_000
 
-    func testTimeoutAbortsAStartThatIgnoresCancellation() async {
-        let gate = Gate()
-        let aborts = Counter()
-        // Safety net so a regression fails on the elapsed-time check instead of hanging.
-        let safety = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            gate.open()
+    /// A start that waits far longer than any timeout here, and ends at once when
+    /// cancelled, as IPCamKit's `start()` does.
+    private static func slowStart(cancelled: Flag) -> @Sendable () async throws -> Int {
+        {
+            do {
+                try await Task.sleep(nanoseconds: 10_000_000_000)
+            } catch {
+                cancelled.set()
+                throw error
+            }
+            return 1
         }
-        defer { safety.cancel() }
+    }
 
+    func testTimeoutCancelsStart() async {
+        let cancelled = Flag()
         let started = Date()
         do {
             _ = try await RTSPStreamPipeline.withConnectTimeout(
-                nanoseconds: shortTimeout,
-                start: { () async throws -> Int in
-                    await gate.wait()
-                    throw AbortedStart()
-                },
-                abort: {
-                    aborts.increment()
-                    gate.open()
-                }
+                nanoseconds: shortTimeout, start: Self.slowStart(cancelled: cancelled)
             )
             XCTFail("a start that never finishes must time out")
         } catch {
             XCTAssertTrue(error is RTSPStreamPipeline.TimeoutError, "expected TimeoutError, got \(error)")
         }
-
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.0, "the timeout must not wait for start()")
-        XCTAssertEqual(aborts.value, 1)
+        XCTAssertTrue(cancelled.isSet, "the timeout must cancel start()")
     }
 
-    func testStartThatFinishesInTimeIsReturnedWithoutAbort() async throws {
-        let aborts = Counter()
-
-        let value = try await RTSPStreamPipeline.withConnectTimeout(
-            nanoseconds: 5_000_000_000,
-            start: { 42 },
-            abort: { aborts.increment() }
-        )
-
+    func testStartThatFinishesInTimeIsReturnedAtOnce() async throws {
+        let started = Date()
+        let value = try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: 5_000_000_000) { 42 }
         XCTAssertEqual(value, 42)
-        XCTAssertEqual(aborts.value, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.0, "a start that finished must not wait out the limit")
     }
 
     func testStartErrorBeforeTheTimeoutIsPassedThrough() async {
-        let aborts = Counter()
-
         do {
-            _ = try await RTSPStreamPipeline.withConnectTimeout(
-                nanoseconds: 5_000_000_000,
-                start: { () async throws -> Int in throw RefusedStart() },
-                abort: { aborts.increment() }
-            )
+            _ = try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: 5_000_000_000) { () async throws -> Int in
+                throw RefusedStart()
+            }
             XCTFail("the start error must be thrown")
         } catch {
             XCTAssertTrue(error is RefusedStart, "expected the start error, got \(error)")
         }
-        XCTAssertEqual(aborts.value, 0)
     }
 
-    /// Cancelling the caller (a source switch) aborts a start that ignores
-    /// cancellation, instead of leaving it connecting to the old camera.
-    func testCancellingTheCallerAbortsStart() async {
-        let gate = Gate()
-        let aborts = Counter()
-        let safety = Task {
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            gate.open()
-        }
-        defer { safety.cancel() }
-
+    /// Cancelling the caller (a source switch) cancels start, instead of leaving it
+    /// connecting to the old camera.
+    func testCancellingTheCallerCancelsStart() async {
+        let cancelled = Flag()
         let connect = Task {
             try await RTSPStreamPipeline.withConnectTimeout(
-                nanoseconds: 10_000_000_000,
-                start: { () async throws -> Int in
-                    await gate.wait()
-                    throw AbortedStart()
-                },
-                abort: {
-                    aborts.increment()
-                    gate.open()
-                }
+                nanoseconds: 10_000_000_000, start: Self.slowStart(cancelled: cancelled)
             )
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -147,7 +87,69 @@ internal final class ConnectTimeoutTests: XCTestCase {
         let result = await connect.result
 
         XCTAssertLessThan(Date().timeIntervalSince(started), 1.0, "cancellation must not wait for start()")
-        XCTAssertEqual(aborts.value, 1)
-        if case .success = result { XCTFail("a cancelled connect must not succeed") }
+        XCTAssertTrue(cancelled.isSet)
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+    }
+
+    // MARK: - IPCamKit's start()
+
+    /// The limit holds for IPCamKit's own `start()`: a camera that takes the
+    /// connection and never answers is given up on at the timeout, well before
+    /// IPCamKit's 15-second request deadline.
+    func testTimeoutEndsTheSessionsStartAgainstACameraThatNeverAnswers() async throws {
+        let listener = try SilentLoopbackListener()
+        defer { listener.close() }
+        let session = RTSPClientSession(url: "rtsp://127.0.0.1:\(listener.port)/stream")
+
+        let started = Date()
+        do {
+            _ = try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: 200_000_000) {
+                try await session.start()
+            }
+            XCTFail("a camera that never answers must time out")
+        } catch {
+            XCTAssertTrue(error is RTSPStreamPipeline.TimeoutError, "expected TimeoutError, got \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3.0, "the timeout must end start() at once")
+    }
+
+    /// A cancelled connect ends IPCamKit's `start()` at once, with
+    /// `CancellationError`.
+    func testCancellingTheCallerEndsTheSessionsStart() async throws {
+        let listener = try SilentLoopbackListener()
+        defer { listener.close() }
+        let session = RTSPClientSession(url: "rtsp://127.0.0.1:\(listener.port)/stream")
+
+        let connect = Task {
+            try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: 10_000_000_000) {
+                try await session.start()
+            }
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        let started = Date()
+        connect.cancel()
+        let result = await connect.result
+
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2.0, "cancellation must end start() at once")
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+    }
+
+    /// A connection cancelled while it connects (a source switch, demand gone) makes
+    /// IPCamKit's `start()` throw `CancellationError`. That isn't a failure: the
+    /// pipeline reports none, so nothing retries it or shows it.
+    func testAConnectionCancelledWhileConnectingReportsNoFailure() async throws {
+        let listener = try SilentLoopbackListener()
+        defer { listener.close() }
+        let pipeline = RTSPStreamPipeline()
+        let states = OSAllocatedUnfairLock<[RTSPStreamPipeline.State]>(initialState: [])
+        pipeline.onStateChanged = { state, _ in states.withLock { $0.append(state) } }
+
+        _ = pipeline.connect(url: "rtsp://127.0.0.1:\(listener.port)/stream", credentials: nil)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        pipeline.disconnect()
+        // Time for start() to end and the stream task to report anything it would.
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        XCTAssertEqual(states.withLock { $0 }, [.connecting, .disconnected])
     }
 }
