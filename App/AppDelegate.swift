@@ -49,16 +49,8 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         Self.shared = self
 
-        // When the app is only the unit-test host, do no real launch work: system-
-        // extension activation, streaming, and the status item can block on OS
-        // approval dialogs / IPC and hang the headless test run. The pure logic under
-        // test never needs AppDelegate to launch. `XCTestConfigurationFilePath` is set
-        // in the host's environment before the process starts, so it's reliable here
-        // even before the test bundle (and `XCTestCase`) finishes loading.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || NSClassFromString("XCTestCase") != nil {
-            return
-        }
+        // When the app is only the unit-test host, do no real launch work (`TestHost`).
+        if TestHost.isThisProcess { return }
 
         if terminateIfAlreadyRunning() { return }
         if terminateIfNotInApplications() { return }
@@ -110,6 +102,8 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_: Notification) {
+        // xcodebuild can activate the test host: no camera query or helper XPC there.
+        if TestHost.isThisProcess { return }
         // Approval happens out-of-process in System Settings, where Login Items can
         // change too; re-poll on reactivation to notice when the user finishes a step.
         setupCoordinator.refreshAll()

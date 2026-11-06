@@ -6,7 +6,7 @@ extension AppDelegate {
     func terminateIfNotInApplications() -> Bool {
         // The unit-test bundle is hosted by the app launched from DerivedData;
         // never terminate the test runner (mirrors terminateIfAlreadyRunning).
-        if NSClassFromString("XCTestCase") != nil { return false }
+        if TestHost.isThisProcess { return false }
 
         // Enforced in every configuration, including Debug. The CMIO system
         // extension, the SMAppService helper daemon, and the audio HAL driver
@@ -29,7 +29,7 @@ extension AppDelegate {
     }
 
     func terminateIfAlreadyRunning() -> Bool {
-        if NSClassFromString("XCTestCase") != nil { return false }
+        if TestHost.isThisProcess { return false }
 
         let runningApps = NSRunningApplication.runningApplications(
             withBundleIdentifier: Bundle.main.bundleIdentifier ?? ""
@@ -55,6 +55,29 @@ extension AppDelegate {
         // Launch never finished, so `applicationShouldTerminate` quits without prompting.
         NSApp.terminate(nil)
         return true
+    }
+}
+
+// MARK: - Test Host
+
+/// Whether this process is only the unit-test host. App-lifecycle entry points do no
+/// real work there: system-extension requests, helper XPC, streaming and the status
+/// item can block on OS approval dialogs or IPC and hang a headless test run, and
+/// they would write markers into the real app's `UserDefaults.standard` (the host
+/// runs under the app's bundle identifier). The logic under test never needs them.
+internal enum TestHost {
+    /// This process.
+    static var isThisProcess: Bool {
+        detect(
+            environment: ProcessInfo.processInfo.environment,
+            testCaseClassLoaded: NSClassFromString("XCTestCase") != nil
+        )
+    }
+
+    /// `XCTestConfigurationFilePath` is in the host's environment before the process
+    /// starts, so it answers even before the test bundle (and `XCTestCase`) loads.
+    static func detect(environment: [String: String], testCaseClassLoaded: Bool) -> Bool {
+        environment["XCTestConfigurationFilePath"] != nil || testCaseClassLoaded
     }
 }
 
