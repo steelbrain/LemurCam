@@ -9,10 +9,6 @@ internal final class LemurCamModel: Sendable {
         streamState.isStreaming
     }
 
-    var isReady: Bool {
-        streamState.isReady
-    }
-
     private let discoveryQueue = DispatchQueue(
         label: "com.steelbrain.LemurCam.discovery", qos: .userInitiated
     )

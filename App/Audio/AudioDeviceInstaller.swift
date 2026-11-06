@@ -58,10 +58,6 @@ internal final class AudioDeviceInstaller: AudioHelperClient {
         try service.register()
     }
 
-    func unregisterHelper() throws {
-        try service.unregister()
-    }
-
     func openLoginItemsSettings() {
         SMAppService.openSystemSettingsLoginItems()
     }

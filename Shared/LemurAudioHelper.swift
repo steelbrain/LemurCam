@@ -41,11 +41,6 @@ internal enum LemurAudioHelper {
     /// System HAL plug-ins directory (root-owned, scanned by coreaudiod).
     static let halPluginsDirectory = "/Library/Audio/Plug-Ins/HAL"
 
-    /// Absolute path of the installed driver bundle.
-    static var installedDriverPath: String {
-        (halPluginsDirectory as NSString).appendingPathComponent(driverBundleName)
-    }
-
     /// Where an app bundle carries the driver (`Contents/Library/<driverBundleName>`).
     static func bundledDriverPath(inAppBundle appBundlePath: String) -> String {
         ((appBundlePath as NSString).appendingPathComponent("Contents/Library") as NSString)

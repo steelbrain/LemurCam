@@ -92,8 +92,6 @@ internal final class SetupCoordinator {
     /// sent; a reply that arrives later still applies until the next query is sent.
     @ObservationIgnored private let micCheckTimeLimit: Duration
 
-    /// The camera is the core feature and is required; the microphone is optional.
-    var isCameraReady: Bool { cameraStatus == .ready }
     var isMicrophoneReady: Bool { micStatus == .ready }
     /// Why the working mic should be reinstalled from this app (a newer bundled
     /// driver, or an installed copy not sealed to root), or nil.
@@ -103,8 +101,6 @@ internal final class SetupCoordinator {
     }
     /// The mic is installed and working, but should be updated (see the reason).
     var microphoneNeedsUpdate: Bool { microphoneUpdateReason != nil }
-    /// Whether the guided setup flow should be surfaced (camera not yet running).
-    var needsSetup: Bool { cameraStatus != .ready }
 
     /// The defaults are the app's; tests pass a fake helper, their own marker
     /// defaults, and short time limits.

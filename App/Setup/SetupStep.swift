@@ -22,15 +22,6 @@ internal enum SetupStep: Int, CaseIterable, Identifiable {
     /// The previous step, or nil if this is already the first one.
     internal var previous: Self? { Self(rawValue: rawValue - 1) }
 
-    /// Short title shown in the step indicator.
-    internal var title: String {
-        switch self {
-        case .camera: return "Camera"
-        case .microphone: return "Microphone"
-        case .addCamera: return "Add a Camera"
-        }
-    }
-
     /// Total number of steps, for the "of N" portion of the indicator.
     internal static var total: Int { allCases.count }
 }

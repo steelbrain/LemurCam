@@ -69,8 +69,6 @@ internal final class CameraExtensionController: NSObject {
     /// not clobber an `installing`/`awaitingApproval` state mid-activation.
     private var activationRequest: OSSystemExtensionRequest?
 
-    private var isActivating: Bool { activationRequest != nil }
-
     /// The in-flight deactivation request during a repair, if any. Tracked so the
     /// delegate can tell it apart from an activation and re-activate when it lands.
     private var deactivationRequest: OSSystemExtensionRequest?
