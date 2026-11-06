@@ -82,7 +82,7 @@ internal final class StreamCoordinator {
         frameDispatcher.setPreviewEnabled(previewStore.isPreviewEnabled)
         audioRing.open()
         _hasConsumers = cameraConsumerProbe()
-        syncToActiveSource()
+        syncToActiveSource(force: true)
         // Record the demand state we just brought the pipeline into, so the first
         // consumer notification doesn't read as a spurious edge and reconnect.
         lastDemand = hasDemand
@@ -236,9 +236,7 @@ private extension StreamCoordinator {
         lastDemand = demand
         if demand {
             Log.rtsp.info("Demand detected — resuming RTSP pipeline")
-            currentSourceID = nil
-            currentSourceUpdatedAt = nil
-            syncToActiveSource()
+            syncToActiveSource(force: true)
         } else {
             Log.rtsp.info("No demand — pausing RTSP pipeline")
             frameDispatcher.reset()
@@ -282,7 +280,10 @@ private extension StreamCoordinator {
 // MARK: - Connection Management
 
 private extension StreamCoordinator {
-    func syncToActiveSource() {
+    /// Bring the pipeline (or the "No camera available" placeholder) in line with
+    /// the active source. `force` redoes it even when the active source is the one
+    /// already handled: at launch, on resuming after a pause and for a reconnect.
+    func syncToActiveSource(force: Bool = false) {
         let activeID = sourceManager.activeSourceID
         let activeSource = activeID.flatMap { id in
             sourceManager.sources.first(where: { $0.id == id })
@@ -291,7 +292,7 @@ private extension StreamCoordinator {
         // Any source's add/remove/edit lands here. When the active source itself is
         // unchanged, leave its tasks alone: cancelling first used to kill a pending
         // reconnect or ONVIF resolve, leaving the status at "Reconnecting" for good.
-        if activeID == currentSourceID, activeSource?.updatedAt == currentSourceUpdatedAt { return }
+        if !force, activeID == currentSourceID, activeSource?.updatedAt == currentSourceUpdatedAt { return }
         cancelAllTasks()
         currentSourceID = activeID
         currentSourceUpdatedAt = activeSource?.updatedAt
@@ -439,9 +440,7 @@ private extension StreamCoordinator {
             } catch { return }
             guard let self, !Task.isCancelled else { return }
             await MainActor.run {
-                self.currentSourceID = nil
-                self.currentSourceUpdatedAt = nil
-                self.syncToActiveSource()
+                self.syncToActiveSource(force: true)
             }
         }
 
