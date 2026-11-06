@@ -144,11 +144,23 @@ internal final class SourceManager {
     /// can't be written. The file is written before the Keychain changes, so a failed
     /// write leaves the stored credentials with the camera as saved; credentials that
     /// then can't be stored put the file back as it was.
-    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) throws {
+    ///
+    /// `loaded` is the type the edit form loaded. An ONVIF address it left as it was
+    /// gives way to one WS-Discovery saved since (`SourceType.keepingMove`); without
+    /// `loaded`, `sourceType` replaces the saved type whole.
+    func updateSource(
+        id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange,
+        editedFrom loaded: SourceType? = nil
+    ) throws {
         try checkChangesAllowed()
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
-        let (cleanType, _) = Self.sanitizingCredentials(from: sourceType)
+        let (sanitizedType, _) = Self.sanitizingCredentials(from: sourceType)
+        let savedType = sources[index].sourceType
+        let cleanType = loaded.map { sanitizedType.keepingMove(savedSince: $0, now: savedType) } ?? sanitizedType
+        if cleanType != sanitizedType {
+            Log.app.info("Keeping the address found for '\(name)' while it was being edited")
+        }
         let change = try credentialChange(credentials, mergingLoginFrom: sourceType, for: id, sourceName: name)
 
         let previous = sources
@@ -183,7 +195,8 @@ internal final class SourceManager {
     /// Records that an ONVIF camera now answers at the address of `moved` (found by
     /// WS-Discovery), as long as it is still saved at the address of `previous`, the one
     /// the resolve that found it started from. An address saved since, by an edit or by
-    /// another resolve, is kept: the move was found for the address it replaced. Only
+    /// another resolve, is kept: the move was found for the address it replaced. An edit
+    /// form opened before the move keeps it when saved (`SourceType.keepingMove`). Only
     /// the address changes, with a stored stream URI that named the old one
     /// (`SourceCredentials.storedStreamURI(_:movedFrom:to:)`): name, profile and
     /// credentials are left alone, nothing is written when the address is the same,

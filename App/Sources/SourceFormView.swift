@@ -408,7 +408,11 @@ private extension SourceFormView {
         )
         do {
             if let source = editing {
-                try sourceManager.updateSource(id: source.id, name: name, sourceType: sourceType, credentials: change)
+                // What the form loaded, so a move WS-Discovery saved since is kept.
+                try sourceManager.updateSource(
+                    id: source.id, name: name, sourceType: sourceType, credentials: change,
+                    editedFrom: source.sourceType
+                )
             } else {
                 let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
                 try sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
