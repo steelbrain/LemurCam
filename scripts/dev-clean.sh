@@ -550,24 +550,24 @@ clean_derived_data() {
   fi
 
   log "Deleting build outputs"
-  delete_path "$REPO_ROOT/build"
+  local dirs=()
+  [[ -e "$REPO_ROOT/build" ]] && dirs+=("$REPO_ROOT/build")
 
   local derived_root="${HOME}/Library/Developer/Xcode/DerivedData"
-  [[ -d "$derived_root" ]] || return 0
-
-  local dirs=()
-  while IFS= read -r dir; do
-    [[ -n "$dir" ]] && dirs+=("$dir")
-  done < <(find "$derived_root" -maxdepth 1 -type d -name "${APP_NAME}-*" -print 2>/dev/null)
+  if [[ -d "$derived_root" ]]; then
+    while IFS= read -r dir; do
+      [[ -n "$dir" ]] && dirs+=("$dir")
+    done < <(find "$derived_root" -maxdepth 1 -type d -name "${APP_NAME}-*" -print 2>/dev/null)
+  fi
 
   if [[ "${#dirs[@]}" -eq 0 ]]; then
-    echo "No ${APP_NAME} DerivedData folders found."
+    echo "No repo build/ or ${APP_NAME} DerivedData folders found."
     return 0
   fi
 
-  printf 'Found DerivedData folder(s):\n'
+  printf 'Found build output folder(s):\n'
   printf '  %s\n' "${dirs[@]}"
-  confirm "Delete these DerivedData folder(s)?"
+  confirm "Delete these build output folder(s)?"
 
   local dir
   for dir in "${dirs[@]}"; do
