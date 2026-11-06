@@ -1,4 +1,3 @@
-import CoreFoundation
 import os
 
 /// Starts watching the HAL device list, calling `onChange` on the given queue after

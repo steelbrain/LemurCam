@@ -1,5 +1,3 @@
-import Foundation
-
 /// Checks the host typed into the edit form of an ONVIF camera, and the host of an
 /// ONVIF URL typed into the add form (`ONVIFURLInput`). The host goes into the device
 /// service URL as typed, only an IPv6 address put in brackets (`ONVIFClient.urlHost`),
