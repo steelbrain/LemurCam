@@ -2,11 +2,24 @@ import Foundation
 import OSLog
 import ServiceManagement
 
+/// The privileged-helper calls `SetupCoordinator` makes: `AudioDeviceInstaller` in
+/// the app, a fake in tests (so a helper that answers late, fails, or never answers
+/// can be exercised without XPC).
+internal protocol AudioHelperClient: AnyObject {
+    var state: AudioDeviceInstaller.State { get }
+    var bundledDriverVersion: String? { get }
+    func registerHelper() throws
+    func openLoginItemsSettings()
+    func installDriver(completion: @escaping (MicrophoneOperationResult) -> Void)
+    func uninstallDriver(completion: @escaping (MicrophoneOperationResult) -> Void)
+    func installedDriver(completion: @escaping (InstalledDriverCheck) -> Void)
+}
+
 /// App-side control of the privileged helper: registers the SMAppService daemon,
 /// reports its approval state, and drives install/uninstall/version queries over
 /// a code-signing-pinned XPC connection. Each request uses a short-lived
 /// connection kept alive by the reply closure until the reply (or error) fires.
-internal final class AudioDeviceInstaller {
+internal final class AudioDeviceInstaller: AudioHelperClient {
     /// Registration state of the helper daemon, mapped from `SMAppService.Status`.
     enum State {
         case notRegistered
@@ -54,23 +67,23 @@ internal final class AudioDeviceInstaller {
     }
 
     /// Ask the helper to install the driver bundled inside this app.
-    func installDriver(completion: @escaping (Bool, String) -> Void) {
+    func installDriver(completion: @escaping (MicrophoneOperationResult) -> Void) {
         guard let driverPath = bundledDriverPath else {
-            completion(false, "Bundled driver not found in app bundle")
+            completion(.failed("Bundled driver not found in app bundle"))
             return
         }
-        withHelper(onUnavailable: { completion(false, $0) }, body: { helper, connection in
+        withHelper(onUnavailable: { completion(.noAnswer($0)) }, body: { helper, connection in
             helper.installDriver(fromPath: driverPath) { success, message in
-                completion(success, message)
+                completion(MicrophoneOperationResult(success: success, message: message))
                 connection.invalidate()
             }
         })
     }
 
-    func uninstallDriver(completion: @escaping (Bool, String) -> Void) {
-        withHelper(onUnavailable: { completion(false, $0) }, body: { helper, connection in
+    func uninstallDriver(completion: @escaping (MicrophoneOperationResult) -> Void) {
+        withHelper(onUnavailable: { completion(.noAnswer($0)) }, body: { helper, connection in
             helper.uninstallDriver { success, message in
-                completion(success, message)
+                completion(MicrophoneOperationResult(success: success, message: message))
                 connection.invalidate()
             }
         })

@@ -47,7 +47,7 @@ internal final class SetupCoordinator {
     var onCameraStatusChange: (() -> Void)?
 
     @ObservationIgnored private let cameraController = CameraExtensionController()
-    @ObservationIgnored private let audioInstaller = AudioDeviceInstaller()
+    @ObservationIgnored private let audioInstaller: any AudioHelperClient
     /// Cached once; the bundled driver version is constant for an app launch.
     @ObservationIgnored private lazy var bundledDriverVersion: String? = audioInstaller.bundledDriverVersion
     @ObservationIgnored private var livenessPollTask: Task<Void, Never>?
@@ -64,8 +64,10 @@ internal final class SetupCoordinator {
     /// stale async replies that would otherwise clobber freshly-changed state.
     @ObservationIgnored private var micRefreshToken = 0
     /// The install or removal the user last started, until a check shows how it
-    /// ended: what "Try Again" redoes if that is still needed.
+    /// ended: what a "Try Again" check redoes if that is still needed.
     @ObservationIgnored private var micLastOperation: MicrophoneDriverOperation?
+    /// The install or removal whose failure `micStatus` shows: what "Try Again" redoes.
+    @ObservationIgnored private var micOperationFailure: MicrophoneOperationFailure?
     /// "Try Again" is re-checking.
     @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
@@ -74,15 +76,15 @@ internal final class SetupCoordinator {
     /// started, in this app session or an earlier one, so the helper is a stale one:
     /// never install through it again (no reinstall loop).
     @ObservationIgnored private lazy var staleHelperSeen = staleHelperMarker.isSet
-    @ObservationIgnored private let staleHelperMarker = StaleHelperMarker(defaults: .standard)
+    @ObservationIgnored private let staleHelperMarker: StaleHelperMarker
 
     /// Fail an in-progress driver install if the privileged helper vends a proxy
     /// but never replies (e.g. it crashes mid-request), so `micStatus` can't stick.
-    private static let micInstallTimeoutNs: UInt64 = 30_000_000_000
+    @ObservationIgnored private let micOperationTimeLimit: Duration
     /// Treat a version query the helper accepted but never answered as unreachable,
     /// so a status waiting on it cannot spin forever. A reply that arrives later
     /// still applies.
-    private static let micQueryTimeoutNs: UInt64 = 10_000_000_000
+    @ObservationIgnored private let micCheckTimeLimit: Duration
 
     /// The camera is the core feature and is required; the microphone is optional.
     var isCameraReady: Bool { cameraStatus == .ready }
@@ -98,7 +100,18 @@ internal final class SetupCoordinator {
     /// Whether the guided setup flow should be surfaced (camera not yet running).
     var needsSetup: Bool { cameraStatus != .ready }
 
-    init() {
+    /// The defaults are the app's; tests pass a fake helper, their own marker
+    /// defaults, and short time limits.
+    init(
+        audioInstaller: any AudioHelperClient = AudioDeviceInstaller(),
+        staleHelperMarker: StaleHelperMarker = StaleHelperMarker(defaults: .standard),
+        micOperationTimeLimit: Duration = .seconds(30),
+        micCheckTimeLimit: Duration = .seconds(10)
+    ) {
+        self.audioInstaller = audioInstaller
+        self.staleHelperMarker = staleHelperMarker
+        self.micOperationTimeLimit = micOperationTimeLimit
+        self.micCheckTimeLimit = micCheckTimeLimit
         cameraController.onStatusChange = { [weak self] status in
             guard let self else { return }
             let wasReady = self.cameraStatus == .ready
@@ -194,6 +207,7 @@ extension SetupCoordinator {
     /// Advance the microphone setup by one step based on the current state:
     /// register the helper, open Login Items to approve it, or install the driver.
     func enableMicrophone() {
+        micOperationFailure = nil
         switch audioInstaller.state {
         case .notRegistered, .notFound:
             autoInstallDriver = true
@@ -207,19 +221,31 @@ extension SetupCoordinator {
         }
     }
 
-    /// "Try Again" after a failure. With the helper approved, check the installed
-    /// driver first and redo the failed install or removal only if that check shows
-    /// it is still needed: installing restarts coreaudiod, cutting audio in every
-    /// app, which a helper that was only briefly unreachable does not call for.
+    /// "Try Again" after a failure (see `MicrophoneRetry`). An install or removal the
+    /// helper reported as failed is redone. After one it never answered, check the
+    /// installed driver first and redo it only if that check shows it is still
+    /// needed: each one restarts coreaudiod, cutting audio in every app, which a
+    /// helper that was only briefly unreachable does not call for.
     func retryMicrophone() {
-        guard audioInstaller.state == .enabled else {
+        let failure = micOperationFailure
+        switch MicrophoneRetry.decide(
+            helperEnabled: audioInstaller.state == .enabled, operationRunning: isInstallingDriver, failure: failure
+        ) {
+        case .continueSetup:
             enableMicrophone()
+        case .ignore:
             return
+        case .redo(.install):
+            installMicDriver()
+        case .redo(.remove):
+            disableMicrophone()
+        case .checkFirst:
+            if let failure { micLastOperation = failure.operation }
+            micOperationFailure = nil
+            micRetrying = true
+            micStatus = .unknown
+            queryInstalledDriverVersion()
         }
-        guard !isInstallingDriver else { return }
-        micRetrying = true
-        micStatus = .unknown
-        queryInstalledDriverVersion()
     }
 
     /// Open the Login Items pane where the audio helper is approved.
@@ -241,6 +267,7 @@ extension SetupCoordinator {
         // A stale helper installs unsealed copies; installing again through it
         // would only cut audio again for the same result.
         guard !staleHelperSeen else {
+            micOperationFailure = nil
             micStatus = .needsReboot
             return
         }
@@ -265,36 +292,56 @@ extension SetupCoordinator {
     /// overlapping operations, times out a silent helper, then re-reads state.
     private func runMicDriverOperation(
         _ kind: MicrophoneDriverOperation,
-        _ operation: (@escaping (Bool, String) -> Void) -> Void,
+        _ operation: (@escaping (MicrophoneOperationResult) -> Void) -> Void,
         failureFallback: String
     ) {
         guard !isInstallingDriver else { return }
         isInstallingDriver = true
         micLastOperation = kind
+        micOperationFailure = nil
         micStatus = .installing
         micInstallTimeout?.cancel()
+        let timeLimit = micOperationTimeLimit
         micInstallTimeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.micInstallTimeoutNs)
+            try? await Task.sleep(for: timeLimit)
             guard let self, !Task.isCancelled, self.isInstallingDriver else { return }
             self.isInstallingDriver = false
-            self.micStatus = .failed("The microphone helper didn’t respond. Please try again.")
+            self.failMicOperation(
+                kind, reportedByHelper: false, message: "The microphone helper didn’t respond. Please try again.",
+                fallback: failureFallback
+            )
         }
-        operation { [weak self] success, message in
+        operation { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
                 self.micInstallTimeout?.cancel()
                 self.isInstallingDriver = false
-                if success {
+                switch result {
+                case .succeeded:
+                    // Also replaces a "didn't respond" failure this reply came too late for.
+                    self.micOperationFailure = nil
                     if kind == .install { self.verifyingDriverInstall = true }
                     self.refreshMicrophoneStatus()
-                } else {
-                    self.micStatus = .failed(message.isEmpty ? failureFallback : message)
+                case .failed(let message):
+                    self.failMicOperation(kind, reportedByHelper: true, message: message, fallback: failureFallback)
+                case .noAnswer(let message):
+                    self.failMicOperation(kind, reportedByHelper: false, message: message, fallback: failureFallback)
                 }
             }
         }
     }
 
-    private func refreshMicrophoneStatus() {
+    /// Show why the operation failed (`fallback` when the reason is empty), and keep
+    /// what "Try Again" redoes.
+    private func failMicOperation(
+        _ kind: MicrophoneDriverOperation, reportedByHelper: Bool, message: String, fallback: String
+    ) {
+        micOperationFailure = MicrophoneOperationFailure(operation: kind, reportedByHelper: reportedByHelper)
+        micStatus = .failed(message.isEmpty ? fallback : message)
+    }
+
+    /// Re-read the microphone's state: the microphone half of `refreshAll`.
+    func refreshMicrophoneStatus() {
         // The helper's registration state is synchronous and authoritative for the
         // not-installed cases; only query the driver version (async XPC) when the
         // helper is approved, so a transient XPC failure can't masquerade as state.
@@ -302,9 +349,11 @@ extension SetupCoordinator {
         case .notRegistered, .notFound:
             guard !isInstallingDriver else { return }
             installedDriverVersion = nil
+            micOperationFailure = nil
             micStatus = .notSetUp
         case .requiresApproval:
             guard !isInstallingDriver else { return }
+            micOperationFailure = nil
             micStatus = .needsApproval
         case .enabled:
             queryInstalledDriverVersion()
@@ -315,8 +364,9 @@ extension SetupCoordinator {
         micRefreshToken += 1
         let token = micRefreshToken
         micQueryTimeout?.cancel()
+        let timeLimit = micCheckTimeLimit
         micQueryTimeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.micQueryTimeoutNs)
+            try? await Task.sleep(for: timeLimit)
             guard let self, !Task.isCancelled else { return }
             self.applyDriverCheck(.unreachable, token: token)
         }
@@ -349,6 +399,7 @@ extension SetupCoordinator {
             // The check shows how the last operation ended.
             verifyingDriverInstall = false
             micLastOperation = nil
+            micOperationFailure = nil
         }
         switch reply {
         case .keepStatus:

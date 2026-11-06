@@ -21,15 +21,67 @@ internal enum MicrophoneDriverOperation: Equatable {
     case remove
 }
 
+/// How a driver install or removal through the helper ended, as the app saw it.
+internal enum MicrophoneOperationResult: Equatable {
+    case succeeded
+    /// The operation ran and did not finish: the helper answered with this reason
+    /// (e.g. "Driver installed but coreaudiod restart failed: …"), or the app had no
+    /// driver to send.
+    case failed(String)
+    /// The helper could not be reached, so whether it ran the operation is unknown.
+    case noAnswer(String)
+
+    /// The helper's reply. Its signature is the one every helper since v1.5 answers
+    /// with, so an older helper still serving the app is understood the same way.
+    init(success: Bool, message: String) {
+        self = success ? .succeeded : .failed(message)
+    }
+}
+
+/// A driver install or removal that did not succeed, while its `.failed` status is
+/// up. Decides what "Try Again" does.
+internal struct MicrophoneOperationFailure: Equatable {
+    var operation: MicrophoneDriverOperation
+    /// The helper answered that the operation failed (or the app had no driver to
+    /// send it), so it did not finish: the files can be in place with coreaudiod
+    /// never restarted. False when the helper never answered (unreachable, or no
+    /// reply in time): it may have finished.
+    var reportedByHelper: Bool
+}
+
+/// What "Try Again" on a failed microphone status does. Pure, so it is testable
+/// without XPC.
+internal enum MicrophoneRetry: Equatable {
+    /// The helper is not approved: continue setup (register it, or open Login Items).
+    case continueSetup
+    /// An operation is already running.
+    case ignore
+    /// Redo the failed operation now. The helper said it did not finish, so a check
+    /// could find the bundled driver in place and wrongly call it done.
+    case redo(MicrophoneDriverOperation)
+    /// Check the installed driver first, and let the check redo the operation only
+    /// if it is still needed (`MicrophoneVersionReply`): the helper never answered,
+    /// so it may have finished, and every redo restarts coreaudiod, cutting audio in
+    /// every app.
+    case checkFirst
+
+    static func decide(helperEnabled: Bool, operationRunning: Bool, failure: MicrophoneOperationFailure?) -> Self {
+        guard helperEnabled else { return .continueSetup }
+        guard !operationRunning else { return .ignore }
+        if let failure, failure.reportedByHelper { return .redo(failure.operation) }
+        return .checkFirst
+    }
+}
+
 /// App-side state the installed-driver check is applied against.
 internal struct MicrophoneCheckContext: Equatable {
     var currentStatus: MicrophoneStatus
     /// The user started mic setup and the helper was just approved.
     var autoInstallPending = false
-    /// "Try Again" is re-checking after a failure.
+    /// "Try Again" is checking first (`MicrophoneRetry.checkFirst`).
     var retrying = false
     /// The install or removal the user last started, until a check shows how it
-    /// ended; nil when only a check failed. What "Try Again" redoes, if needed.
+    /// ended; nil when only a check failed. What a "Try Again" check redoes, if needed.
     var lastOperation: MicrophoneDriverOperation?
     /// The check follows an install the helper reported as done.
     var verifyingInstall = false
@@ -48,18 +100,21 @@ internal enum MicrophoneVersionReply: Equatable {
     /// Show this status.
     case setStatus(MicrophoneStatus)
     /// Install the bundled driver now: the helper was just approved mid-setup and no
-    /// driver is installed yet, or "Try Again" after a failed install found it still
-    /// needed.
+    /// driver is installed yet, or "Try Again" after an install the helper never
+    /// answered found it still needed.
     case installDriver
-    /// "Try Again" after a failed removal found the driver still installed.
+    /// "Try Again" after a removal the helper never answered found the driver still
+    /// installed.
     case uninstallDriver
 
     static let unreachableMessage = "Couldn’t reach the microphone helper. Please try again."
 
     static func decide(_ check: InstalledDriverCheck, context: MicrophoneCheckContext) -> Self {
         guard check.reachable else { return unreachable(currentStatus: context.currentStatus) }
-        // "Try Again" redoes the failed install or removal only if this check shows
-        // it is still needed: each one restarts coreaudiod, cutting audio everywhere.
+        // "Try Again" after an install or removal the helper never answered redoes it
+        // only if this check shows it is still needed: each one restarts coreaudiod,
+        // cutting audio everywhere. (One the helper reported as failed is redone
+        // without a check; see `MicrophoneRetry`.)
         let redo = context.retrying ? context.lastOperation : nil
         guard let version = check.version else {
             if context.autoInstallPending || redo == .install { return .installDriver }
