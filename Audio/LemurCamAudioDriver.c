@@ -55,7 +55,9 @@ enum {
 // not-yet-written frames (which the ring would zero-fill as a brief gap).
 // ~10.7 ms at 48 kHz — imperceptible for a network-camera microphone. This only
 // describes timing to the HAL; the backlog actually held in the shm ring is set
-// by the consumer latency policy (LEMUR_AUDIO_RING_TARGET_FRAMES, 50 ms).
+// by the consumer latency policy in lemur_ring_read_paced: LEMUR_AUDIO_RING_TARGET_FRAMES
+// (50 ms) plus a reserve learned from recent gaps between producer writes, capped
+// at LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES.
 #define kDevice_SafetyOffset 512u
 
 // Ring-map retry (see StartRingMapRetry): if the shm region does not exist when

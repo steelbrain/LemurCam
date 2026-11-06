@@ -101,7 +101,7 @@ targets:
         excludes:
           # App/helper-only XPC contract; not used by the camera extension.
           - LemurAudioHelper.swift
-          # Helper install pipeline (in the app only for its unit tests).
+          # Helper install pipeline (the app uses only its read-only seal check, and its unit tests).
           - DriverInstall/**
     settings:
       base:
