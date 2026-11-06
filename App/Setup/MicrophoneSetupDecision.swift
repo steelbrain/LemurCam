@@ -90,6 +90,34 @@ internal struct MicrophoneCheckContext: Equatable {
     var staleHelperSeen = false
     /// `CFBundleVersion` of the driver bundled in this app.
     var bundledVersion: String?
+    /// `currentStatus` is why an install or removal failed, and the user has not
+    /// acted on it yet (`MicrophoneOperationFailure`).
+    var holdingFailure = false
+}
+
+/// What a routine refresh (the app becoming active, the setup window's poll, a
+/// Settings page appearing) does with the helper's registration state. Pure, so it
+/// is testable without SMAppService.
+internal enum MicrophoneRefresh: Equatable {
+    /// The helper is approved: check the installed driver.
+    case checkDriver
+    /// Show this status.
+    case setStatus(MicrophoneStatus)
+    /// Leave `micStatus` as it is.
+    case keepStatus
+
+    /// A running operation's progress stays up, and so does an operation's failure
+    /// the user has not acted on: replacing it on the next poll took the reason away
+    /// within seconds.
+    static func decide(helper: AudioDeviceInstaller.State, operationRunning: Bool, holdingFailure: Bool) -> Self {
+        let status: MicrophoneStatus
+        switch helper {
+        case .enabled: return .checkDriver
+        case .notRegistered, .notFound: status = .notSetUp
+        case .requiresApproval: status = .needsApproval
+        }
+        return operationRunning || holdingFailure ? .keepStatus : .setStatus(status)
+    }
 }
 
 /// What to do with an installed-driver check. Pure, so the reply handling
@@ -110,6 +138,10 @@ internal enum MicrophoneVersionReply: Equatable {
     static let unreachableMessage = "Couldn’t reach the microphone helper. Please try again."
 
     static func decide(_ check: InstalledDriverCheck, context: MicrophoneCheckContext) -> Self {
+        // An operation's failure stays up until the user acts on it (Try Again,
+        // Enable, Update, Remove, or moving past the setup step); the check still
+        // updates the installed version and seal behind it.
+        if context.holdingFailure { return .keepStatus }
         guard check.reachable else { return unreachable(currentStatus: context.currentStatus) }
         // "Try Again" after an install or removal the helper never answered redoes it
         // only if this check shows it is still needed: each one restarts coreaudiod,

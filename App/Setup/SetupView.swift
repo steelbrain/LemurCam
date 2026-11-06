@@ -200,6 +200,8 @@ internal struct SetupView: View {
     }
 
     private func advance() {
+        // Skipping past a failed install or removal is the user acting on it.
+        if step == .microphone { coordinator.acknowledgeMicrophoneFailure() }
         onAction?(.completedStep(step))
         guard let next = step.next else { return }
         navigatingBack = false

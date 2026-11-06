@@ -66,7 +66,9 @@ internal final class SetupCoordinator {
     /// The install or removal the user last started, until a check shows how it
     /// ended: what a "Try Again" check redoes if that is still needed.
     @ObservationIgnored private var micLastOperation: MicrophoneDriverOperation?
-    /// The install or removal whose failure `micStatus` shows: what "Try Again" redoes.
+    /// The install or removal whose failure `micStatus` shows: what "Try Again"
+    /// redoes. While set, routine refreshes leave that failure up (see
+    /// `MicrophoneRefresh`); the user's next microphone action clears it.
     @ObservationIgnored private var micOperationFailure: MicrophoneOperationFailure?
     /// "Try Again" is re-checking.
     @ObservationIgnored private var micRetrying = false
@@ -248,6 +250,14 @@ extension SetupCoordinator {
         }
     }
 
+    /// The user moved past a failed install or removal without retrying it (Skip in
+    /// guided setup): stop holding its reason, and show the microphone's state.
+    func acknowledgeMicrophoneFailure() {
+        guard micOperationFailure != nil else { return }
+        micOperationFailure = nil
+        refreshMicrophoneStatus()
+    }
+
     /// Open the Login Items pane where the audio helper is approved.
     func openMicrophoneSystemSettings() {
         audioInstaller.openLoginItemsSettings()
@@ -345,18 +355,17 @@ extension SetupCoordinator {
         // The helper's registration state is synchronous and authoritative for the
         // not-installed cases; only query the driver version (async XPC) when the
         // helper is approved, so a transient XPC failure can't masquerade as state.
-        switch audioInstaller.state {
-        case .notRegistered, .notFound:
-            guard !isInstallingDriver else { return }
-            installedDriverVersion = nil
-            micOperationFailure = nil
-            micStatus = .notSetUp
-        case .requiresApproval:
-            guard !isInstallingDriver else { return }
-            micOperationFailure = nil
-            micStatus = .needsApproval
-        case .enabled:
+        switch MicrophoneRefresh.decide(
+            helper: audioInstaller.state, operationRunning: isInstallingDriver,
+            holdingFailure: micOperationFailure != nil
+        ) {
+        case .checkDriver:
             queryInstalledDriverVersion()
+        case .setStatus(let status):
+            if status == .notSetUp { installedDriverVersion = nil }
+            micStatus = status
+        case .keepStatus:
+            return
         }
     }
 
@@ -389,7 +398,8 @@ extension SetupCoordinator {
             lastOperation: micLastOperation,
             verifyingInstall: verifyingDriverInstall,
             staleHelperSeen: staleHelperSeen,
-            bundledVersion: bundledDriverVersion
+            bundledVersion: bundledDriverVersion,
+            holdingFailure: micOperationFailure != nil
         ))
         micRetrying = false
         if check.reachable {
@@ -399,7 +409,6 @@ extension SetupCoordinator {
             // The check shows how the last operation ended.
             verifyingDriverInstall = false
             micLastOperation = nil
-            micOperationFailure = nil
         }
         switch reply {
         case .keepStatus:
