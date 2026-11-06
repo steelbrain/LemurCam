@@ -24,6 +24,9 @@ internal final class StreamCoordinator {
     private let audioRing: AudioRingBuffer
     /// Whether an external app is already using the virtual camera; injected for testability.
     private let cameraConsumerProbe: () -> Bool
+    /// Keeps the extension's camera consumer notifications coming. Released with
+    /// the coordinator, which removes their observers.
+    private var cameraConsumerNotifications: AnyObject?
     /// The ONVIF stream-URI resolve's network operations; injected for testability.
     private let onvifEnvironment: ONVIFResolveEnvironment
     /// The aggregate-demand value we last acted on. Demand changes that don't cross
@@ -43,11 +46,14 @@ internal final class StreamCoordinator {
     /// `audioConsumerProbe` (whether the virtual mic runs IO) and
     /// `audioDeviceListObserver` are called off the main thread. `audioRing` and
     /// `model` are injectable so tests can use a private shm region and a consumer
-    /// probe that never reads a real CMIO device.
+    /// probe that never reads a real CMIO device. `cameraConsumerObserver`
+    /// registers for the extension's camera consumer notifications; tests pass one
+    /// that never listens to the real, system-wide ones.
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping @Sendable () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
         cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
+        cameraConsumerObserver: CameraConsumerObserving = { CameraConsumerNotificationObserver(onChange: $0) },
         audioDeviceListObserver: @escaping AudioDeviceListObserving = { queue, onChange in
             AudioDeviceListObserver(queue: queue, handler: onChange)
         },
@@ -79,7 +85,7 @@ internal final class StreamCoordinator {
 
         wirePipelineCallbacks()
         wireSourceCallbacks()
-        observeConsumerChanges()
+        cameraConsumerNotifications = observeConsumerChanges(using: cameraConsumerObserver)
     }
 
     func start() {
@@ -114,11 +120,6 @@ internal final class StreamCoordinator {
         retryTask?.cancel()
         pipeline.disconnect()
         fallbackGenerator.stop()
-
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterRemoveEveryObserver(
-            center, Unmanaged.passUnretained(self).toOpaque()
-        )
     }
 
     private func wirePipelineCallbacks() {
@@ -457,8 +458,8 @@ extension StreamCoordinator {
         fallbackGenerator.placeholderMessage
     }
 
-    /// Apply a camera consumer edge the way `observeConsumerChanges`' Darwin
-    /// observers do, without posting the system-wide notification.
+    /// Apply a camera consumer edge the way the extension's consumer notifications
+    /// do, without posting the system-wide notification.
     func simulateCameraConsumerChange(active: Bool) {
         cameraConsumerChanged(active: active)
     }

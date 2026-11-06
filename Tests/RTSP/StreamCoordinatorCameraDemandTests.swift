@@ -69,6 +69,38 @@ internal final class StreamCoordinatorCameraDemandTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.silentCancels, cancelsBefore + 1)
     }
 
+    /// The extension's consumer notifications reach the coordinator through the
+    /// observer it was given. Every test coordinator used to register for the real,
+    /// system-wide Darwin notifications, so a LemurCam camera starting or stopping
+    /// on the Mac changed its demand while a test awaited.
+    func testCameraConsumerNotificationsArriveThroughTheInjectedObserver() throws {
+        let harness = try XCTUnwrap(fixture)
+        _ = harness.addRTSP("cam-a")
+        XCTAssertTrue(harness.cameraConsumerNotifications.isRegistered)
+
+        harness.cameraConsumerNotifications.post(active: true)
+        XCTAssertTrue(harness.coordinator.hasExternalConsumers)
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a"])
+        let cancelsBefore = harness.pipeline.silentCancels
+
+        harness.cameraConsumerNotifications.post(active: false)
+        XCTAssertFalse(harness.coordinator.hasExternalConsumers)
+        XCTAssertEqual(harness.pipeline.silentCancels, cancelsBefore + 1, "the stream must pause")
+    }
+
+    /// The real observer removes its Darwin observers when released, so the
+    /// coordinator must hold the registration for exactly its own lifetime.
+    func testReleasingTheCoordinatorEndsItsConsumerRegistration() {
+        var harness: CoordinatorHarness? = CoordinatorHarness()
+        let notifications = harness?.cameraConsumerNotifications
+        XCTAssertEqual(notifications?.isRegistered, true)
+
+        harness?.cleanUp()
+        harness = nil
+
+        XCTAssertEqual(notifications?.isRegistered, false)
+    }
+
     /// Losing the camera device while the microphone still needs the stream must
     /// not reconnect it.
     func testLosingTheCameraDeviceKeepsAStreamTheMicrophoneUses() throws {

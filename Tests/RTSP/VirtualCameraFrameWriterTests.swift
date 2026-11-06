@@ -10,7 +10,9 @@ import XCTest
 /// apps using the virtual camera saw only the placeholder.
 internal final class VirtualCameraFrameWriterTests: XCTestCase {
     func testAFrameWithOtherColorTagsGetsItsOwnFormatDescription() throws {
-        let writer = VirtualCameraFrameWriter(model: LemurCamModel(consumerProbe: { _ in false }))
+        let writer = VirtualCameraFrameWriter(
+            model: LemurCamModel(consumerProbe: { _ in false }, consumerObserver: { _ in nil })
+        )
         let hd = try Self.frame(tagged: .bt709)
         let sd = try Self.frame(tagged: .bt601)
 
@@ -27,7 +29,9 @@ internal final class VirtualCameraFrameWriterTests: XCTestCase {
     }
 
     func testFramesThatMatchReuseTheCachedDescription() throws {
-        let writer = VirtualCameraFrameWriter(model: LemurCamModel(consumerProbe: { _ in false }))
+        let writer = VirtualCameraFrameWriter(
+            model: LemurCamModel(consumerProbe: { _ in false }, consumerObserver: { _ in nil })
+        )
         let one = try Self.frame(tagged: .bt709)
         let two = try Self.frame(tagged: .bt709)
 

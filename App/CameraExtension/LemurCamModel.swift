@@ -25,6 +25,10 @@ internal final class LemurCamModel: Sendable {
     /// callbacks run on `discoveryQueue`, serialized with discovery itself.
     private let deviceListObserver = OSAllocatedUnfairLock<CMIODeviceListObserver?>(uncheckedState: nil)
 
+    /// Keeps the extension's consumer notifications coming, set once by `init`.
+    /// Released with the model, which removes their observers.
+    private let consumerNotifications = OSAllocatedUnfairLock<AnyObject?>(uncheckedState: nil)
+
     private let externalConsumerHandler = OSAllocatedUnfairLock<(@MainActor @Sendable (Bool) -> Void)?>(
         initialState: nil
     )
@@ -41,20 +45,30 @@ internal final class LemurCamModel: Sendable {
         set { externalConsumerHandler.withLock { $0 = newValue } }
     }
 
+    /// `consumerObserver` registers for the extension's consumer notifications,
+    /// which start and stop the sink stream; tests pass one that never listens to
+    /// the real, system-wide ones.
     init(
         consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
         },
-        deviceListReader: @escaping @Sendable () -> CMIODeviceList = { CoreMediaIOUtil.deviceList() }
+        deviceListReader: @escaping @Sendable () -> CMIODeviceList = { CoreMediaIOUtil.deviceList() },
+        consumerObserver: CameraConsumerObserving = { CameraConsumerNotificationObserver(onChange: $0) }
     ) {
         self.consumerProbe = consumerProbe
         self.deviceListReader = deviceListReader
-        observeConsumerChanges()
+        let registration = consumerObserver { [weak self] active in
+            if active {
+                self?.startStream()
+            } else {
+                self?.stopStream()
+            }
+        }
+        consumerNotifications.withLockUnchecked { $0 = registration }
     }
 
     deinit {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterRemoveEveryObserver(center, Unmanaged.passUnretained(self).toOpaque())
+        consumerNotifications.withLockUnchecked { $0 = nil }
         streamState.clearStreamResources()
     }
 
@@ -274,36 +288,5 @@ internal final class LemurCamModel: Sendable {
 
         CMIODeviceStopStream(snapshot.deviceID, snapshot.streamID)
         Log.ipc.info("Sink stream stopped (no consumers)")
-    }
-}
-
-// MARK: - Consumer Observation
-
-extension LemurCamModel {
-    private func observeConsumerChanges() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let model = Unmanaged<LemurCamModel>.fromOpaque(observer).takeUnretainedValue()
-                DispatchQueue.main.async { model.startStream() }
-            },
-            LemurCamConfig.consumerStartedNotification,
-            nil, .deliverImmediately
-        )
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let model = Unmanaged<LemurCamModel>.fromOpaque(observer).takeUnretainedValue()
-                DispatchQueue.main.async { model.stopStream() }
-            },
-            LemurCamConfig.consumerStoppedNotification,
-            nil, .deliverImmediately
-        )
     }
 }

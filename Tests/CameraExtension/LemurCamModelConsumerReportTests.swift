@@ -13,9 +13,11 @@ import XCTest
 internal final class LemurCamModelConsumerReportTests: XCTestCase {
     private let device: (deviceID: CMIODeviceID, streamID: CMIOStreamID) = (deviceID: 10, streamID: 11)
 
-    /// A model whose probe sees no consumer (so it never starts a sink stream on a
-    /// real CMIO device) and whose device-list reads return `deviceList`, recording
-    /// the devices it probed, how often it read the list, and what it reported.
+    /// A model whose probe sees no consumer and which never hears the extension's
+    /// system-wide consumer notifications (so it never starts a sink stream on
+    /// whatever real CMIO objects have the fake IDs), and whose device-list reads
+    /// return `deviceList`, recording the devices it probed, how often it read the
+    /// list, and what it reported.
     private struct Fixture {
         let model: LemurCamModel
         let probedDevices = OSAllocatedUnfairLock<[CMIODeviceID]>(initialState: [])
@@ -37,7 +39,8 @@ internal final class LemurCamModelConsumerReportTests: XCTestCase {
                 deviceListReader: {
                     reads.withLock { $0 += 1 }
                     return deviceList
-                }
+                },
+                consumerObserver: { _ in nil }
             )
             let recorded = reportedConsumers
             model.onExternalConsumerChange = { hasConsumer in

@@ -1,36 +1,14 @@
-import CoreFoundation
-
 // MARK: - Camera Consumer Notifications
 
 extension StreamCoordinator {
-    /// Follow external camera consumers: the extension's Darwin start/stop
-    /// notifications, and what the model learns from CMIO. `deinit` removes the
-    /// Darwin observers.
-    func observeConsumerChanges() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord.cameraConsumerChanged(active: true) }
-            },
-            LemurCamConfig.consumerStartedNotification, nil, .deliverImmediately
-        )
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord.cameraConsumerChanged(active: false) }
-            },
-            LemurCamConfig.consumerStoppedNotification, nil, .deliverImmediately
-        )
+    /// Follow external camera consumers: the extension's consumer notifications,
+    /// which `observe` registers for, and what the model learns from CMIO. Returns
+    /// what keeps the notifications coming, which the coordinator holds until
+    /// `deinit`.
+    func observeConsumerChanges(using observe: CameraConsumerObserving) -> AnyObject? {
+        let registration = observe { [weak self] active in
+            self?.cameraConsumerChanged(active: active)
+        }
 
         // The extension posts nothing when it dies or its device is replaced, and
         // the model's discovery probe decides whether the sink stream starts: take
@@ -39,5 +17,6 @@ extension StreamCoordinator {
         model.onExternalConsumerChange = { [weak self] hasConsumer in
             self?.cameraConsumerChanged(active: hasConsumer)
         }
+        return registration
     }
 }
