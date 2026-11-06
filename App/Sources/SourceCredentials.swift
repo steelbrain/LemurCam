@@ -16,6 +16,8 @@ internal extension SourceCredentials {
     /// on `rtsp://admin:Admin#123@cam/s` and reads `rtsp://admin:1234/5@cam/s` as host
     /// `admin`, port 1234. Such a URL is split at its last `@` instead (see
     /// `ambiguousUserInfo`). Any other URL that can't be parsed is returned unchanged.
+    /// What is left without a login is kept as written, unless IPCamKit would encode
+    /// its escapes a second time (`writtenForIPCamKit`).
     static func extractingFromRTSPURL(
         _ urlString: String
     ) -> (url: String, credentials: SourceCredentials?) {
@@ -28,7 +30,7 @@ internal extension SourceCredentials {
     /// an empty one (`admin:@cam`, but not `admin@cam`). Nil when both parts are empty.
     static func extractingLoginFromRTSPURL(_ urlString: String) -> (url: String, login: URLLogin?) {
         if let split = AmbiguousUserInfo(urlString) {
-            return (split.urlWithout, split.login)
+            return (writtenForIPCamKit(split.urlWithout), split.login)
         }
         return extractingReadableLogin(from: urlString)
     }
@@ -132,16 +134,34 @@ private extension SourceCredentials {
     /// `URLComponents(cameraURL:)`: the login with each escape in it decoded once (a
     /// user name or password whose escapes are not UTF-8 as written, so a login is
     /// never left in the URL), and the URL written with each character `URLComponents`
-    /// encodes percent-encoded.
+    /// encodes percent-encoded. A URL without a login goes by `writtenForIPCamKit`.
     static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
         guard var components = URLComponents(cameraURL: urlString),
               components.user != nil || components.password != nil else {
-            return (urlString, nil)
+            return (writtenForIPCamKit(urlString), nil)
         }
         let login = URLLogin(username: components.user ?? "", password: components.password)
         components.user = nil
         components.password = nil
         return (components.string ?? urlString, login)
+    }
+
+    /// `url`, which holds no login, as IPCamKit has to be given it to send what it
+    /// says. IPCamKit writes a URL whose host is non-ASCII or percent-encoded out again
+    /// through `URLComponents` (its `asciiURL`, for the `xn--` form of the host), which
+    /// encodes the `%` of the escapes in a part that also holds a character it must
+    /// encode: `rtsp://café.local/live/a{%20b` went as `/live/a%7B%2520b`. Such a URL,
+    /// when it holds such a character, is written as `URLComponents(cameraURL:)` reads
+    /// it, as one with a login is once the login is taken out:
+    /// `rtsp://caf%C3%A9.local/live/a%7B%20b`. Any other URL is kept as written:
+    /// IPCamKit sends it as written, with only its non-ASCII characters
+    /// percent-encoded, or `URLComponents` encodes no escape in it.
+    static func writtenForIPCamKit(_ url: String) -> String {
+        guard let components = URLComponents(cameraURL: url), let host = components.encodedHost,
+              !host.hasPrefix("["), host.contains("%"),
+              URLComponents.percentEncodingForParsing(url) != URLComponents.percentEncodingNonASCII(url),
+              let written = components.string else { return url }
+        return written
     }
 
     /// `url`, a stream URI the camera at `onvifHost` reported, its login taken out, with
