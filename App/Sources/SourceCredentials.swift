@@ -129,8 +129,10 @@ internal extension SourceCredentials {
 
 private extension SourceCredentials {
     /// The userinfo `URLComponents` reads, taken out of `urlString`, read by
-    /// `URLComponents(cameraURL:)`: the login with each escape in it decoded once, and
-    /// the URL written with each character `URLComponents` encodes percent-encoded.
+    /// `URLComponents(cameraURL:)`: the login with each escape in it decoded once (a
+    /// user name or password whose escapes are not UTF-8 as written, so a login is
+    /// never left in the URL), and the URL written with each character `URLComponents`
+    /// encodes percent-encoded.
     static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
         guard var components = URLComponents(cameraURL: urlString),
               components.user != nil || components.password != nil else {
