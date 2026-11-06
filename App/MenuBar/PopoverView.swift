@@ -116,13 +116,10 @@ internal struct PopoverView: View {
             // Black background
             Color.black
 
-            if sourceManager.sources.isEmpty {
-                // No cameras configured
-                emptyStateMessage(
-                    icon: "web.camera",
-                    title: "No Camera Configured",
-                    subtitle: "Add an IP camera in Settings\nto start streaming."
-                )
+            if let notice = NoCameraNotice.decide(
+                sourceCount: sourceManager.sources.count, saveRefusal: sourceManager.saveRefusal
+            ) {
+                noCameraMessage(notice)
             } else if sourceManager.activeSourceID == nil {
                 // Cameras exist but none selected
                 emptyStateMessage(
@@ -159,22 +156,6 @@ internal struct PopoverView: View {
         .frame(height: 180)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .padding(.horizontal, 8)
-    }
-
-    private func emptyStateMessage(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 24))
-                .foregroundStyle(.white.opacity(0.4))
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(.white.opacity(0.7))
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.4))
-                .multilineTextAlignment(.center)
-        }
     }
 
     // MARK: - Local Network warning
@@ -233,6 +214,46 @@ internal struct PopoverView: View {
         .padding(.vertical, 8)
     }
 
+}
+
+// MARK: - Empty States
+
+private extension PopoverView {
+    /// No camera is listed: offer to add one, or say why the saved ones weren't loaded.
+    @ViewBuilder
+    func noCameraMessage(_ notice: NoCameraNotice) -> some View {
+        switch notice {
+        case .addCamera:
+            emptyStateMessage(
+                icon: "web.camera",
+                title: "No Camera Configured",
+                subtitle: "Add an IP camera in Settings\nto start streaming."
+            )
+        case .savedCamerasNotLoaded(let refusal):
+            emptyStateMessage(
+                icon: "exclamationmark.triangle",
+                title: "Saved Cameras Not Loaded",
+                subtitle: refusal.message
+            )
+            .padding(.horizontal, 12)
+        }
+    }
+
+    func emptyStateMessage(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundStyle(.white.opacity(0.4))
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(.white.opacity(0.7))
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.4))
+                .multilineTextAlignment(.center)
+        }
+    }
 }
 
 // MARK: - Extension States

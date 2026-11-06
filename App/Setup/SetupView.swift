@@ -245,7 +245,11 @@ private extension SetupView {
     }
 
     var addCameraState: SetupStepState {
-        (sourceManager?.sources.count ?? 0) > 0 ? .ready : .inactive
+        switch noCameraNotice {
+        case nil: return .ready
+        case .addCamera: return .inactive
+        case .savedCamerasNotLoaded: return .actionNeeded
+        }
     }
 }
 
@@ -355,16 +359,30 @@ private extension SetupView {
 // MARK: - Add-camera content
 
 private extension SetupView {
-    var addCameraDetail: String {
-        let count = sourceManager?.sources.count ?? 0
-        return count == 0
-            ? "Add an IP camera (RTSP or ONVIF) so LemurCam has a feed to stream."
-            : "\(count) camera\(count == 1 ? "" : "s") added."
+    /// nil once a camera is listed; while saved cameras weren't loaded, why.
+    var noCameraNotice: NoCameraNotice? {
+        NoCameraNotice.decide(
+            sourceCount: sourceManager?.sources.count ?? 0, saveRefusal: sourceManager?.saveRefusal
+        )
     }
 
+    var addCameraDetail: String {
+        switch noCameraNotice {
+        case .addCamera:
+            return "Add an IP camera (RTSP or ONVIF) so LemurCam has a feed to stream."
+        case .savedCamerasNotLoaded(let refusal):
+            return refusal.message
+        case nil:
+            let count = sourceManager?.sources.count ?? 0
+            return "\(count) camera\(count == 1 ? "" : "s") added."
+        }
+    }
+
+    /// Add Camera marks the step done and opens Settings → Cameras, so it is offered
+    /// only when a camera can be added there.
     @ViewBuilder
     var addCameraControl: some View {
-        if (sourceManager?.sources.count ?? 0) == 0 {
+        if noCameraNotice?.offersAddCamera == true {
             Button("Add Camera") {
                 onAction?(.completedStep(.addCamera))
                 onAction?(.dismiss(openCameras: true))
