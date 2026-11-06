@@ -1,9 +1,11 @@
 @testable import LemurCam
 import XCTest
 
-/// Pins the Local Network hint heuristic: it must fire only for LAN hosts in an
-/// errored state, so a merely-offline public camera never gets misattributed to a
-/// Local Network permission problem.
+/// Pins the Local Network hint heuristic: it must fire only for LAN hosts whose
+/// connection failed with an error, so a merely-offline public camera never gets
+/// misattributed to a Local Network permission problem. A failed connection goes
+/// straight on to `.reconnecting` (the error message stays), so gating on `.error`
+/// alone meant the hint never showed.
 internal final class LocalNetworkGuidanceTests: XCTestCase {
 
     // MARK: - LAN host classification
@@ -30,15 +32,31 @@ internal final class LocalNetworkGuidanceTests: XCTestCase {
 
     // MARK: - Show/hide gate
 
-    func testHintOnlyShowsForErroredLANHost() {
-        XCTAssertTrue(LocalNetworkGuidance.isLikelyBlocked(host: "192.168.1.2", status: .error))
-        // Not errored → no hint, even on a LAN host.
-        XCTAssertFalse(LocalNetworkGuidance.isLikelyBlocked(host: "192.168.1.2", status: .connecting))
-        XCTAssertFalse(LocalNetworkGuidance.isLikelyBlocked(host: "192.168.1.2", status: .connected))
-        // Errored but public host → not a Local Network problem.
-        XCTAssertFalse(LocalNetworkGuidance.isLikelyBlocked(host: "8.8.8.8", status: .error))
+    private func blocked(_ host: String?, _ status: ConnectionStatus, error: String? = "Connection refused") -> Bool {
+        LocalNetworkGuidance.isLikelyBlocked(host: host, status: status, errorMessage: error)
+    }
+
+    func testHintShowsForAFailedLANHostWhileItWaitsToReconnect() {
+        XCTAssertTrue(blocked("192.168.1.2", .reconnecting), "the status a failed connection is left in")
+        XCTAssertTrue(blocked("192.168.1.2", .error))
+    }
+
+    func testHintNeedsAnErrorMessage() {
+        // Reconnecting after the camera simply disconnected is not a failure.
+        XCTAssertFalse(blocked("192.168.1.2", .reconnecting, error: nil))
+        XCTAssertFalse(blocked("192.168.1.2", .error, error: nil))
+    }
+
+    func testHintOnlyShowsForAFailedLANHost() {
+        // Not failed → no hint, even on a LAN host.
+        for status: ConnectionStatus in [.pending, .connecting, .connected, .disconnected] {
+            XCTAssertFalse(blocked("192.168.1.2", status), "\(status)")
+        }
+        // Failed but public host → not a Local Network problem.
+        XCTAssertFalse(blocked("8.8.8.8", .error))
+        XCTAssertFalse(blocked("8.8.8.8", .reconnecting))
         // No host → nothing to say.
-        XCTAssertFalse(LocalNetworkGuidance.isLikelyBlocked(host: nil, status: .error))
+        XCTAssertFalse(blocked(nil, .reconnecting))
     }
 
     // MARK: - Host extraction

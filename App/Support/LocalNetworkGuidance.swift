@@ -14,9 +14,13 @@ internal enum LocalNetworkGuidance {
         "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
 
     /// Whether to show the Local Network hint for a source in the given state: only
-    /// when its connection has errored and the camera lives on the local network.
-    static func isLikelyBlocked(host: String?, status: ConnectionStatus) -> Bool {
-        guard status == .error, let host, isLANHost(host) else { return false }
+    /// when its connection failed with an error and the camera lives on the local
+    /// network. A failed connection schedules its reconnect at once, which shows
+    /// `.reconnecting` in the same main-actor turn as `.error`, so the error message
+    /// (kept until the next attempt starts connecting) is what marks the failure.
+    static func isLikelyBlocked(host: String?, status: ConnectionStatus, errorMessage: String?) -> Bool {
+        guard errorMessage != nil, status == .error || status == .reconnecting,
+              let host, isLANHost(host) else { return false }
         return true
     }
 

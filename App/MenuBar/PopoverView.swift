@@ -188,7 +188,8 @@ internal struct PopoverView: View {
         }
         let status = sourceManager.connectionStatuses[activeID] ?? .pending
         return LocalNetworkGuidance.isLikelyBlocked(
-            host: LocalNetworkGuidance.host(for: source), status: status
+            host: LocalNetworkGuidance.host(for: source), status: status,
+            errorMessage: sourceManager.errorMessages[activeID]
         )
     }
 
