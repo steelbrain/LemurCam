@@ -148,7 +148,7 @@ const LAUNCH_LOG: [string, LogCategory, string][] = [
   ["9:41:03.906 AM", "rtsp", "Format description created: 1920x1080"],
   ["9:41:03.907 AM", "rtsp", "Audio stream: aac @16000Hz"],
   ["9:41:03.907 AM", "rtsp", "Stream connected: h264"],
-  ["9:41:04.114 AM", "rtsp", "Received first keyframe"],
+  ["9:41:04.114 AM", "rtsp", "Received keyframe"],
   ["9:41:04.121 AM", "rtsp", "Created decompression session"],
 ];
 
@@ -1050,7 +1050,7 @@ export default function AppWindow() {
       setStreaming(true);
     });
     connectTimers.after(delay + 900, () => {
-      log("rtsp", "Received first keyframe");
+      log("rtsp", "Received keyframe");
       log("rtsp", "Created decompression session");
     });
   };
