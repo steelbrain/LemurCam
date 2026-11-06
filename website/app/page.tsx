@@ -173,8 +173,11 @@ export default function Home() {
             />
             <AppWindow />
           </Tilt>
-          <p className="mt-5 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-muted/60">
-            Go on, click around — it&apos;s the real interface
+          <p className="mt-5 max-w-2xl text-[13px] leading-relaxed text-muted">
+            An interactive recreation of the LemurCam Settings window, built
+            from the app&apos;s SwiftUI source. The cameras, log lines and
+            test-pattern video are samples, and buttons that open other
+            windows do nothing here.
           </p>
         </Reveal>
       </section>
