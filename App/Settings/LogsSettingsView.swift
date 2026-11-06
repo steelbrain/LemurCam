@@ -26,7 +26,9 @@ internal struct LogsSettingsView: View {
                     .frame(height: 1)
                     .id("log-bottom")
             }
-            .onChange(of: store.entries.count) {
+            // The newest entry's id, not the count: once the store is full, each
+            // append drops the oldest entry and the count stays the same.
+            .onChange(of: store.entries.last?.id) {
                 withAnimation {
                     proxy.scrollTo("log-bottom", anchor: .bottom)
                 }
