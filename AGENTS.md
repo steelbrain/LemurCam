@@ -32,9 +32,10 @@ settings. Do not hand-edit `LemurCam.xcodeproj`.
   placeholder rendering, tuning, and logging helpers.
   `Shared/DriverInstall/` is the helper's audio-driver install and removal
   pipeline (staging, ownership audit, signature and downgrade checks, atomic
-  swap) and its `coreaudiod` restart. It is compiled into `Helper`, and into
-  the app only so the unit tests can reach it; `project.yml` excludes it from
-  `Extension`.
+  swap) and its `coreaudiod` restart. It is compiled into `Helper` and into the
+  app, which uses only its read-only check of whether the installed driver is
+  sealed to root (`DriverInstaller.installedCopyIsSealed`) and otherwise has it
+  for the unit tests; `project.yml` excludes it from `Extension`.
 - `Tests/`: XCTest coverage for source storage, Keychain behavior, ONVIF,
   RTSP processing, audio decoding/ring behavior, setup decisions, extension
   state, logging, configuration, and boot sanity checks.
@@ -173,13 +174,24 @@ Demand matters. The RTSP pipeline should run only when an external app is using
 the virtual camera or the virtual microphone, or when in-app preview is enabled.
 Avoid background work that keeps cameras connected with no consumer.
 
+Camera demand comes from the extension's `consumerStarted` / `consumerStopped`
+Darwin notifications, a CMIO probe at launch, and `LemurCamModel`'s
+`onExternalConsumerChange` reports: no consumer when the device goes away or is
+replaced (the extension posts nothing when it dies), and the probe's answer after
+each discovery of a new device. When demand drops, `StreamCoordinator` pauses the
+pipeline and shows the active camera as disconnected.
+
 Camera audio is decoded in `App/RTSP/AudioDecoder.swift`:
 
 - G.711 mu-law/a-law and L16 are decoded directly.
 - AAC is decoded via an AudioToolbox `AudioConverter`.
 - Output is converted to 48 kHz Float32 stereo with `AVAudioConverter`.
-- Audio production is owned by `StreamCoordinator` and demand-gated by driver
-  `audioConsumerStarted` / `audioConsumerStopped` notifications.
+- Audio production is owned by `StreamCoordinator` and demand-gated by
+  `VirtualMicDemand`: the driver's `audioConsumerStarted` /
+  `audioConsumerStopped` notifications, plus a read of the device's running
+  state, off the main thread, at launch and after every HAL device-list change
+  or `coreaudiod` restart (removing the driver ends a recording app's IO
+  without StopIO).
 
 Toggling microphone demand must not reconnect a live video stream.
 
