@@ -49,7 +49,7 @@ internal struct StreamPreview: View {
         if let frame = previewStore.latestFrame {
             Image(decorative: frame, scale: 1.0)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
         } else {
             Text("No Preview")
                 .font(.caption)

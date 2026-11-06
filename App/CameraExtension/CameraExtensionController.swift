@@ -47,7 +47,8 @@ internal final class CameraExtensionController: NSObject {
     private(set) var status: CameraExtensionStatus = .unknown {
         didSet {
             guard status != oldValue else { return }
-            Log.app.info("Camera extension status: \(String(describing: oldValue)) → \(String(describing: self.status))")
+            let transition = "\(String(describing: oldValue)) → \(String(describing: self.status))"
+            Log.app.info("Camera extension status: \(transition)")
             onStatusChange?(status)
         }
     }

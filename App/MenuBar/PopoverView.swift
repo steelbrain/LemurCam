@@ -134,7 +134,7 @@ internal struct PopoverView: View {
                 // Live preview
                 Image(decorative: frame, scale: 1.0)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
             } else if let activeID = sourceManager.activeSourceID,
                       let errorMsg = sourceManager.errorMessages[activeID] {
                 // Error state
