@@ -155,6 +155,9 @@ internal struct SourceFormView: View {
     private var editONVIFFields: some View {
         Group {
             TextField("Host", text: $onvifHost)
+            if let problem = ONVIFHostInput.problem(with: onvifHost) {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
             HStack {
                 Text("Port")
                 TextField("Port", value: $onvifPort, format: .number.grouping(.never))
@@ -169,7 +172,7 @@ internal struct SourceFormView: View {
                     Text("Fetch Profiles")
                 }
             }
-            .disabled(onvifHost.isEmpty || isProbing)
+            .disabled(onvifHost.isEmpty || isProbing || ONVIFHostInput.problem(with: onvifHost) != nil)
             if let probeError {
                 Text(probeError).font(.caption).foregroundStyle(.red)
             } else if !isProbing, !onvifAddressEdits.allowsSave(at: onvifAddress) {
@@ -231,7 +234,8 @@ private extension SourceFormView {
             switch editSourceType {
             case .rtsp: return isValidRTSPURL(inputText)
             case .onvif:
-                return !onvifHost.isEmpty && onvifDetails.selectedProfileToken != nil
+                return !onvifHost.isEmpty && ONVIFHostInput.problem(with: onvifHost) == nil
+                    && onvifDetails.selectedProfileToken != nil
                     && onvifAddressEdits.allowsSave(at: onvifAddress)
             case nil: return false
             }
