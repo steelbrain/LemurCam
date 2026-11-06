@@ -811,8 +811,8 @@ function PreviewPane({
           {live ? (
             <TestPattern key={live.id} fps={live.fps} />
           ) : (
-            // The app draws this in .secondary; shown in a visible gray here.
-            <span className="text-[10px] text-white/45">No Preview</span>
+            // StreamPreview / PreviewSettingsView: .white.opacity(0.6) on black.
+            <span className="text-[10px] text-white/60">No Preview</span>
           )}
         </div>
         {live && (
