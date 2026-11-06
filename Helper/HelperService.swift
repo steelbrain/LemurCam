@@ -13,6 +13,9 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
     private static let operations = DispatchQueue(label: "cam.lemur.app.helper.operations")
 
     private let log = Logger(subsystem: LemurAudioHelper.machServiceName, category: "service")
+    /// Held busy while an operation runs, so the helper never exits in the middle
+    /// of one, even if the client has disconnected.
+    private let idle: HelperIdleExit
 
     private let installer = DriverInstaller(
         pluginsDirectory: LemurAudioHelper.halPluginsDirectory,
@@ -23,17 +26,21 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
         }
     )
 
+    init(idle: HelperIdleExit) {
+        self.idle = idle
+    }
+
     func installDriver(fromPath _: String, withReply reply: (Bool, String) -> Void) {
         log.info("installDriver requested")
         // Only valid on the thread delivering the message, so read it before the hop.
         let connection = NSXPCConnection.current()
-        let (success, message) = Self.operations.sync { install(for: connection) }
+        let (success, message) = perform { install(for: connection) }
         reply(success, message)
     }
 
     func uninstallDriver(withReply reply: (Bool, String) -> Void) {
         log.info("uninstallDriver requested")
-        let (success, message) = Self.operations.sync { () -> (Bool, String) in
+        let (success, message) = perform { () -> (Bool, String) in
             do {
                 try installer.uninstall()
             } catch {
@@ -49,11 +56,18 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
     }
 
     func installedVersion(withReply reply: (String?) -> Void) {
-        let version = Self.operations.sync { installer.installedVersion() }
+        let version = perform { installer.installedVersion() }
         reply(version)
     }
 
     // MARK: - Private
+
+    /// Run `work` on the operations queue, holding the helper up while it runs.
+    private func perform<T>(_ work: () -> T) -> T {
+        let activity = idle.begin()
+        defer { activity?.end() }
+        return Self.operations.sync(execute: work)
+    }
 
     private func install(for connection: NSXPCConnection?) -> (Bool, String) {
         guard let connection else { return (false, "No calling app connection") }
