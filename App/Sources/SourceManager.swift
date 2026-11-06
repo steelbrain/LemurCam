@@ -102,6 +102,16 @@ internal final class SourceManager {
         onSourceConfigChanged?()
     }
 
+    /// Shorthand for callers that always know the stored credentials: a value replaces
+    /// them and nil removes them. Code that may not have read them (such as the edit
+    /// form after a failed Keychain read) must pass a `CredentialChange` instead.
+    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: SourceCredentials?) {
+        updateSource(
+            id: id, name: name, sourceType: sourceType,
+            credentials: credentials.map(CredentialChange.set) ?? .remove
+        )
+    }
+
     /// Records that an ONVIF camera now answers at a new address (found by
     /// WS-Discovery). Only the address changes: name, profile and credentials are left
     /// alone, nothing is written when the address is the same, and no config change is
