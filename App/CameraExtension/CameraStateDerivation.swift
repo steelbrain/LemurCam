@@ -92,7 +92,10 @@ internal enum CameraStateDerivation {
         if isLive {
             switch upgradeState {
             case .upToDate, .unknown: return .ready
-            case .appRestartRequired: return .appRestart
+            // A stale version is serving while an old version is staged to uninstall
+            // on reboot: macOS deferred the swap to the reboot (see below), so an app
+            // restart would only bring the same stale extension back.
+            case .appRestartRequired: return rebootPending ? .reboot : .appRestart
             case .rebootRequired: return .reboot
             }
         }

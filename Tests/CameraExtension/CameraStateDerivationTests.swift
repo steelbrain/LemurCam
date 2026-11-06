@@ -129,6 +129,24 @@ internal final class CameraStateDerivationTests: XCTestCase {
         )
     }
 
+    func testLiveStaleVersionWithRebootPendingWantsReboot() {
+        // An old version staged to uninstall on reboot means macOS deferred the swap
+        // until a reboot; relaunching the app would just bring the stale extension
+        // back, so this must prompt a reboot rather than an app restart.
+        XCTAssertEqual(
+            CameraStateDerivation.deriveEnabledState(
+                isLive: true, currentStatus: .installing, upgradeState: .appRestartRequired, rebootPending: true
+            ),
+            .reboot
+        )
+        XCTAssertEqual(
+            CameraStateDerivation.deriveEnabledState(
+                isLive: true, currentStatus: .needsAppRestart, upgradeState: .appRestartRequired, rebootPending: true
+            ),
+            .reboot
+        )
+    }
+
     func testLiveRebootStateWantsReboot() {
         XCTAssertEqual(
             CameraStateDerivation.deriveEnabledState(
