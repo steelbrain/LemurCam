@@ -42,6 +42,7 @@ DRIVER_LEGACY_STAGING_NAME=".LemurCamAudio.driver.staging"
 
 EXECUTE=0
 ASSUME_YES=0
+KEEP_PROCESSES=0
 KEEP_APPS=0
 INCLUDE_ARCHIVES=0
 KEEP_DERIVED_DATA=0
@@ -49,6 +50,7 @@ KEEP_EXTENSION=0
 KEEP_DRIVER=0
 KEEP_USER_STATE=0
 KEEP_KEYCHAIN=0
+KEEP_TCC=0
 DEVELOPER_ON=0
 GLOBAL_TCC_RESET=0
 GLOBAL_SYSEXT_RESET=0
@@ -62,10 +64,11 @@ until you pass --execute.
 
 By default --execute will:
   - stop running LemurCam app/extension processes
-  - uninstall the extension via 'systemextensionsctl uninstall' (needs SIP off)
+  - uninstall the extension via 'systemextensionsctl uninstall' (needs SIP off),
+    and remove any staged ${EXT_BUNDLE_ID} under ${SYSEXT_ROOT}
   - delete EVERY LemurCam.app bundle it can find (the main cause of reboot
-    re-staging), plus any staged ${EXT_BUNDLE_ID} under ${SYSEXT_ROOT}.
-    Copies inside Xcode archives are kept unless you pass --include-archives.
+    re-staging). Copies inside Xcode archives are kept unless you pass
+    --include-archives.
   - remove the installed audio driver (${DRIVER_BUNDLE_NAME}) and any staging
     copies the helper left in ${HAL_PLUGINS_DIR}, and restart coreaudiod so it
     drops the plug-in
@@ -81,17 +84,20 @@ Without --yes, each of these steps asks before it runs; any answer other than
 Options:
   --execute              Actually run the commands. Without this, only prints them.
   --yes                  Do not prompt before destructive operations.
+  --keep-processes       Do not stop the running app and extension.
   --keep-apps            Do not delete LemurCam.app bundles.
   --include-archives     Also delete LemurCam.app copies inside Xcode archives
                          (${ARCHIVES_ROOT}
                          or any .xcarchive), such as release builds and
                          notarization submissions. Off by default.
   --keep-derived-data    Do not delete DerivedData / repo build outputs.
-  --keep-extension       Do not run 'systemextensionsctl uninstall'.
+  --keep-extension       Do not uninstall the extension or remove its staged
+                         copies (one of them is the copy macOS runs).
   --keep-driver          Do not remove the installed audio driver.
   --keep-user-state      Do not delete defaults, containers, or Application
                          Support data (the saved camera list).
   --keep-keychain        Do not delete Keychain credentials.
+  --keep-tcc             Do not reset Camera (TCC) authorization.
   --developer-on         Enable system extension developer mode (eases reloading
                          locally-built extensions; needs SIP off).
   --global-tcc-reset     Reset Camera permission for ALL apps, not just LemurCam.
@@ -114,6 +120,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --execute) EXECUTE=1 ;;
     --yes) ASSUME_YES=1 ;;
+    --keep-processes) KEEP_PROCESSES=1 ;;
     --keep-apps) KEEP_APPS=1 ;;
     --include-archives) INCLUDE_ARCHIVES=1 ;;
     --keep-derived-data) KEEP_DERIVED_DATA=1 ;;
@@ -121,6 +128,7 @@ while [[ $# -gt 0 ]]; do
     --keep-driver) KEEP_DRIVER=1 ;;
     --keep-user-state) KEEP_USER_STATE=1 ;;
     --keep-keychain) KEEP_KEYCHAIN=1 ;;
+    --keep-tcc) KEEP_TCC=1 ;;
     --developer-on) DEVELOPER_ON=1 ;;
     --global-tcc-reset) GLOBAL_TCC_RESET=1 ;;
     --global-sysext-reset) GLOBAL_SYSEXT_RESET=1 ;;
@@ -370,6 +378,10 @@ is_archived_bundle() {
 }
 
 stop_processes() {
+  if [[ "$KEEP_PROCESSES" -eq 1 ]]; then
+    return 0
+  fi
+
   log "Stopping running LemurCam processes"
   confirm "Stop the running ${APP_NAME} app and camera extension? (sudo)"
   run_allow_fail pkill -x "$APP_NAME"
@@ -442,6 +454,11 @@ delete_apps() {
 }
 
 purge_staged_extensions() {
+  # With the extension kept installed, one of these is the copy macOS runs.
+  if [[ "$KEEP_EXTENSION" -eq 1 ]]; then
+    return 0
+  fi
+
   log "Removing staged ${EXT_BUNDLE_ID} copies under ${SYSEXT_ROOT}"
   [[ -d "$SYSEXT_ROOT" ]] || { echo "No ${SYSEXT_ROOT}."; return 0; }
 
@@ -514,6 +531,10 @@ remove_audio_driver() {
 }
 
 reset_tcc() {
+  if [[ "$KEEP_TCC" -eq 1 ]]; then
+    return 0
+  fi
+
   log "Resetting Camera privacy authorization"
   if [[ "$GLOBAL_TCC_RESET" -eq 1 ]]; then
     confirm "Reset Camera privacy permission for ALL apps?"
