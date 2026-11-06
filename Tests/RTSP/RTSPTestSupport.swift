@@ -135,7 +135,8 @@ internal final class LogLineRecorder: Sendable {
 /// ring is a private shm region, never the one a live driver maps, so tests may
 /// call `start()`. The launch probes default to "no consumer". `rtspSources` are
 /// added before the coordinator exists, as the app loads saved cameras before
-/// creating it.
+/// creating it. No HAL listener is installed: `start()` hands the harness the
+/// device-list callback, which `simulateAudioDeviceListChange()` fires.
 @MainActor
 internal final class CoordinatorHarness {
     let manager: SourceManager
@@ -144,6 +145,7 @@ internal final class CoordinatorHarness {
     private let directory: URL
     private let savedActiveID: String?
     private let ringName = "/lc-test-\(UUID().uuidString.prefix(8))"
+    private let audioDeviceListChange = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     init(
         rtspSources: [String] = [],
@@ -164,6 +166,10 @@ internal final class CoordinatorHarness {
             sourceManager: sourceManager,
             audioConsumerProbe: audioConsumerProbe,
             cameraConsumerProbe: cameraConsumerProbe,
+            audioDeviceListObserver: { [audioDeviceListChange] _, onChange in
+                audioDeviceListChange.withLock { $0 = onChange }
+                return nil
+            },
             audioRing: AudioRingBuffer(name: ringName),
             model: LemurCamModel(consumerProbe: { _ in false }),
             pipeline: fakePipeline
@@ -189,6 +195,16 @@ internal final class CoordinatorHarness {
 
     func status(_ id: UUID) -> ConnectionStatus? {
         manager.connectionStatuses[id]
+    }
+
+    /// Whether `start()` has installed the HAL device-list listener.
+    var isObservingAudioDevices: Bool {
+        audioDeviceListChange.withLock { $0 != nil }
+    }
+
+    /// Fire the HAL device-list change, as CoreAudio does on the coordinator's queue.
+    func simulateAudioDeviceListChange() {
+        audioDeviceListChange.withLock { $0 }?()
     }
 
     /// Send `count` decoded frames to the coordinator, as the real pipeline does

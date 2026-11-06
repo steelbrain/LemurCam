@@ -35,13 +35,17 @@ internal final class StreamCoordinator {
     /// `LemurCamModel` learns from CMIO (device loss, discovery). Read-only.
     var hasExternalConsumers: Bool { _hasConsumers }
 
-    /// `audioConsumerProbe` (whether the virtual mic runs IO) is called off the main
-    /// thread. `audioRing` and `model` are injectable so tests can use a private shm
-    /// region and a consumer probe that never reads a real CMIO device.
+    /// `audioConsumerProbe` (whether the virtual mic runs IO) and
+    /// `audioDeviceListObserver` are called off the main thread. `audioRing` and
+    /// `model` are injectable so tests can use a private shm region and a consumer
+    /// probe that never reads a real CMIO device.
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping @Sendable () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
         cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
+        audioDeviceListObserver: @escaping AudioDeviceListObserving = { queue, onChange in
+            AudioDeviceListObserver(queue: queue, handler: onChange)
+        },
         audioRing: AudioRingBuffer = AudioRingBuffer(),
         model streamModel: LemurCamModel = LemurCamModel(),
         pipeline: any StreamPipeline = RTSPStreamPipeline()
@@ -52,7 +56,7 @@ internal final class StreamCoordinator {
         self.previewStore = previews
         self.sourceManager = sourceManager
         self.pipeline = pipeline
-        self.micDemand = VirtualMicDemand(probe: audioConsumerProbe)
+        self.micDemand = VirtualMicDemand(probe: audioConsumerProbe, makeDeviceListObserver: audioDeviceListObserver)
         self.audioRing = audioRing
         self.cameraConsumerProbe = cameraConsumerProbe
         self.fallbackGenerator = FrameGenerator(model: streamModel)
@@ -79,6 +83,7 @@ internal final class StreamCoordinator {
         // Record the demand state we just brought the pipeline into, so the first
         // consumer notification doesn't read as a spurious edge and reconnect.
         lastDemand = hasDemand
+        micDemand.observeDeviceList()
         Task { [weak self] in await self?.recoverAudioDemandOnLaunch() }
     }
 
