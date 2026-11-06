@@ -1,3 +1,8 @@
+# The exact SwiftLint version CI installs (.github/workflows/ci.yml). With
+# --strict, running any other version fails the lint, so a new SwiftLint
+# release cannot change results without a commit. Bump both together.
+swiftlint_version: 0.65.1
+
 included:
   - App
   - Extension

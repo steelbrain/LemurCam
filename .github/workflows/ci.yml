@@ -6,19 +6,54 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    # bash -eo pipefail instead of the default bash -e.
+    shell: bash
+
+env:
+  # Pinned tool versions, installed from the projects' own release archives
+  # rather than Homebrew's current formula, so a tool release cannot change
+  # CI results without a commit. SWIFTLINT_VERSION must equal
+  # swiftlint_version in .swiftlint.yml.
+  SWIFTLINT_VERSION: 0.65.1
+  XCODEGEN_VERSION: 2.46.0
 
 jobs:
   lint:
     name: SwiftLint
     runs-on: macos-26
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SwiftLint
-        run: brew install swiftlint
+      - name: Install SwiftLint ${{ env.SWIFTLINT_VERSION }}
+        run: |
+          dir="$RUNNER_TEMP/swiftlint"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$dir/swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
+          unzip -q "$dir/swiftlint.zip" -d "$dir"
+          bin="$(find "$dir" -type f -name swiftlint | head -n 1)"
+          if [ -z "$bin" ]; then
+            echo "::error::No swiftlint binary in portable_swiftlint.zip"
+            exit 1
+          fi
+          chmod +x "$bin"
+          installed="$("$bin" version)"
+          if [ "$installed" != "$SWIFTLINT_VERSION" ]; then
+            echo "::error::Expected SwiftLint $SWIFTLINT_VERSION, got $installed"
+            exit 1
+          fi
+          dirname "$bin" >> "$GITHUB_PATH"
 
       - name: Lint
         run: swiftlint lint --strict --reporter github-actions-logging
@@ -26,6 +61,7 @@ jobs:
   xcode-build:
     name: Xcode Build
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +71,28 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install XcodeGen ${{ env.XCODEGEN_VERSION }}
+        run: |
+          dir="$RUNNER_TEMP/xcodegen"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$dir/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          unzip -q "$dir/xcodegen.zip" -d "$dir"
+          # The archive keeps bin/ next to share/xcodegen (its setting
+          # presets), so run the binary in place.
+          bin="$(find "$dir" -type f -path '*/bin/xcodegen' | head -n 1)"
+          if [ -z "$bin" ]; then
+            echo "::error::No bin/xcodegen in xcodegen.zip"
+            exit 1
+          fi
+          chmod +x "$bin"
+          installed="$("$bin" --version)"
+          if [ "$installed" != "Version: $XCODEGEN_VERSION" ]; then
+            echo "::error::Expected XcodeGen $XCODEGEN_VERSION, got $installed"
+            exit 1
+          fi
+          dirname "$bin" >> "$GITHUB_PATH"
 
       - name: Generate Xcode project
         run: xcodegen generate
