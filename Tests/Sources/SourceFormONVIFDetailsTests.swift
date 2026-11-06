@@ -5,7 +5,9 @@ import XCTest
 /// kept the first camera's device UUID and serial number, so the second was saved with
 /// them and a later rediscovery could re-point it to the first one's address.
 /// `SourceFormONVIFDetails` holds what the form read from the camera and clears it on
-/// an edit of the URL and on a new Connect.
+/// an edit of the URL and on a new Connect. Picking another profile kept the stream URL
+/// of the one picked before until its own arrived, so Add or Save could store Sub with
+/// Main's URL; picking one now clears it.
 internal final class SourceFormONVIFDetailsTests: XCTestCase {
     private static func details(
         serial: String?, endpointReference: String?, profiles tokens: [String] = ["main"]
@@ -97,5 +99,37 @@ internal final class SourceFormONVIFDetailsTests: XCTestCase {
         form.profilesFetched(Self.details(serial: nil, endpointReference: "urn:uuid:reported"))
         XCTAssertEqual(form.deviceUUID, "urn:uuid:from-discovery")
         XCTAssertEqual(form.serialNumber, "SN-A")
+    }
+
+    /// Main is picked and its URL read; then Sub is picked and saved before its own
+    /// fetch ends, or after it fails.
+    func testPickingAnotherProfileClearsTheEarlierStreamURL() {
+        var form = SourceFormONVIFDetails()
+        form.profilesFetched(Self.details(serial: "SN-A", endpointReference: nil, profiles: ["main", "sub"]))
+        form.selectedProfileToken = "main"
+        form.startFetchingStreamURI()
+        form.streamURIFetched("rtsp://192.0.2.10/main")
+
+        form.selectedProfileToken = "sub"
+        form.startFetchingStreamURI()
+
+        XCTAssertNil(form.streamURI, "Main's URL is not Sub's")
+        XCTAssertEqual(form.profiles.map(\.token), ["main", "sub"], "the profiles stay")
+        form.streamURIFetched("rtsp://192.0.2.10/sub")
+        XCTAssertEqual(form.streamURI, "rtsp://192.0.2.10/sub")
+    }
+
+    /// A saved camera's URL goes too when another profile is picked.
+    func testPickingAnotherProfileOfASavedCameraClearsItsSavedStreamURL() {
+        var form = SourceFormONVIFDetails(saved: .init(
+            selectedProfileToken: "main", streamURI: "rtsp://192.0.2.10/main",
+            deviceUUID: "urn:uuid:camera-a", serialNumber: "SN-A"
+        ))
+
+        form.selectedProfileToken = "sub"
+        form.startFetchingStreamURI()
+
+        XCTAssertNil(form.streamURI)
+        XCTAssertEqual(form.deviceUUID, "urn:uuid:camera-a", "the camera stays the same")
     }
 }

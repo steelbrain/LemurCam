@@ -53,6 +53,13 @@ internal struct SourceFormONVIFDetails {
         )
     }
 
+    /// A profile was picked and its stream URL is fetched. The one of the profile
+    /// picked before is cleared, so it can't be saved as this one's: Add or Save before
+    /// the fetch ends, or after it fails, saved the Sub profile with Main's URL.
+    mutating func startFetchingStreamURI() {
+        streamURI = nil
+    }
+
     mutating func streamURIFetched(_ uri: String) {
         streamURI = uri
     }

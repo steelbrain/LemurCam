@@ -348,6 +348,8 @@ private extension SourceFormView {
 
     func fetchStreamURI(profileToken: String) {
         let ticket = fetchTickets.issue()
+        onvifDetails.startFetchingStreamURI()
+        probeError = nil
         let client = makeONVIFClient()
         Task {
             do {
