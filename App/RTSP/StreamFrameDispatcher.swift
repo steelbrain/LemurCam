@@ -48,6 +48,11 @@ internal final class StreamFrameDispatcher: Sendable {
         jitterBuffer.reset()
     }
 
+    /// Whether decoded frames are being sent on to the virtual camera.
+    var isForwardingFrames: Bool {
+        jitterBuffer.isDraining
+    }
+
     private var isPreviewEnabled: Bool {
         previewEnabled.withLock { $0 }
     }

@@ -304,6 +304,9 @@ private extension StreamCoordinator {
         }
 
         pipeline.cancelSilently()
+        // A silent cancel fires no state change, so nothing else resets the jitter
+        // buffer: its drain timer would keep re-sending the old camera's last frame.
+        frameDispatcher.reset()
         fallbackGenerator.stop()
         previewStore.clear()
 
@@ -343,7 +346,10 @@ private extension StreamCoordinator {
         }
 
         Log.rtsp.info("Re-discovering ONVIF stream URI for '\(sourceName)'")
+        // Resolving can take seconds; show what `.connecting` shows meanwhile.
+        sourceManager.updateErrorMessage(for: sourceID, message: nil)
         sourceManager.updateConnectionStatus(for: sourceID, status: .connecting)
+        fallbackGenerator.start(message: "Connecting in LemurCam")
         let params = ONVIFResolveParams(
             info: info, token: token, credentials: credentials,
             sourceID: sourceID, sourceName: sourceName, sourceManager: sourceManager
@@ -451,6 +457,16 @@ extension StreamCoordinator {
     /// Whether a reconnect is scheduled and not yet run or cancelled.
     var hasPendingRetry: Bool {
         retryTask != nil
+    }
+
+    /// Whether decoded camera frames are being sent on to the virtual camera.
+    var isForwardingCameraFrames: Bool {
+        frameDispatcher.isForwardingFrames
+    }
+
+    /// The placeholder the app is sending to the virtual camera, if any.
+    var placeholderMessage: String? {
+        fallbackGenerator.placeholderMessage
     }
 
     /// Apply a camera consumer edge the way `observeConsumerChanges`' Darwin

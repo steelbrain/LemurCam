@@ -2,6 +2,7 @@ import CoreVideo
 import Foundation
 @testable import LemurCam
 import os
+import XCTest
 
 /// H.264 parameter sets for a 64x64 Constrained Baseline stream, taken from an
 /// x264 encode. Unlike the hand-written minimal SPS in `NALProcessorTests`,
@@ -170,5 +171,17 @@ internal final class CoordinatorHarness {
 
     func status(_ id: UUID) -> ConnectionStatus? {
         manager.connectionStatuses[id]
+    }
+
+    /// Send `count` decoded frames to the coordinator, as the real pipeline does
+    /// from VideoToolbox's output thread.
+    func deliverDecodedFrames(_ count: Int) throws {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA, nil, &buffer)
+        XCTAssertEqual(status, kCVReturnSuccess)
+        let frame = try XCTUnwrap(buffer)
+        for _ in 0..<count {
+            pipeline.onPixelBuffer?(frame)
+        }
     }
 }

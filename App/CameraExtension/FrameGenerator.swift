@@ -8,6 +8,7 @@ internal final class FrameGenerator: Sendable {
         var timer: DispatchSourceTimer?
         var pixelBuffer: SendablePixelBuffer?
         var formatDescription: CMVideoFormatDescription?
+        var message: String?
     }
 
     private let model: LemurCamModel
@@ -29,6 +30,11 @@ internal final class FrameGenerator: Sendable {
         stop()
         setupPlaceholder(message: message)
         startGenerating()
+    }
+
+    /// The text of the placeholder being generated, or nil while stopped.
+    var placeholderMessage: String? {
+        state.withLock { $0.timer == nil ? nil : $0.message }
     }
 
     func stop() {
@@ -60,6 +66,7 @@ internal final class FrameGenerator: Sendable {
         state.withLock {
             $0.pixelBuffer = sendableBuffer
             $0.formatDescription = formatDescription
+            $0.message = message
         }
     }
 

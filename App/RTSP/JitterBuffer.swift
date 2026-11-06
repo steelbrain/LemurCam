@@ -65,6 +65,11 @@ internal final class JitterBuffer: Sendable {
         }
     }
 
+    /// Whether the drain timer runs, re-sending the last frame when none is queued.
+    var isDraining: Bool {
+        state.withLock { $0.drainTimer != nil }
+    }
+
     /// Clear the buffer and stop draining. Called on stream stop/reconnect.
     func reset() {
         state.withLock {
