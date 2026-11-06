@@ -20,7 +20,8 @@
 //  Real-time rule: DoIOOperation / GetZeroTimeStamp run on a high-priority audio
 //  thread and MUST NOT lock, allocate, or make syscalls. Only the lock-free ring
 //  read happens there. Mapping the shm region and posting notifications happen on
-//  the non-real-time Start/StopIO path under gStateMutex.
+//  the non-real-time Start/StopIO path, or the ring-map retry thread, under
+//  gStateMutex.
 //
 
 #include <CoreAudio/AudioServerPlugIn.h>
@@ -35,6 +36,7 @@
 #include <os/log.h>
 
 #include "LemurAudioConsumerSignal.h"
+#include "LemurAudioRingMapRetry.h"
 #include "LemurAudioShared.h"
 
 // MARK: - Object IDs (static graph)
@@ -61,11 +63,11 @@ enum {
 // at LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES.
 #define kDevice_SafetyOffset 512u
 
-// Ring-map retry (see StartRingMapRetry): if the shm region does not exist when
-// the first consumer starts IO (e.g. the app has not launched yet since boot),
-// retry mapping it off the real-time path so audio begins as soon as the app
-// creates the ring, without forcing the consumer to restart the device.
-#define kRingMapRetryMaxAttempts 60        // ~60 s total
+// Ring-map retry (see StartRingMapRetry): if the shm region cannot be mapped when
+// a client starts IO (e.g. the app has not launched yet since boot), retry
+// mapping it off the real-time path for as long as any client runs IO, so audio
+// begins as soon as the app creates the ring, however late that is, without
+// forcing the client to restart the device (see LemurAudioRingMapRetry.h).
 #define kRingMapRetryIntervalUsec 1000000  // 1 s between attempts
 
 static os_log_t gLog;
@@ -87,17 +89,18 @@ static Float64 gHostTicksPerFrame = 0.0;
 static UInt64  gAnchorHostTime = 0;
 static UInt64  gNumberTimeStamps = 0;
 
-// Shared-memory ring (mapped lazily in StartIO; survives until the plug-in
-// unloads). Published with release/acquire ordering: StartIO maps and stores it
-// (release) under gStateMutex; the real-time DoIOOperation loads it (acquire)
-// once into a local, so it never observes a half-published pointer and stays
-// lock-free.
+// Shared-memory ring (mapped lazily by StartIO or the ring-map retry; survives
+// until the plug-in unloads). Published with release/acquire ordering: it is
+// mapped and stored (release) under gStateMutex; the real-time DoIOOperation
+// loads it (acquire) once into a local, so it never observes a half-published
+// pointer and stays lock-free.
 static int                     gShmFD = -1;
 static LemurAudioRing *_Atomic gRing = NULL;
 
 // Set while a background ring-map retry thread is running, so StartIO never
-// spawns a second one. Cleared by the thread when it exits.
-static atomic_int gMapRetryRunning = 0;
+// spawns a second one. Guarded by gStateMutex: StartIO sets it, and the thread
+// clears it in the same lock hold in which it decides to stop.
+static bool gMapRetryRunning = false;
 
 // Latency control for the ring reads (see lemur_ring_read_paced). Touched only by
 // the IO thread in DoIOOperation, and reset in StartIO when the first client
@@ -119,17 +122,21 @@ static void FillFormat(AudioStreamBasicDescription *format) {
     format->mBitsPerChannel   = LEMUR_AUDIO_BITS_PER_CH;
 }
 
-// Map the app-created shm ring. Non-real-time; call from Start/StopIO only.
-// Returns true if the ring is mapped (it may still be "not ready" until the app
-// initialises it). Safe to call repeatedly.
-static Boolean EnsureRingMapped(void) {
+// Map the app-created shm ring. Non-real-time; call with gStateMutex held, from
+// StartIO or the ring-map retry only. Returns true if the ring is mapped (it may
+// still be "not ready" until the app initialises it). Safe to call repeatedly.
+// `logFailure` is false for the retry's attempts, which come once a second for as
+// long as a client records without the app: StartIO has already logged why.
+static Boolean EnsureRingMapped(Boolean logFailure) {
     if (atomic_load_explicit(&gRing, memory_order_acquire) != NULL) {
         return true;
     }
     int fd = shm_open(LEMUR_AUDIO_SHM_NAME, O_RDWR, 0);
     if (fd < 0) {
-        os_log_error(gLog, "shm_open(%{public}s) failed: %d — emitting silence",
-                     LEMUR_AUDIO_SHM_NAME, errno);
+        if (logFailure) {
+            os_log_error(gLog, "shm_open(%{public}s) failed: %d — emitting silence",
+                         LEMUR_AUDIO_SHM_NAME, errno);
+        }
         return false;
     }
     // Anyone can create this name, so never map more than the object holds: a
@@ -138,14 +145,18 @@ static Boolean EnsureRingMapped(void) {
     struct stat info;
     memset(&info, 0, sizeof(info));
     if (fstat(fd, &info) != 0 || info.st_size < (off_t)sizeof(LemurAudioRing)) {
-        os_log_error(gLog, "audio ring region is smaller than the ring (%lld bytes) — emitting silence",
-                     (long long)info.st_size);
+        if (logFailure) {
+            os_log_error(gLog, "audio ring region is smaller than the ring (%lld bytes) — emitting silence",
+                         (long long)info.st_size);
+        }
         close(fd);
         return false;
     }
     void *p = mmap(NULL, sizeof(LemurAudioRing), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (p == MAP_FAILED) {
-        os_log_error(gLog, "mmap of ring failed: %d", errno);
+        if (logFailure) {
+            os_log_error(gLog, "mmap of ring failed: %d", errno);
+        }
         close(fd);
         return false;
     }
@@ -163,39 +174,46 @@ static Boolean EnsureRingMapped(void) {
     return true;
 }
 
-// Background worker: retry EnsureRingMapped until it succeeds, IO stops, or the
-// attempt cap is reached. Non-real-time (it sleeps and makes syscalls), so it
-// runs on its own detached thread, never on the IO thread. Each attempt holds
-// gStateMutex only for the (fast, sleep-free) map call; the sleep is outside the
-// lock so it never stalls Start/StopIO.
+// Background worker: retry EnsureRingMapped once a second until it succeeds or no
+// client runs IO, with no cap on the attempts (lemur_audio_ring_map_retry_continues).
+// Non-real-time (it sleeps and makes syscalls), so it runs on its own detached
+// thread, never on the IO thread. Each attempt holds gStateMutex only for the
+// (fast, sleep-free) map call and the decision; the sleep is outside the lock so
+// it never stalls Start/StopIO. StartIO has just tried when it starts this
+// thread, so the thread sleeps before its first attempt.
 static void *RingMapRetryThread(void *arg) {
     (void)arg;
-    for (int attempt = 0; attempt < kRingMapRetryMaxAttempts; attempt++) {
-        pthread_mutex_lock(&gStateMutex);
-        Boolean ioRunning = (gIOCount > 0);
-        Boolean mapped = ioRunning ? EnsureRingMapped() : true;
-        pthread_mutex_unlock(&gStateMutex);
-        if (mapped || !ioRunning) { break; }
+    bool keepTrying = true;
+    while (keepTrying) {
         usleep(kRingMapRetryIntervalUsec);
+        pthread_mutex_lock(&gStateMutex);
+        bool mapped = (atomic_load_explicit(&gRing, memory_order_acquire) != NULL);
+        if (lemur_audio_ring_map_wanted(gIOCount, mapped)) {
+            mapped = EnsureRingMapped(false);
+        }
+        keepTrying = lemur_audio_ring_map_retry_continues(gIOCount, mapped, &gMapRetryRunning);
+        if (!keepTrying && !mapped) {
+            os_log(gLog, "no client runs IO; stopped retrying the audio ring map");
+        }
+        pthread_mutex_unlock(&gStateMutex);
     }
-    atomic_store_explicit(&gMapRetryRunning, 0, memory_order_release);
     return NULL;
 }
 
 // Spawn the retry worker if one is not already running. Call with gStateMutex
-// held (from StartIO); pthread_create does not need the lock and the worker
-// blocks on the mutex until StartIO releases it.
+// held (from StartIO); pthread_create does not need the lock, and the worker
+// takes the mutex only after its first sleep.
 static void StartRingMapRetry(void) {
-    int expected = 0;
-    if (!atomic_compare_exchange_strong(&gMapRetryRunning, &expected, 1)) {
+    if (!lemur_audio_ring_map_retry_claim(&gMapRetryRunning)) {
         return; // a retry thread is already running
     }
     pthread_t tid;
     if (pthread_create(&tid, NULL, RingMapRetryThread, NULL) == 0) {
         pthread_detach(tid);
+        os_log(gLog, "audio ring not mapped yet; retrying every second while a client runs IO");
     } else {
         os_log_error(gLog, "failed to start ring-map retry thread");
-        atomic_store_explicit(&gMapRetryRunning, 0, memory_order_release);
+        gMapRetryRunning = false;
     }
 }
 
@@ -777,8 +795,8 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
     if (inDeviceObjectID != kObjectID_Device) { return kAudioHardwareBadObjectError; }
 
     pthread_mutex_lock(&gStateMutex);
-    Boolean firstStart = (gIOCount == 0);
-    if (firstStart) {
+    LemurAudioRing *ring = atomic_load_explicit(&gRing, memory_order_acquire);
+    if (gIOCount == 0) {
         // Every session that starts from idle drops whatever the ring still holds
         // (the end of the previous session, or audio a producer queued with no
         // consumer), not just the first one after the ring is mapped: otherwise
@@ -786,16 +804,7 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
         // EnsureRingMapped resets on a fresh map; an already-mapped ring is reset
         // here. No IO is running before the first client starts, so writing the
         // consumer-owned readIndex cannot race DoIOOperation.
-        // If the region does not exist yet (e.g. the app has not launched since
-        // boot), retry off the real-time path so audio begins as soon as the app
-        // creates it — without this, the pointer would stay NULL for the whole IO
-        // session and the device would be silent until the consumer restarted it.
-        if (EnsureRingMapped()) {
-            LemurAudioRing *ring = atomic_load_explicit(&gRing, memory_order_acquire);
-            if (ring != NULL && lemur_ring_ready(ring)) { lemur_ring_reset_read(ring); }
-        } else {
-            StartRingMapRetry();
-        }
+        if (ring != NULL && lemur_ring_ready(ring)) { lemur_ring_reset_read(ring); }
         gAnchorHostTime = mach_absolute_time();
         gNumberTimeStamps = 0;
         lemur_ring_pacer_reset(&gPacer);
@@ -804,6 +813,16 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
     // order the count changed (see LemurAudioConsumerSignal.h). Posting takes none
     // of our locks, and the real-time IO path never takes this one.
     const char *notification = lemur_audio_io_started(&gIOCount);
+    // Any client, not only the first, maps a ring that is not mapped yet: the
+    // region appears only once the app runs, which can be long after the first
+    // client started (see LemurAudioRingMapRetry.h). If it still cannot be mapped,
+    // retry off the real-time path so audio begins as soon as the app creates it.
+    // Mapping while other clients run IO is safe: EnsureRingMapped resets the read
+    // position before it publishes the pointer, and DoIOOperation cannot touch the
+    // ring until then.
+    if (lemur_audio_ring_map_wanted(gIOCount, ring != NULL) && !EnsureRingMapped(true)) {
+        StartRingMapRetry();
+    }
     if (notification != NULL) {
         os_log(gLog, "StartIO — first client, posting consumerStarted");
         PostDarwinNotification(notification);

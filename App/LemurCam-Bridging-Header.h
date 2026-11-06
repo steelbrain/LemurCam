@@ -4,10 +4,11 @@
 //  Exposes the C audio ring-buffer contract to the app's Swift code, plus a
 //  shm_open shim. shm_open is variadic in C (the mode is passed via `...`), which
 //  Swift cannot call directly, so we wrap the create form here. The driver's
-//  consumer-signal helpers are here for the unit tests.
+//  consumer-signal and ring-map retry helpers are here for the unit tests.
 //
 
 #import "LemurAudioConsumerSignal.h"
+#import "LemurAudioRingMapRetry.h"
 #import "LemurAudioShared.h"
 
 #import <errno.h>
