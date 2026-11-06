@@ -619,7 +619,8 @@ Next steps:
      after a restart, clears any in-memory copy, and frees the audio shm ring
      (/cam.lemur.audioring) the app shares with the driver.
   2. Bump CURRENT_PROJECT_VERSION in project.yml before rebuilding, or macOS may
-     keep the old extension ("Extension already up to date").
+     keep the old extension (the app logs "Camera extension already up to
+     date (vN)" instead of "Updating camera extension: vN → vM").
   3. Rebuild and relaunch the app to re-stage a fresh extension.
 
 If ${EXT_BUNDLE_ID} is still listed above, either a copy was missed (rerun with

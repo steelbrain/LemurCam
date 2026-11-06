@@ -4,19 +4,19 @@ set -euo pipefail
 # Build LemurCam (Debug), install it into /Applications, and launch it there.
 #
 # LemurCam refuses to run from anywhere but /Applications (see
-# terminateIfNotInApplications in App/AppDelegate.swift): the CMIO system
-# extension, the SMAppService helper daemon, and the audio HAL driver all need
-# an installed, correctly-located bundle. Xcode's Run button launches the
-# product straight out of DerivedData, which trips that guard, so this is the
-# supported way to run a locally-built app during development.
+# terminateIfNotInApplications in App/AppDelegate+LaunchGuards.swift): the
+# CMIO system extension, the SMAppService helper daemon, and the audio HAL
+# driver all need an installed, correctly-located bundle. Xcode's Run button
+# launches the product straight out of DerivedData, which trips that guard, so
+# this is the supported way to run a locally-built app during development.
 #
 # Note: Xcode's debugger does not attach to the /Applications copy. To debug,
 # run this script, then use Xcode's Debug > Attach to Process.
 #
 # If you changed code in Extension/ or relevant Shared/ files, bump
 # CURRENT_PROJECT_VERSION in project.yml first, or macOS may keep the stale
-# extension running ("Extension already up to date" instead of "Updating
-# extension: vN -> vM").
+# extension running (the app logs "Camera extension already up to date (vN)"
+# instead of "Updating camera extension: vN → vM").
 
 SCHEME="LemurCam"
 CONFIGURATION="Debug"

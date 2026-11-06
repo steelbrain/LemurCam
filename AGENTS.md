@@ -199,8 +199,9 @@ When changing code that ships in the `Extension` target, including relevant
 `Shared/` code, bump `CURRENT_PROJECT_VERSION` in `project.yml`.
 
 The installer compares the extension `bundleVersion`. If it is unchanged, macOS
-can keep a stale extension running. Verify logs show an update path such as
-`Updating extension: vN -> vM`, not `Extension already up to date`.
+can keep a stale extension running. Verify the app log shows an update path
+such as `Updating camera extension: vN → vM`, not
+`Camera extension already up to date (vN)`.
 
 `MARKETING_VERSION` is the user-facing app version. `CURRENT_PROJECT_VERSION` is
 the build number that controls extension replacement.

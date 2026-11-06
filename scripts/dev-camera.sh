@@ -280,7 +280,7 @@ disco.bind(WSD_PORT, () => {
 
 // --- ONVIF SOAP service ------------------------------------------------------
 // Responses mirror the unprefixed, default-namespaced element shapes the app's
-// XML parser matches (see Tests/ONVIFClientTests.swift).
+// XML parser matches (see Tests/ONVIF/ONVIFClientTests.swift).
 
 function envelope(body) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n` +
