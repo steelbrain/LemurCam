@@ -13,8 +13,6 @@ internal final class HostReachabilityTests: XCTestCase {
 
     func testNoConnectionToTheHostIsUnreachable() {
         let errors: [any Error] = [
-            RTSPStreamPipeline.TimeoutError(),
-            RTSPError.timeout,
             networkFailure(65, "No route to host"),
             networkFailure(61, "Connection refused"),
             networkFailure(51, "Network is unreachable"),
@@ -36,6 +34,7 @@ internal final class HostReachabilityTests: XCTestCase {
             RTSPError.connectionFailed("Read error: The operation couldn’t be completed."),
             RTSPError.connectionFailed("Send failed: The operation couldn’t be completed."),
             networkFailure(54, "Connection reset by peer"),
+            RTSPError.connectionFailed("RTSP read buffer exceeded 4194304 bytes without a complete message"),
             RTSPStreamPipeline.NoVideoStreamError(),
             RTSPStreamPipeline.StreamStallError(),
             RTSPStreamPipeline.VideoDecodeStallError(),
@@ -44,6 +43,17 @@ internal final class HostReachabilityTests: XCTestCase {
         for error in errors {
             XCTAssertFalse(RTSPStreamPipeline.isHostUnreachable(error), "\(error)")
         }
+    }
+
+    /// IPCamKit's `RTSPError.timeout` is the same for a TCP connect that never
+    /// finished and for a camera that accepted the connection but never answered
+    /// OPTIONS, DESCRIBE, SETUP or PLAY; the app's `TimeoutError` covers the whole
+    /// setup. Both used to count as unreachable, so a wedged camera on the network
+    /// showed the Local Network hint. Denied Local Network access, no route and a
+    /// refused connection all fail as `connectionFailed` instead.
+    func testATimeoutIsNotUnreachable() {
+        XCTAssertFalse(RTSPStreamPipeline.isHostUnreachable(RTSPError.timeout))
+        XCTAssertFalse(RTSPStreamPipeline.isHostUnreachable(RTSPStreamPipeline.TimeoutError()))
     }
 
     /// IPCamKit refuses a URL whose `@` it can't place before connecting anywhere.
@@ -58,13 +68,18 @@ internal final class HostReachabilityTests: XCTestCase {
     }
 
     func testOnlyAFailureBeforeTheSessionWasSetUpCanBeUnreachable() {
+        let noRoute = networkFailure(65, "No route to host")
         XCTAssertEqual(
-            RTSPStreamPipeline.failureState(for: RTSPError.timeout, afterSetup: false),
-            .error("Timeout", hostUnreachable: true)
+            RTSPStreamPipeline.failureState(for: noRoute, afterSetup: false),
+            .error(noRoute.localizedDescription, hostUnreachable: true)
         )
         XCTAssertEqual(
-            RTSPStreamPipeline.failureState(for: RTSPError.timeout, afterSetup: true),
-            .error("Timeout", hostUnreachable: false)
+            RTSPStreamPipeline.failureState(for: noRoute, afterSetup: true),
+            .error(noRoute.localizedDescription, hostUnreachable: false)
+        )
+        XCTAssertEqual(
+            RTSPStreamPipeline.failureState(for: RTSPError.timeout, afterSetup: false),
+            .error("Timeout")
         )
         XCTAssertEqual(
             RTSPStreamPipeline.failureState(for: RTSPError.authenticationFailed, afterSetup: false),
