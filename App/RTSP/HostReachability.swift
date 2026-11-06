@@ -1,5 +1,6 @@
 import Foundation
 import IPCamKit
+import Network
 
 // MARK: - Unreachable Host
 
@@ -14,12 +15,16 @@ extension RTSPStreamPipeline {
 
     /// Whether `error`, thrown while setting up a session, means no connection to the
     /// camera's host could be made: refused, no route, a name that didn't resolve, or
-    /// Local Network access denied. IPCamKit reports each as `connectionFailed` with
-    /// the Network framework's reason, once the connection fails or has been waiting
-    /// for 2 seconds. A camera that answered with an error (authentication, a 404, a
-    /// TLS handshake) was reached, and so was one that closed or reset the connection
-    /// after it was made (`Connection reset by peer`, from the system's untranslated
-    /// error text). A URL IPCamKit refused before connecting tells nothing either.
+    /// Local Network access denied. IPCamKit reports each as `connectionFailed`, once
+    /// the connection fails or has been waiting for 2 seconds, with the Network
+    /// framework's error as its `underlying` cause: a DNS error, or one of the POSIX
+    /// errors in `noConnectionErrors`. The cause decides, not the message's wording.
+    ///
+    /// A camera that answered was reached: with an error (authentication, a 404), with
+    /// a TLS handshake (`.tls`), or by resetting or closing a connection that was made
+    /// (`ECONNRESET`, `EPIPE`, `ECONNABORTED`). So was one that sent more than IPCamKit
+    /// buffers without completing a message, which has no network cause. A URL
+    /// IPCamKit refused before connecting (`invalidURL`) tells nothing either.
     ///
     /// A timeout never counts. IPCamKit's `RTSPError.timeout` is the same for a TCP
     /// connect that never finished and for a camera that accepted the connection but
@@ -28,19 +33,25 @@ extension RTSPStreamPipeline {
     /// reach. A wedged camera on the network would otherwise be shown as one that
     /// LemurCam may need Local Network access to reach.
     static func isHostUnreachable(_ error: any Error) -> Bool {
-        guard case .connectionFailed(let message)? = error as? RTSPError else { return false }
-        return !notAboutReachingTheHost.contains { message.hasPrefix($0) }
-            && !message.contains("Connection reset by peer")
+        guard case .connectionFailed(_, let underlying)? = error as? RTSPError, let underlying else { return false }
+        switch underlying {
+        case .dns:
+            return true
+        case .posix(let code):
+            return noConnectionErrors.contains(code)
+        default:
+            return false
+        }
     }
 
-    /// How IPCamKit starts a `connectionFailed` message that isn't about making the
-    /// connection: a URL it refused (`Invalid URL…`, `Invalid port…`), a TLS handshake
-    /// the camera answered, reading from or writing to a connection that was made, or
-    /// a camera that sent more than IPCamKit buffers without completing a message
-    /// (`RTSP read buffer exceeded…`). Any other message is the Network framework's
-    /// reason the connection failed.
-    private static let notAboutReachingTheHost = [
-        "Invalid", "TLS ", "Read error", "Send failed", "Not connected", "control send failed", "RTSP read buffer"
+    /// The POSIX errors with which the system reports that a connection to a host
+    /// could not be made: refused, no route to the host or its network, the host or
+    /// the network down, no answer, no usable local address, or not allowed. On a
+    /// connection that was made, they mean the host went out of reach while the
+    /// session was being set up.
+    private static let noConnectionErrors: Set<POSIXErrorCode> = [
+        .ECONNREFUSED, .EHOSTUNREACH, .ENETUNREACH, .EHOSTDOWN, .ENETDOWN, .ETIMEDOUT, .EADDRNOTAVAIL,
+        .EPERM, .EACCES
     ]
 }
 
