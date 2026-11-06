@@ -80,8 +80,8 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
     func testMarksNonActiveSourcesPendingAndLeavesActiveAlone() throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
-        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let activeID = try XCTUnwrap(sourceManager.activeSourceID)
         let otherID = try XCTUnwrap(sourceManager.sources.first { $0.id != activeID }).id
 
@@ -94,7 +94,7 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
     func testNoOtherSourcesLeavesActiveUntouched() throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "only", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "only", sourceType: unreachableONVIF())
         let activeID = try XCTUnwrap(sourceManager.activeSourceID)
 
         BootSanityChecker(sourceManager: sourceManager).run()
@@ -106,8 +106,8 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
     func testProbeResultIsRecordedForInactiveSource() throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
-        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
         let checker = BootSanityChecker(sourceManager: sourceManager)
 
@@ -121,8 +121,8 @@ internal final class BootSanityCheckerTests: XCTestCase {
     /// overwrite the live stream's status with "Unreachable".
     func testLateResultDoesNotOverwriteNowActiveSource() throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
-        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
         let checker = BootSanityChecker(sourceManager: sourceManager)
         sourceManager.setActiveSource(id: otherID)
@@ -136,8 +136,8 @@ internal final class BootSanityCheckerTests: XCTestCase {
 
     func testLateResultForDeletedSourceIsDropped() throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
-        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
         let checker = BootSanityChecker(sourceManager: sourceManager)
         sourceManager.removeSource(id: otherID)
@@ -167,8 +167,8 @@ internal final class BootSanityCheckerTests: XCTestCase {
     /// records the ONVIF network error, not a generic word.
     func testFailedProbeRecordsItsError() async throws {
         let sourceManager = try XCTUnwrap(manager)
-        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
-        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
 
         BootSanityChecker(sourceManager: sourceManager).run()

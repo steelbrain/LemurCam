@@ -40,34 +40,34 @@ internal final class SourceManagerCallbackTests: XCTestCase {
         try await super.tearDown()
     }
 
-    private func addRTSP(_ name: String) {
-        manager?.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
+    private func addRTSP(_ name: String) throws {
+        try manager?.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
     }
 
     // MARK: - onSourceConfigChanged
 
     func testAddFiresConfigChanged() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         XCTAssertEqual(configChangeCount, 1)
         _ = sourceManager
     }
 
     func testUpdateFiresConfigChanged() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         let id = try XCTUnwrap(sourceManager.sources.first).id
         configChangeCount = 0
 
-        sourceManager.updateSource(id: id, name: "b",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")), credentials: .remove)
+        try sourceManager.updateSource(id: id, name: "b",
+                                       sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")), credentials: .remove)
 
         XCTAssertEqual(configChangeCount, 1)
     }
 
     func testRemoveFiresConfigChanged() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         let id = try XCTUnwrap(sourceManager.sources.first).id
         configChangeCount = 0
 
@@ -78,8 +78,8 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testSetActiveToDifferentSourceFires() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
-        addRTSP("b")
+        try addRTSP("a")
+        try addRTSP("b")
         let second = try XCTUnwrap(sourceManager.sources.last).id
         configChangeCount = 0
 
@@ -91,7 +91,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testSetActiveToSameSourceDoesNotFire() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         let active = try XCTUnwrap(sourceManager.activeSourceID)
         configChangeCount = 0
 
@@ -102,8 +102,8 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testMoveSourceDoesNotFireConfigChanged() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
-        addRTSP("b")
+        try addRTSP("a")
+        try addRTSP("b")
         configChangeCount = 0
 
         sourceManager.moveSource(from: IndexSet(integer: 1), to: 0)
@@ -116,7 +116,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testSetActiveToNilClearsActiveSource() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         XCTAssertNotNil(sourceManager.activeSourceID)
 
         sourceManager.setActiveSource(id: nil)
@@ -126,7 +126,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testUpdateConnectionStatusAndErrorMessageAreStored() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         let id = try XCTUnwrap(sourceManager.sources.first).id
 
         sourceManager.updateConnectionStatus(for: id, status: .error)
@@ -138,7 +138,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
 
     func testRemoveClearsStatusAndErrorEntries() throws {
         let sourceManager = try XCTUnwrap(manager)
-        addRTSP("a")
+        try addRTSP("a")
         let id = try XCTUnwrap(sourceManager.sources.first).id
         sourceManager.updateConnectionStatus(for: id, status: .connected)
         sourceManager.updateErrorMessage(for: id, message: "x")

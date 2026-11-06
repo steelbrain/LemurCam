@@ -40,7 +40,7 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
     private func addCamera() throws -> (SourceManager, InMemoryCredentialStore, UUID) {
         let sourceManager = try XCTUnwrap(manager)
         let credentialStore = try XCTUnwrap(store)
-        sourceManager.addSource(
+        try sourceManager.addSource(
             name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s")),
             credentials: SourceCredentials(username: "viewer", password: "pw")
         )
@@ -75,7 +75,7 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
         let change = CredentialChange.fromForm(
             authenticationEnabled: false, username: "", password: "", storedCredentialsUnreadable: true
         )
-        sourceManager.updateSource(
+        try sourceManager.updateSource(
             id: id, name: "Renamed", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s")),
             credentials: change
         )
@@ -90,10 +90,10 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
         let type = SourceType.rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s"))
 
         let fresh = SourceCredentials(username: "admin", password: "new")
-        sourceManager.updateSource(id: id, name: "Cam", sourceType: type, credentials: .set(fresh))
+        try sourceManager.updateSource(id: id, name: "Cam", sourceType: type, credentials: .set(fresh))
         XCTAssertEqual(credentialStore.stored[id], fresh)
 
-        sourceManager.updateSource(id: id, name: "Cam", sourceType: type, credentials: .remove)
+        try sourceManager.updateSource(id: id, name: "Cam", sourceType: type, credentials: .remove)
         XCTAssertNil(credentialStore.stored[id])
     }
 
@@ -101,7 +101,7 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
     /// even when the form itself asks to keep what is stored.
     func testURLCredentialsOverrideKeep() throws {
         let (sourceManager, credentialStore, id) = try addCamera()
-        sourceManager.updateSource(
+        try sourceManager.updateSource(
             id: id, name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://bob:pa55@192.0.2.5/s")),
             credentials: .keep
         )
@@ -115,7 +115,7 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
         let (sourceManager, credentialStore, id) = try addCamera()
         let shownInForm = try XCTUnwrap(credentialStore.stored[id])
 
-        sourceManager.updateSource(
+        try sourceManager.updateSource(
             id: id, name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://viewer:n3w-pw@192.0.2.5/s")),
             credentials: .set(shownInForm)
         )
@@ -129,7 +129,7 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
         let (sourceManager, credentialStore, id) = try addCamera()
         let typed = SourceCredentials(username: "admin", password: "typed")
 
-        sourceManager.updateSource(
+        try sourceManager.updateSource(
             id: id, name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s")), credentials: .set(typed)
         )
 

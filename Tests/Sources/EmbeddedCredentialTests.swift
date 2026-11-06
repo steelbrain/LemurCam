@@ -74,7 +74,7 @@ internal final class EmbeddedCredentialTests: XCTestCase {
 
     func testRTSPPasswordWithEmptyUserNameGoesToKeychain() throws {
         let (manager, credentialStore) = try makeManager()
-        manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://:s3cret@192.0.2.8/stream")))
+        try manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://:s3cret@192.0.2.8/stream")))
         let source = try XCTUnwrap(manager.sources.first)
 
         XCTAssertEqual(source.sourceType, .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.8/stream")))
@@ -84,7 +84,7 @@ internal final class EmbeddedCredentialTests: XCTestCase {
 
     func testONVIFStreamURIIsSavedWithoutUserInfo() throws {
         let (manager, credentialStore) = try makeManager()
-        manager.addSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
+        try manager.addSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
             host: "192.0.2.9", port: 80, selectedProfileToken: "main",
             streamURI: "rtsp://admin:cam-pw@192.0.2.9:554/main"
         )))
@@ -98,7 +98,7 @@ internal final class EmbeddedCredentialTests: XCTestCase {
         XCTAssertFalse(try savedJSON().contains("cam-pw"))
         XCTAssertTrue(credentialStore.writes.isEmpty, "a camera-reported login is not saved as the source's")
 
-        manager.updateSource(id: source.id, name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
+        try manager.updateSource(id: source.id, name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
             host: "192.0.2.9", port: 80, selectedProfileToken: "main",
             streamURI: "rtsp://admin:cam-pw2@192.0.2.9:554/main"
         )), credentials: .keep)
@@ -139,7 +139,7 @@ internal final class EmbeddedCredentialTests: XCTestCase {
         try seed([source])
         let (manager, credentialStore) = try makeManager()
         let saved = SourceCredentials(username: "current", password: "current-pw")
-        credentialStore.save(credentials: saved, for: source.id)
+        try credentialStore.save(credentials: saved, for: source.id)
 
         manager.load()
 

@@ -1,6 +1,15 @@
 import Foundation
 import os
 
+/// A camera's username and password could not be stored in the Keychain. The camera
+/// is then not added or changed: saving it anyway would keep a URL without the
+/// credentials and lose the only copy of them.
+internal struct CredentialSaveError: LocalizedError {
+    var errorDescription: String? {
+        "The username and password couldn't be saved in the Keychain, so the camera wasn't saved. Try again."
+    }
+}
+
 @MainActor @Observable
 internal final class SourceManager {
     private(set) var sources: [CameraSource] = []
@@ -34,21 +43,19 @@ internal final class SourceManager {
         Log.app.info("Loaded \(self.sources.count) source(s)")
     }
 
-    func addSource(name: String, sourceType: SourceType, credentials: SourceCredentials? = nil) {
+    /// Adds a camera. Throws `CredentialSaveError`, adding nothing, when its
+    /// credentials can't be stored.
+    func addSource(name: String, sourceType: SourceType, credentials: SourceCredentials? = nil) throws {
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
         let resolvedCredentials = credentials ?? urlCredentials
         let source = CameraSource(name: name, sourceType: cleanType)
-        sources.append(source)
-        connectionStatuses[source.id] = .disconnected
 
         if let resolvedCredentials {
-            do {
-                try keychain.save(credentials: resolvedCredentials, for: source.id)
-            } catch {
-                Log.app.error("Failed to save credentials for '\(name)': \(error)")
-            }
+            try storeCredentials(resolvedCredentials, for: source.id, sourceName: name)
         }
 
+        sources.append(source)
+        connectionStatuses[source.id] = .disconnected
         if activeSourceID == nil {
             activeSourceID = source.id
         }
@@ -82,19 +89,20 @@ internal final class SourceManager {
     /// take precedence over `credentials`, even a `.set` of other ones: the edit form
     /// shows the saved URL without credentials and fills the fields with the saved
     /// ones, so a login in the URL was just typed or pasted and is the newest input.
-    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) {
+    /// Throws `CredentialSaveError`, changing nothing, when new credentials can't be
+    /// stored.
+    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) throws {
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
         let change = urlCredentials.map(CredentialChange.set) ?? credentials
+        try apply(change, for: id, sourceName: name)
 
         var updated = sources[index]
         updated.name = name
         updated.sourceType = cleanType
         updated.updatedAt = Date()
         sources[index] = updated
-
-        apply(change, for: id, sourceName: name)
 
         persist()
         Log.app.info("Updated source '\(name)'")
@@ -104,8 +112,8 @@ internal final class SourceManager {
     /// Shorthand for callers that always know the stored credentials: a value replaces
     /// them and nil removes them. Code that may not have read them (such as the edit
     /// form after a failed Keychain read) must pass a `CredentialChange` instead.
-    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: SourceCredentials?) {
-        updateSource(
+    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: SourceCredentials?) throws {
+        try updateSource(
             id: id, name: name, sourceType: sourceType,
             credentials: credentials.map(CredentialChange.set) ?? .remove
         )
@@ -128,22 +136,29 @@ internal final class SourceManager {
         Log.app.info("Camera '\(sources[index].name)' now answers at \(host):\(port)")
     }
 
-    private func apply(_ change: CredentialChange, for id: UUID, sourceName: String) {
+    /// Only a failed save throws: a failed delete leaves the old credentials stored,
+    /// which loses nothing.
+    private func apply(_ change: CredentialChange, for id: UUID, sourceName: String) throws {
         switch change {
         case .keep:
             break
         case .set(let credentials):
-            do {
-                try keychain.save(credentials: credentials, for: id)
-            } catch {
-                Log.app.error("Failed to save credentials for '\(sourceName)': \(error)")
-            }
+            try storeCredentials(credentials, for: id, sourceName: sourceName)
         case .remove:
             do {
                 try keychain.delete(for: id)
             } catch {
                 Log.app.error("Failed to delete credentials for source \(id): \(error)")
             }
+        }
+    }
+
+    private func storeCredentials(_ credentials: SourceCredentials, for id: UUID, sourceName: String) throws {
+        do {
+            try keychain.save(credentials: credentials, for: id)
+        } catch {
+            Log.app.error("Not saving '\(sourceName)': its credentials could not be stored (\(error))")
+            throw CredentialSaveError()
         }
     }
 

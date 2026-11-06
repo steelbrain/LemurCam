@@ -14,6 +14,8 @@ internal struct SourceFormView: View {
     /// Reading the saved credentials failed, so the form can't show them; saving
     /// leaves them untouched unless new ones are entered.
     @State private var credentialsUnreadable = false
+    /// Why the last Save or Add did not save the camera; the form stays open.
+    @State private var saveError: String?
     @State private var isProbing = false
     @State private var probeError: String?
     @State private var onvifProfiles: [ONVIFProfile] = []
@@ -70,6 +72,9 @@ internal struct SourceFormView: View {
                 TextField("Username", text: $username)
                 SecureField("Password", text: $password)
             }
+            if let saveError {
+                Text(saveError).font(.caption).foregroundStyle(.red)
+            }
         }
     }
 
@@ -79,7 +84,7 @@ internal struct SourceFormView: View {
                 .keyboardShortcut(.cancelAction)
             Spacer()
             if editing != nil {
-                Button("Save") { save(); dismiss() }
+                Button("Save") { if save() { dismiss() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!isValid)
             } else {
@@ -96,7 +101,7 @@ internal struct SourceFormView: View {
                 .opacity(resolvedType != nil ? 0 : 1)
                 .frame(width: resolvedType != nil ? 0 : nil)
             if resolvedType != nil {
-                Button("Add") { save(); dismiss() }
+                Button("Add") { if save() { dismiss() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!isValid)
             }
@@ -364,17 +369,25 @@ private extension SourceFormView {
         ))
     }
 
-    func save() {
-        guard let sourceType = resolvedSourceType() else { return }
+    /// Saves the camera. False, with `saveError` set, when it could not be saved (its
+    /// credentials could not be stored), so the form stays open with what was entered.
+    func save() -> Bool {
+        guard let sourceType = resolvedSourceType() else { return false }
         let change = CredentialChange.fromForm(
             authenticationEnabled: hasCredentials, username: username, password: password,
             storedCredentialsUnreadable: credentialsUnreadable
         )
-        if let source = editing {
-            sourceManager.updateSource(id: source.id, name: name, sourceType: sourceType, credentials: change)
-        } else {
-            let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
-            sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
+        do {
+            if let source = editing {
+                try sourceManager.updateSource(id: source.id, name: name, sourceType: sourceType, credentials: change)
+            } else {
+                let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
+                try sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
+            }
+            return true
+        } catch {
+            saveError = error.localizedDescription
+            return false
         }
     }
 

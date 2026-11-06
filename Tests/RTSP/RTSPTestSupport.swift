@@ -163,7 +163,7 @@ internal final class CoordinatorHarness {
 
     /// Add an RTSP source at `rtsp://<name>` and return its ID.
     func addRTSP(_ name: String) -> UUID? {
-        manager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
+        try? manager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
         return manager.sources.last?.id
     }
 

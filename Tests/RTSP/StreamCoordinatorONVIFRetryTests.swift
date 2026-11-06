@@ -27,7 +27,7 @@ internal final class StreamCoordinatorONVIFRetryTests: XCTestCase {
         let info = ONVIFSourceInfo(
             deviceUUID: nil, host: "127.0.0.1", port: 1, selectedProfileToken: "profile_1", streamURI: nil
         )
-        harness.manager.addSource(name: "onvif", sourceType: .onvif(info))
+        try harness.manager.addSource(name: "onvif", sourceType: .onvif(info))
         let camera = try XCTUnwrap(harness.manager.sources.last?.id)
 
         harness.coordinator.previewStore.isPreviewEnabled = true

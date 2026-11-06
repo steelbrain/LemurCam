@@ -125,7 +125,7 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
 
     func testCameraReportedStreamURIIsSavedWithoutAmbiguousUserInfo() throws {
         let (manager, credentialStore) = try makeManager()
-        manager.addSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
+        try manager.addSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
             host: "192.168.1.5", port: 80, selectedProfileToken: "main",
             streamURI: "rtsp://admin:Cam#pw1@192.168.1.5:554/stream"
         )))
@@ -183,7 +183,7 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         try seed([source])
         let (manager, credentialStore) = try makeManager()
         let saved = SourceCredentials(username: "viewer", password: "pw")
-        credentialStore.save(credentials: saved, for: source.id)
+        try credentialStore.save(credentials: saved, for: source.id)
 
         manager.load()
 

@@ -47,7 +47,7 @@ internal final class ONVIFResolveFixture {
     }
 
     func addCamera(host: String, port: Int = 80, useHTTPS: Bool = false) throws -> CameraSource {
-        manager.addSource(
+        try manager.addSource(
             name: "Porch",
             sourceType: .onvif(ONVIFSourceInfo(
                 deviceUUID: Self.deviceUUID, host: host, port: port, selectedProfileToken: "main",

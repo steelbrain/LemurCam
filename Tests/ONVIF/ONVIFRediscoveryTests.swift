@@ -55,7 +55,7 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
     private func addCamera(host: String) throws -> (SourceManager, InMemoryCredentialStore, CameraSource) {
         let sourceManager = try XCTUnwrap(manager)
         let credentialStore = try XCTUnwrap(store)
-        sourceManager.addSource(
+        try sourceManager.addSource(
             name: "Porch",
             sourceType: .onvif(ONVIFSourceInfo(
                 deviceUUID: Self.uuid, host: host, port: 80, selectedProfileToken: "main"

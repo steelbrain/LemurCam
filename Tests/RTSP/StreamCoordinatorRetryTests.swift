@@ -55,7 +55,7 @@ internal final class StreamCoordinatorRetryTests: XCTestCase {
         let cameraA = try await failActiveSource(harness)
         let cameraB = try XCTUnwrap(harness.addRTSP("cam-b"))
 
-        harness.manager.updateSource(
+        try harness.manager.updateSource(
             id: cameraB, name: "cam-b2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://cam-b2")), credentials: nil
         )
         XCTAssertTrue(harness.coordinator.hasPendingRetry, "editing another source must not cancel the reconnect")
@@ -81,7 +81,7 @@ internal final class StreamCoordinatorRetryTests: XCTestCase {
         let harness = try XCTUnwrap(fixture)
         let cameraA = try await failActiveSource(harness)
 
-        harness.manager.updateSource(
+        try harness.manager.updateSource(
             id: cameraA, name: "cam-a", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://cam-a2")), credentials: nil
         )
 

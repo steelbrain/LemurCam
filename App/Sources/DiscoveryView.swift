@@ -20,6 +20,8 @@ internal struct DiscoveryView: View {
     @State private var deviceInfo: ONVIFDeviceInfo?
     @State private var deviceUUID: String?
     @State private var cameraName = ""
+    /// Why Save did not save the camera; the sheet stays open.
+    @State private var saveError: String?
 
     private enum Step { case scanning, credentials, profiles, naming }
 
@@ -223,7 +225,12 @@ private extension DiscoveryView {
                 Section {
                     HStack { Text("Name Your Camera").font(.headline); Spacer() }
                 }
-                Section { TextField("Camera Name", text: $cameraName) }
+                Section {
+                    TextField("Camera Name", text: $cameraName)
+                    if let saveError {
+                        Text(saveError).font(.caption).foregroundStyle(.red)
+                    }
+                }
                 if let device = selectedDevice {
                     Section("Details") {
                         LabeledContent("Host", value: "\(device.host):\(device.port)")
@@ -240,7 +247,7 @@ private extension DiscoveryView {
             HStack {
                 Button("Back") { step = .profiles }
                 Spacer()
-                Button("Save") { saveCamera(); dismiss() }
+                Button("Save") { if saveCamera() { dismiss() } }
                     .keyboardShortcut(.defaultAction)
                     .disabled(cameraName.isEmpty)
             }
@@ -337,8 +344,9 @@ private extension DiscoveryView {
         step = .naming
     }
 
-    func saveCamera() {
-        guard let device = selectedDevice else { return }
+    /// False, with `saveError` set, when the camera could not be saved.
+    func saveCamera() -> Bool {
+        guard let device = selectedDevice else { return false }
         let sourceType = SourceType.onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: device.host, port: device.port,
             selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: device.useHTTPS,
@@ -347,6 +355,12 @@ private extension DiscoveryView {
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty
             ? SourceCredentials(username: username, password: password) : nil
-        sourceManager.addSource(name: cameraName, sourceType: sourceType, credentials: credentials)
+        do {
+            try sourceManager.addSource(name: cameraName, sourceType: sourceType, credentials: credentials)
+            return true
+        } catch {
+            saveError = error.localizedDescription
+            return false
+        }
     }
 }

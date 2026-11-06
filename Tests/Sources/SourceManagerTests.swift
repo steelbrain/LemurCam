@@ -30,29 +30,29 @@ internal final class SourceManagerTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testAddFirstSourceBecomesActive() {
+    func testAddFirstSourceBecomesActive() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
 
         XCTAssertEqual(manager.sources.count, 1)
         XCTAssertEqual(manager.activeSourceID, manager.sources[0].id)
     }
 
-    func testAddSecondSourceDoesNotChangeActive() {
+    func testAddSecondSourceDoesNotChangeActive() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
         let firstID = manager.sources[0].id
 
-        manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
+        try manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
 
         XCTAssertEqual(manager.sources.count, 2)
         XCTAssertEqual(manager.activeSourceID, firstID)
     }
 
-    func testRemoveActiveSourceFallsBack() {
+    func testRemoveActiveSourceFallsBack() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
-        manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
         let firstID = manager.sources[0].id
         let secondID = manager.sources[1].id
 
@@ -62,9 +62,9 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertEqual(manager.activeSourceID, secondID)
     }
 
-    func testRemoveOnlySourceClearsActive() {
+    func testRemoveOnlySourceClearsActive() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
         let id = manager.sources[0].id
 
         manager.removeSource(id: id)
@@ -73,10 +73,10 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertNil(manager.activeSourceID)
     }
 
-    func testSwitchActiveSource() {
+    func testSwitchActiveSource() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
-        manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
         let secondID = manager.sources[1].id
 
         manager.setActiveSource(id: secondID)
@@ -84,9 +84,9 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertEqual(manager.activeSourceID, secondID)
     }
 
-    func testSwitchToInvalidIDIsIgnored() {
+    func testSwitchToInvalidIDIsIgnored() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
         let originalActive = manager.activeSourceID
 
         manager.setActiveSource(id: UUID())
@@ -94,14 +94,14 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertEqual(manager.activeSourceID, originalActive)
     }
 
-    func testUpdateSource() {
+    func testUpdateSource() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "Old Name", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://old")))
+        try manager.addSource(name: "Old Name", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://old")))
         let id = manager.sources[0].id
 
-        manager.updateSource(id: id, name: "New Name",
-                             sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://new")),
-                             credentials: .remove)
+        try manager.updateSource(id: id, name: "New Name",
+                                 sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://new")),
+                                 credentials: .remove)
 
         XCTAssertEqual(manager.sources[0].name, "New Name")
         if case .rtsp(let info) = manager.sources[0].sourceType {
@@ -111,22 +111,22 @@ internal final class SourceManagerTests: XCTestCase {
         }
     }
 
-    func testCredentialsPersistWithSource() {
+    func testCredentialsPersistWithSource() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
         let creds = SourceCredentials(username: "admin", password: "pass123")
-        manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")),
-                          credentials: creds)
+        try manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")),
+                              credentials: creds)
         let id = manager.sources[0].id
 
         let retrieved = manager.credentials(for: id)
         XCTAssertEqual(retrieved, creds)
     }
 
-    func testRemoveSourceDeletesCredentials() {
+    func testRemoveSourceDeletesCredentials() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
         let creds = SourceCredentials(username: "admin", password: "pass")
-        manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")),
-                          credentials: creds)
+        try manager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")),
+                              credentials: creds)
         let id = manager.sources[0].id
 
         manager.removeSource(id: id)
@@ -135,10 +135,10 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertNil(retrieved)
     }
 
-    func testPersistenceRoundTrip() {
+    func testPersistenceRoundTrip() throws {
         guard let manager, let tempURL else { XCTFail("manager or tempURL not initialized"); return }
-        manager.addSource(name: "Cam 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
-        manager.addSource(name: "Cam 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
+        try manager.addSource(name: "Cam 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "Cam 2", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
         let secondID = manager.sources[1].id
         manager.setActiveSource(id: secondID)
 
@@ -153,11 +153,11 @@ internal final class SourceManagerTests: XCTestCase {
         XCTAssertEqual(newManager.activeSourceID, secondID)
     }
 
-    func testMoveSource() {
+    func testMoveSource() throws {
         guard let manager else { XCTFail("manager not initialized"); return }
-        manager.addSource(name: "A", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
-        manager.addSource(name: "B", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
-        manager.addSource(name: "C", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://c")))
+        try manager.addSource(name: "A", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
+        try manager.addSource(name: "B", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")))
+        try manager.addSource(name: "C", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://c")))
 
         manager.moveSource(from: IndexSet(integer: 2), to: 0)
 
