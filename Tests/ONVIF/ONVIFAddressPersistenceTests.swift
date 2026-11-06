@@ -26,15 +26,16 @@ internal final class ONVIFAddressPersistenceTests: XCTestCase {
 
     func testOnlyLANAddressesCountAsLAN() {
         let lan = [
-            "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.20", "169.254.3.4", "127.0.0.1",
-            "fe80::1", "[fe80::1%en0]", "fd12:3456::1", "::1", "::ffff:192.168.1.20"
+            "10.1.2.3", "172.16.0.9", "172.31.255.1", "192.168.1.20", "169.254.3.4",
+            "fe80::1", "[fe80::1%en0]", "fd12:3456::1", "::ffff:192.168.1.20"
         ]
         for host in lan {
             XCTAssertTrue(ONVIFRediscovery.isLANAddress(host), host)
         }
+        // Loopback is a tunnel or port forward to the camera, not the camera's LAN address.
         let other = [
             "cam.local", "porch", "cam.example.com", "203.0.113.5", "8.8.4.4", "172.32.0.1", "100.64.1.2",
-            "2001:db8::1", ""
+            "2001:db8::1", "", "127.0.0.1", "127.8.9.10", "::1", "[::1]", "::ffff:127.0.0.1", "localhost"
         ]
         for host in other {
             XCTAssertFalse(ONVIFRediscovery.isLANAddress(host), host)
@@ -85,6 +86,12 @@ internal final class ONVIFAddressPersistenceTests: XCTestCase {
 
     func testPublicAddressIsKeptAndTheFoundAddressUsedOnce() async throws {
         try await assertFoundAddressIsUsedOnce(savedHost: "203.0.113.5")
+    }
+
+    /// A camera reached through an SSH tunnel or a port forward on this Mac was
+    /// permanently rewritten to the LAN address a scan found.
+    func testLoopbackAddressIsKeptAndTheFoundAddressUsedOnce() async throws {
+        try await assertFoundAddressIsUsedOnce(savedHost: "127.0.0.1")
     }
 
     private func assertFoundAddressIsUsedOnce(savedHost: String) async throws {
