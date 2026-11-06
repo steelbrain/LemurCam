@@ -31,7 +31,7 @@ internal final class ONVIFResolveFailureTests: XCTestCase {
 
         let result = await StreamCoordinator.resolveONVIFStreamURI(params: params, timeout: 0.3)
 
-        guard case .failure(let error) = result, case .timedOut? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .timedOut? = failure.error as? ONVIFError else {
             XCTFail("expected a timeout, got \(result)")
             return
         }

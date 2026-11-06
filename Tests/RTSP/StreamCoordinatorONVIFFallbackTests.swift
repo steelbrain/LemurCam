@@ -6,8 +6,10 @@ import XCTest
 /// cameras swapped addresses the saved address, which now belongs to the other
 /// camera, got an RTSP login on every retry. Those failures now show their error and
 /// retry with backoff; a camera that does not answer still falls back, since that is
-/// how one with a broken ONVIF service but working RTSP streams. Cameras are
-/// stubbed with `ONVIFStubURLProtocol`; nothing goes on the network.
+/// how one with a broken ONVIF service but working RTSP streams, unless the scan
+/// found it at another address: the stored URI names the address it left. That case
+/// fell back on the new address's error, which hid a refused login at the saved one.
+/// Cameras are stubbed with `ONVIFStubURLProtocol`; nothing goes on the network.
 @MainActor
 internal final class StreamCoordinatorONVIFFallbackTests: XCTestCase {
     private static let storedURI = "rtsp://192.168.78.20:554/stored"
@@ -42,6 +44,19 @@ internal final class StreamCoordinatorONVIFFallbackTests: XCTestCase {
         ]
         for error in errors {
             XCTAssertTrue(StreamCoordinator.mayFallBackToStoredURI(after: error), "\(error)")
+            XCTAssertTrue(ONVIFResolveFailure(error).allowsStoredURI, "\(error)")
+        }
+        XCTAssertFalse(ONVIFResolveFailure(ONVIFError.authenticationFailed).allowsStoredURI)
+    }
+
+    /// Whatever the error at the new address, a camera found there never falls back.
+    func testACameraFoundAtAnotherAddressRulesOutTheStoredURI() {
+        let errors: [any Error] = [
+            ONVIFError.networkError("Could not connect to the server."), ONVIFError.timedOut,
+            ONVIFError.httpStatus(404), ONVIFError.authenticationFailed
+        ]
+        for error in errors {
+            XCTAssertFalse(ONVIFResolveFailure(error, cameraMoved: true).allowsStoredURI, "\(error)")
         }
     }
 
@@ -90,18 +105,50 @@ internal final class StreamCoordinatorONVIFFallbackTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.connectedURLs, [Self.storedURI])
     }
 
+    /// The reported case: the camera that took the saved address refuses the login,
+    /// and the scan finds this camera at a new address, where it does not answer. The
+    /// stored URI's address got an RTSP login with the saved credentials.
+    func testARefusedLoginWithTheCameraFoundElsewhereDoesNotFallBack() async throws {
+        let (harness, camera) = try makeCamera(
+            at: "192.168.78.24", replying: ONVIFStubURLProtocol.Reply(status: 401),
+            scanFinds: [ONVIFResolveFixture.device(host: "192.168.78.25")]
+        )
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let reconnecting = await waitUntil(timeout: 5) { harness.status(camera) == .reconnecting }
+
+        XCTAssertTrue(reconnecting)
+        XCTAssertTrue(harness.coordinator.hasPendingRetry)
+        XCTAssertNotNil(harness.manager.errorMessages[camera])
+        XCTAssertTrue(harness.pipeline.connectedURLs.isEmpty, "no RTSP login may go to the stored URI's address")
+    }
+
+    /// Nothing answers at the saved address nor where the scan finds the camera: the
+    /// stored URI names the address the camera left.
+    func testACameraFoundElsewhereThatDoesNotAnswerThereDoesNotFallBack() async throws {
+        let (harness, camera) = try makeCamera(
+            at: "192.168.78.26", replying: nil, scanFinds: [ONVIFResolveFixture.device(host: "192.168.78.27")]
+        )
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let reconnecting = await waitUntil(timeout: 5) { harness.status(camera) == .reconnecting }
+
+        XCTAssertTrue(reconnecting)
+        XCTAssertTrue(harness.pipeline.connectedURLs.isEmpty)
+    }
+
     /// A coordinator and an ONVIF camera saved, with credentials and a stored stream
     /// URI, at a LAN address that answers every request with `reply` (nothing
-    /// answers when nil). The scan finds nothing.
+    /// answers when nil). The scan finds `scanFinds`.
     private func makeCamera(
-        at host: String, replying reply: ONVIFStubURLProtocol.Reply?
+        at host: String, replying reply: ONVIFStubURLProtocol.Reply?, scanFinds devices: [DiscoveredDevice] = []
     ) throws -> (CoordinatorHarness, UUID) {
         if let reply {
             stubHosts.append(host)
             ONVIFStubURLProtocol.register(host: host) { _, _ in reply }
         }
         let harness = CoordinatorHarness(onvifEnvironment: ONVIFResolveEnvironment(
-            scan: { [] },
+            scan: { devices },
             makeClient: { info, credentials in
                 ONVIFClient(
                     host: info.host, port: info.port, username: credentials?.username,

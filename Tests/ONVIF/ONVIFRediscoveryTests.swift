@@ -151,8 +151,8 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
     }
 
     private static func onvifError(in result: ONVIFStreamURIResult) -> ONVIFError? {
-        guard case .failure(let error) = result else { return nil }
-        return error as? ONVIFError
+        guard case .failure(let failure) = result else { return nil }
+        return failure.error as? ONVIFError
     }
 
     /// A rejected login at a host name is that camera's answer: no scan, nothing saved.

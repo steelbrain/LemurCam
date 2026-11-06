@@ -360,8 +360,8 @@ private extension StreamCoordinator {
             )
             Log.rtsp.info("Connecting with resolved URI\(target.url == resolved.uri ? "" : ", its login taken out")")
             connectPipeline(url: target.url, credentials: target.credentials)
-        case .failure(let error):
-            if let storedURI = info.streamURI, Self.mayFallBackToStoredURI(after: error) {
+        case .failure(let failure):
+            if let storedURI = info.streamURI, failure.allowsStoredURI {
                 Log.rtsp.info("Falling back to stored URI")
                 connectPipeline(url: storedURI, credentials: credentials)
                 return
@@ -369,7 +369,7 @@ private extension StreamCoordinator {
             // Retry like any failed connect, so a camera that was offline when we
             // tried is picked up once it is back instead of staying in error.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
-            sourceManager.updateErrorMessage(for: sourceID, onvifResolveFailure: error)
+            sourceManager.updateErrorMessage(for: sourceID, onvifResolveFailure: failure.error)
             scheduleRetry()
         }
     }

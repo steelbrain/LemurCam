@@ -58,11 +58,13 @@ internal final class ONVIFMoveSaveTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.81")])
         )
 
-        guard case .failure(let error) = result, case .authenticationFailed? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .authenticationFailed? = failure.error as? ONVIFError else {
             XCTFail("the failed login at the new address must be reported, got \(result)")
             return
         }
         XCTAssertEqual(cloneLogins.all.count, 1)
+        XCTAssertTrue(failure.cameraMoved, "the stored URI names the address the camera left")
+        XCTAssertFalse(failure.allowsStoredURI)
         XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.80")
         XCTAssertEqual(try harness.savedFile(), fileBefore)
     }
@@ -78,7 +80,7 @@ internal final class ONVIFMoveSaveTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.83")])
         )
 
-        guard case .failure(let error) = result, case .soapFault? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .soapFault? = failure.error as? ONVIFError else {
             XCTFail("expected the SOAP fault at the new address, got \(result)")
             return
         }

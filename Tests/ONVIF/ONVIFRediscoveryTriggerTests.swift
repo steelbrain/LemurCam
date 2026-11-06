@@ -86,7 +86,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.22")])
         )
 
-        guard case .failure(let error) = result, case .httpStatus(404)? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .httpStatus(404)? = failure.error as? ONVIFError else {
             XCTFail("the saved address's answer must be reported, got \(result)")
             return
         }
@@ -112,7 +112,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.23")])
         )
 
-        guard case .failure(let error) = result, case .soapFault? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .soapFault? = failure.error as? ONVIFError else {
             XCTFail("expected the camera's SOAP fault, got \(result)")
             return
         }
@@ -179,7 +179,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.72")])
         )
 
-        guard case .failure(let error) = result, case .authenticationFailed? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .authenticationFailed? = failure.error as? ONVIFError else {
             XCTFail("the failed login must be reported, got \(result)")
             return
         }
@@ -204,7 +204,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
                 params: harness.params(for: source, scanResult: scanResult)
             )
 
-            guard case .failure(let error) = result, case .authenticationFailed? = error as? ONVIFError else {
+            guard case .failure(let failure) = result, case .authenticationFailed? = failure.error as? ONVIFError else {
                 XCTFail("the failed login must be reported, got \(result)")
                 return
             }
@@ -225,7 +225,7 @@ internal final class ONVIFRediscoveryTriggerTests: XCTestCase {
             params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.71")])
         )
 
-        guard case .failure(let error) = result, case .authenticationFailed? = error as? ONVIFError else {
+        guard case .failure(let failure) = result, case .authenticationFailed? = failure.error as? ONVIFError else {
             XCTFail("the failed login must be reported, got \(result)")
             return
         }

@@ -1,9 +1,33 @@
 import Foundation
 
-/// What resolving an ONVIF camera's stream URI produced: the URI, or the error that
-/// explains why there is none. The error is shown when there is no stored URI to try,
-/// or the error rules it out (`mayFallBackToStoredURI`).
-internal typealias ONVIFStreamURIResult = Result<ResolvedONVIFStreamURI, any Error>
+/// What resolving an ONVIF camera's stream URI produced: the URI, or why there is none.
+/// The failure's error is shown when there is no stored URI to try, or the failure
+/// rules it out (`ONVIFResolveFailure.allowsStoredURI`).
+internal typealias ONVIFStreamURIResult = Result<ResolvedONVIFStreamURI, ONVIFResolveFailure>
+
+/// Why an ONVIF camera's stream URI could not be resolved.
+internal struct ONVIFResolveFailure: Error {
+    /// What the camera answered, or that nothing answered: at the saved address, or at
+    /// the address the scan found the camera at when it was asked there.
+    let error: any Error
+    /// The scan found the camera at another address, and asking it there failed.
+    let cameraMoved: Bool
+
+    init(_ error: any Error, cameraMoved: Bool = false) {
+        self.error = error
+        self.cameraMoved = cameraMoved
+    }
+
+    /// Whether the stream URI stored with the camera may be connected to instead. Not
+    /// once the camera was found at another address: the stored URI names the address
+    /// it left, where another device may answer now. The error from the new address
+    /// hid the one from the saved address, so after a refused login there the saved
+    /// credentials went to the stored URI's host. Otherwise as
+    /// `StreamCoordinator.mayFallBackToStoredURI(after:)` decides.
+    var allowsStoredURI: Bool {
+        !cameraMoved && StreamCoordinator.mayFallBackToStoredURI(after: error)
+    }
+}
 
 /// A stream URI an ONVIF camera reported, and the host of the ONVIF service that
 /// reported it: the saved one, or the one rediscovery found the camera at.
@@ -47,14 +71,14 @@ extension StreamCoordinator {
                 group.addTask {
                     try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                     Log.rtsp.warning("ONVIF reconnect timed out after \(timeout)s")
-                    return .failure(ONVIFError.timedOut)
+                    return .failure(ONVIFResolveFailure(ONVIFError.timedOut))
                 }
-                let result = try await group.next() ?? .failure(ONVIFError.timedOut)
+                let result = try await group.next() ?? .failure(ONVIFResolveFailure(ONVIFError.timedOut))
                 group.cancelAll()
                 return result
             }
         } catch {
-            return .failure(error)
+            return .failure(ONVIFResolveFailure(error))
         }
     }
 
@@ -83,14 +107,15 @@ extension StreamCoordinator {
         return (split.url, savedCredentials ?? split.credentials)
     }
 
-    /// Whether a camera whose stream URI could not be resolved may still be connected
-    /// to at its stored stream URI. When nothing answered, or what answered was not a
-    /// working ONVIF service, the stored URI is how a camera with a broken ONVIF
-    /// service but working RTSP still streams. A refused login or a SOAP fault is an
-    /// ONVIF device's answer, and not necessarily this camera's: after two cameras
-    /// swap addresses the stored URI's address belongs to the other one, and
-    /// connecting there sent it an RTSP login on every retry. When it is this camera
-    /// refusing the login, the RTSP connect would send the same credentials again.
+    /// Whether a camera whose stream URI could not be resolved at its saved address may
+    /// still be connected to at its stored stream URI (one found at another address
+    /// never is; see `ONVIFResolveFailure.allowsStoredURI`). When nothing answered, or
+    /// what answered was not a working ONVIF service, the stored URI is how a camera
+    /// with a broken ONVIF service but working RTSP still streams. A refused login or a
+    /// SOAP fault is an ONVIF device's answer, and not necessarily this camera's: after
+    /// two cameras swap addresses the stored URI's address belongs to the other one,
+    /// and connecting there sent it an RTSP login on every retry. When it is this
+    /// camera refusing the login, the RTSP connect would send the same credentials again.
     nonisolated static func mayFallBackToStoredURI(after error: any Error) -> Bool {
         guard let onvifError = error as? ONVIFError else { return true }
         switch onvifError {
@@ -127,8 +152,8 @@ extension StreamCoordinator {
     /// `ONVIFRediscovery.shouldSave` allows it (after a rejected login or a SOAP fault,
     /// only once the camera answered there); otherwise it is used for this connection
     /// only. A failure carries the error from
-    /// the saved address, unless the camera was found elsewhere and failed there.
-    /// Throws only when cancelled.
+    /// the saved address, unless the camera was found elsewhere and failed there, which
+    /// the failure records (`ONVIFResolveFailure.cameraMoved`). Throws only when cancelled.
     static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> ONVIFStreamURIResult {
         let savedAddressError: any Error
         do {
@@ -136,11 +161,15 @@ extension StreamCoordinator {
         } catch {
             try Task.checkCancellation()
             Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error.localizedDescription)")
-            guard ONVIFRediscovery.shouldRediscover(after: error, at: params.info) else { return .failure(error) }
+            guard ONVIFRediscovery.shouldRediscover(after: error, at: params.info) else {
+                return .failure(ONVIFResolveFailure(error))
+            }
             savedAddressError = error
         }
 
-        guard let uuid = params.info.deviceUUID, !uuid.isEmpty else { return .failure(savedAddressError) }
+        guard let uuid = params.info.deviceUUID, !uuid.isEmpty else {
+            return .failure(ONVIFResolveFailure(savedAddressError))
+        }
 
         Log.rtsp.info("Scanning for device \(uuid) via WS-Discovery")
         let devices = await params.environment.scan()
@@ -157,7 +186,7 @@ extension StreamCoordinator {
             Log.rtsp.info("Found device at \(moved.host):\(moved.port)")
             return try await connect(movedTo: moved, after: savedAddressError, params: params)
         }
-        return .failure(savedAddressError)
+        return .failure(ONVIFResolveFailure(savedAddressError))
     }
 
     /// GetStreamUri from the camera at `info`'s address, within
@@ -202,7 +231,7 @@ extension StreamCoordinator {
             if save, saveOnceAnswered {
                 Log.rtsp.info("Keeping the saved address for '\(params.sourceName)': the camera found did not answer")
             }
-            return .failure(error)
+            return .failure(ONVIFResolveFailure(error, cameraMoved: true))
         }
     }
 
