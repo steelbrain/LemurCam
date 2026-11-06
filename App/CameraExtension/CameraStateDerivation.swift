@@ -20,17 +20,19 @@ internal enum CameraStateDerivation {
     /// Map the install topology to a resolution. `isBusy` is true while one of our
     /// own activation/deactivation requests is in flight — the empty/duplicate
     /// classifications are then transient and must not clobber the in-flight state.
-    /// `holdingFailure` is true while a failed request's reason is shown and the user
-    /// has not acted on it (`FailureHold`): a reply that still finds nothing installed
-    /// says nothing the reason doesn't, so the reason stays up.
+    /// `heldTopology` is set while a failed request's reason is shown and the user has
+    /// not acted on it (`FailureHold`): a reply that still finds the install that
+    /// request was trying to change says nothing the reason doesn't, so the reason
+    /// stays up.
     static func resolveInstall(
         _ classification: ExtensionInstallClassification,
         isBusy: Bool,
-        holdingFailure: Bool
+        heldTopology: ExtensionInstallClassification?
     ) -> InstallResolution {
+        if classification == heldTopology { return .keepCurrent }
         switch classification {
         case .notInstalled:
-            return isBusy || holdingFailure ? .keepCurrent : .status(.notInstalled)
+            return isBusy ? .keepCurrent : .status(.notInstalled)
         case .awaitingApproval:
             return .status(.awaitingApproval)
         case .multipleVersions:
@@ -80,19 +82,44 @@ internal enum CameraStateDerivation {
         restartAlreadyTried ? .escalateReboot : .promptRestart
     }
 
+    /// One of our own requests whose failure the status can show.
+    enum Request: Equatable {
+        /// Install or update the extension (at launch, Enable, Try Again, or a repair's
+        /// reinstall once every copy was removed).
+        case activation
+        /// A repair's removal of every installed copy.
+        case repair
+    }
+
     /// Keeps a failed activation's or repair's reason up through routine refreshes.
     /// The setup window re-queries every 2.5 s and the app re-queries whenever it
-    /// becomes active; a reply that still found nothing installed replaced the reason
-    /// (a system policy blocked the install, say) with "Required. Enable the camera…"
-    /// within seconds. The hold ends on the user's next camera action (Enable or Try
-    /// Again, Repair, Re-check Now), whose outcome then shows, or as soon as the status
-    /// is anything but the failure (a reply found the extension awaiting approval,
-    /// enabled, duplicated, …).
+    /// becomes active, and each reply replaced the reason (a system policy blocked the
+    /// install, say) within seconds: with "Required. Enable the camera…" after a failed
+    /// activation, with "Repair needed" after a failed repair. A reply that still finds
+    /// the install the failed request was trying to change (`heldTopology`: nothing
+    /// installed after an activation, more than one version after a repair) leaves the
+    /// reason up. Any other reply shows what it found (approval asked for, enabled, …)
+    /// and ends the hold, as does the user's next camera action (Enable or Try Again,
+    /// Repair, Re-check Now), whose outcome then shows.
     struct FailureHold: Equatable {
+        /// The request whose failure the status shows; nil once the status is anything
+        /// but a failure.
+        private(set) var failedRequest: Request?
+        /// Routine refreshes leave the reason up; false once the user acted on it.
         private(set) var isHolding = false
 
-        /// A request failed; its reason is (about to be) the status.
-        mutating func requestFailed() {
+        /// What a reply must still find for the reason to stay up, while it is held.
+        var heldTopology: ExtensionInstallClassification? {
+            guard isHolding, let failedRequest else { return nil }
+            switch failedRequest {
+            case .activation: return .notInstalled
+            case .repair: return .multipleVersions
+            }
+        }
+
+        /// `request` failed; its reason is (about to be) the status.
+        mutating func requestFailed(_ request: Request) {
+            failedRequest = request
             isHolding = true
         }
 
@@ -104,6 +131,7 @@ internal enum CameraStateDerivation {
         /// The status changed. Only a failure keeps the hold.
         mutating func statusChanged(to status: CameraExtensionStatus) {
             if case .failed = status { return }
+            failedRequest = nil
             isHolding = false
         }
     }

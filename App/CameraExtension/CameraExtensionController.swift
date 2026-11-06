@@ -301,7 +301,7 @@ internal final class CameraExtensionController: NSObject {
             + "awaiting=\(summary.awaitingApproval) rebootPending=\(self.rebootPending)"
         )
         switch CameraStateDerivation.resolveInstall(
-            ExtensionUpgradeDecision.classifyInstall(summary), isBusy: isBusy, holdingFailure: failureHold.isHolding
+            ExtensionUpgradeDecision.classifyInstall(summary), isBusy: isBusy, heldTopology: failureHold.heldTopology
         ) {
         case .status(let resolved):
             status = resolved
@@ -410,11 +410,11 @@ extension CameraExtensionController: OSSystemExtensionRequestDelegate {
         if isActivation {
             Log.app.error("Camera extension activation failed: \(error.localizedDescription)")
             repairReactivationPending = false
-            failureHold.requestFailed()
+            failureHold.requestFailed(.activation)
             status = .failed(Self.message(for: nsError))
         } else if isDeactivation {
             Log.app.error("Camera extension repair failed: \(error.localizedDescription)")
-            failureHold.requestFailed()
+            failureHold.requestFailed(.repair)
             status = .failed(Self.message(for: nsError))
         } else {
             Log.app.error("Camera extension properties query failed: \(error.localizedDescription)")
