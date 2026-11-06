@@ -15,32 +15,51 @@ internal enum CoreMediaIOUtil {
         return .read(deviceIDs: deviceIDs, lemurDeviceID: lemurDeviceID(among: deviceIDs))
     }
 
-    /// Every CMIO device; throws when the device list can't be read.
+    /// Every CMIO device; throws when the device list can't be read, or kept changing
+    /// while it was read (`CMIODeviceListRead`).
     private static func deviceIDs() throws -> [CMIODeviceID] {
-        var res: OSStatus
-        var opa = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
-            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
-            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
-        )
-        var dataSize: UInt32 = 0
-        res = CMIOObjectGetPropertyDataSize(CMIODeviceID(kCMIOObjectSystemObject),
-                                            &opa, 0, nil, &dataSize)
-        if res != noErr {
-            Log.ipc.error("failed CMIOObjectGetPropertyDataSize")
-            throw DeviceListUnreadable()
+        do {
+            return try CMIODeviceListRead.read(attempt: readDeviceListOnce)
+        } catch let changing as CMIODeviceListRead.KeptChanging {
+            Log.ipc.error("CMIO device list changed during each of \(changing.attempts) reads")
+            throw changing
         }
-        let count = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
+    }
+
+    /// Reads the device list's size, then the list into a buffer of that size, then the
+    /// size again.
+    private static func readDeviceListOnce() throws -> CMIODeviceListRead.Attempt {
+        let sizeBefore = try deviceListSize()
+        let stride = MemoryLayout<CMIODeviceID>.stride
+        var devices = [CMIODeviceID](repeating: 0, count: Int(sizeBefore) / stride)
+        var opa = deviceListAddress
         var dataUsed: UInt32 = 0
-        var devices = [CMIODeviceID](repeating: 0, count: count)
-        res = CMIOObjectGetPropertyData(CMIODeviceID(kCMIOObjectSystemObject),
-                                        &opa, 0, nil, dataSize, &dataUsed, &devices)
+        let res = CMIOObjectGetPropertyData(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil,
+                                            UInt32(devices.count * stride), &dataUsed, &devices)
         if res != noErr {
             Log.ipc.error("failed CMIOObjectGetPropertyData")
             throw DeviceListUnreadable()
         }
-        return devices
+        let sizeAfter = try deviceListSize()
+        return .init(sizeBefore: sizeBefore, buffer: devices, dataUsed: dataUsed, sizeAfter: sizeAfter)
     }
+
+    private static func deviceListSize() throws -> UInt32 {
+        var opa = deviceListAddress
+        var dataSize: UInt32 = 0
+        let res = CMIOObjectGetPropertyDataSize(CMIOObjectID(kCMIOObjectSystemObject), &opa, 0, nil, &dataSize)
+        if res != noErr {
+            Log.ipc.error("failed CMIOObjectGetPropertyDataSize")
+            throw DeviceListUnreadable()
+        }
+        return dataSize
+    }
+
+    private static let deviceListAddress = CMIOObjectPropertyAddress(
+        mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+        mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+        mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+    )
 
     static func getDeviceUID(deviceID: CMIODeviceID) -> String? {
         var res: OSStatus
