@@ -1,3 +1,5 @@
+// This import brings in the app's bridging header (the C ring API), a use the analyzer misses.
+// swiftlint:disable:next unused_import
 @testable import LemurCam
 import XCTest
 

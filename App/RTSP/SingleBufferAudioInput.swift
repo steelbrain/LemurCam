@@ -1,4 +1,4 @@
-import AVFoundation
+import AVFAudio
 import os
 
 internal final class SingleBufferAudioInput: Sendable {

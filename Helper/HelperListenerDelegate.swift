@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import os
 
 /// Accepts incoming XPC connections only from the LemurCam app (pinned by code-
 /// signing requirement) and wires each one to a fresh `HelperService`. Each open

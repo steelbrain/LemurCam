@@ -1,5 +1,5 @@
 import AudioToolbox
-import AVFoundation
+import AVFAudio
 import Foundation
 import IPCamKit
 

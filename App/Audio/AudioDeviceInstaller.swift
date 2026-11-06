@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import os
 import ServiceManagement
 
 /// The privileged-helper calls `SetupCoordinator` makes: `AudioDeviceInstaller` in

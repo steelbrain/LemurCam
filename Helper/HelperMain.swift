@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import os
 
 /// Entry point for the privileged helper daemon. launchd starts this on demand
 /// when the app first connects to the registered Mach service; the listener then

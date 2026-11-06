@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import os
 
 /// Root-privileged implementation of the install/uninstall operations. Runs
 /// inside the SMAppService-managed daemon, so it can write into the root-owned

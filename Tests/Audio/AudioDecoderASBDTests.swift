@@ -1,4 +1,4 @@
-import AudioToolbox
+import CoreAudioTypes
 @testable import LemurCam
 import XCTest
 
