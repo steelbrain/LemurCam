@@ -768,12 +768,21 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
     pthread_mutex_lock(&gStateMutex);
     Boolean firstStart = (gIOCount == 0);
     if (firstStart) {
-        // EnsureRingMapped drops any stale backlog before publishing the pointer.
+        // Every session that starts from idle drops whatever the ring still holds
+        // (the end of the previous session, or audio a producer queued with no
+        // consumer), not just the first one after the ring is mapped: otherwise
+        // that backlog plays first and its length stays as extra latency.
+        // EnsureRingMapped resets on a fresh map; an already-mapped ring is reset
+        // here. No IO is running before the first client starts, so writing the
+        // consumer-owned readIndex cannot race DoIOOperation.
         // If the region does not exist yet (e.g. the app has not launched since
         // boot), retry off the real-time path so audio begins as soon as the app
         // creates it — without this, the pointer would stay NULL for the whole IO
         // session and the device would be silent until the consumer restarted it.
-        if (!EnsureRingMapped()) {
+        if (EnsureRingMapped()) {
+            LemurAudioRing *ring = atomic_load_explicit(&gRing, memory_order_acquire);
+            if (ring != NULL && lemur_ring_ready(ring)) { lemur_ring_reset_read(ring); }
+        } else {
             StartRingMapRetry();
         }
         gAnchorHostTime = mach_absolute_time();
