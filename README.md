@@ -62,6 +62,24 @@ It is also used when `LEMURCAM_UNSIGNED=1` or `CI` is set. An unsigned build
 compiles and passes the tests, but the app cannot install the camera extension
 or the audio driver.
 
+`scripts/ci.sh` needs XcodeGen and SwiftLint 0.65.1. `.swiftlint.yml` pins that
+exact version (`swiftlint_version`), and any other SwiftLint version fails the
+lint with exit code 2 and a one-line warning, so `scripts/ci.sh` checks
+`swiftlint version` first and stops with the version it needs. Homebrew
+installs whatever version its formula is at, which can differ. To get 0.65.1,
+download `portable_swiftlint.zip` from that SwiftLint release, as the GitHub
+workflow does, unzip it, and put that folder first on your `PATH`:
+
+```bash
+v=0.65.1  # swiftlint_version in .swiftlint.yml
+mkdir -p ~/.local/swiftlint-$v
+curl -fL -o /tmp/portable_swiftlint.zip \
+  "https://github.com/realm/SwiftLint/releases/download/$v/portable_swiftlint.zip"
+unzip -o /tmp/portable_swiftlint.zip -d ~/.local/swiftlint-$v
+export PATH="$HOME/.local/swiftlint-$v:$PATH"  # add to your shell profile to keep it
+swiftlint version  # prints 0.65.1
+```
+
 For a local run, use `scripts/dev-run.sh`; the app must launch from
 `/Applications` for the system extension, helper, and audio driver to work
 correctly. Forks that use a different Apple Developer account must update the

@@ -81,6 +81,15 @@ npm run lint
 targets, and runs tests. Do not weaken SwiftLint or build settings to make a
 change pass; fix the code.
 
+SwiftLint must be exactly the version `.swiftlint.yml` pins with
+`swiftlint_version` (0.65.1). Any other version makes `swiftlint lint` exit 2
+with only a one-line warning, so `scripts/ci.sh` checks `swiftlint version`
+first and stops with an error naming the required version. Homebrew's formula
+can be a different version; install the release's `portable_swiftlint.zip` the
+way `.github/workflows/ci.yml` does (steps in `README.md`). To move to a new
+SwiftLint, bump `swiftlint_version` and the workflow's `SWIFTLINT_VERSION`
+together, along with the version README.md and this guide name.
+
 The GitHub workflow runs SwiftLint and `xcodebuild test` on macOS with code
 signing disabled for CI. Local app runs and distribution builds require proper
 Apple signing configuration.
