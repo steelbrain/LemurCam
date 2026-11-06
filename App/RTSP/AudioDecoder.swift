@@ -41,6 +41,12 @@ internal final class AudioDecoder {
     static let outputSampleRate: Double = 48_000
     static let outputChannels: AVAudioChannelCount = 2
 
+    /// Frames the reusable resampler output buffer holds, 0 before the first resample.
+    /// For the tests, which check that a refused source rate allocates nothing.
+    var outputBufferFrameCapacity: AVAudioFrameCount {
+        reusableOutputBuffer?.frameCapacity ?? 0
+    }
+
     /// Designated initializer. The `stream:` convenience init derives the source
     /// rate/channels from the negotiated `AudioStream`; tests use this directly
     /// because `AudioStream`'s memberwise init is internal to IPCamKit.
@@ -112,7 +118,13 @@ internal final class AudioDecoder {
 
     // MARK: - Resample
 
+    /// Leaves the resampler nil for a source rate outside `supportedSourceRates`, so
+    /// every packet is dropped before a buffer is allocated. Runs once per stream.
     private func setUpConverter() {
+        guard Self.supportedSourceRates.contains(sourceRate) else {
+            Log.rtsp.warning("AudioDecoder: \(Self.unsupportedSourceRateMessage(sourceRate))")
+            return
+        }
         guard let inFmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: sourceRate,
             channels: AVAudioChannelCount(sourceChannels), interleaved: true
@@ -335,6 +347,9 @@ internal extension AudioDecoder {
 // `PublicAudioFrame` can't be built outside IPCamKit.
 internal extension AudioDecoder {
     func setUpAAC(asc: Data?) {
+        // No resampler (a refused sample rate, already logged): decoding would only
+        // produce audio to throw away.
+        guard converter != nil else { return }
         guard let asc, !asc.isEmpty else {
             Log.rtsp.error("AudioDecoder: AAC stream has no AudioSpecificConfig; no microphone audio")
             return
