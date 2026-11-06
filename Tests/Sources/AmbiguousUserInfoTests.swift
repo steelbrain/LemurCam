@@ -194,6 +194,38 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         XCTAssertTrue(credentialStore.writes.isEmpty)
     }
 
+    /// v1.5 saved a reported stream URI as it came, and loading left any ambiguous URI
+    /// that parses as it was, so its login stayed in the file. The rule a reported URI
+    /// is saved and connected to by decides now: split at the last `@` when the camera's
+    /// host follows it, or the userinfo `URLComponents` reads taken out. The login is
+    /// dropped, not moved to the Keychain: it is the camera's, re-read on every connect.
+    func testLoadDropsTheLoginOfAnAmbiguousONVIFStreamURIThatParses() throws {
+        let cases = [
+            (saved: "rtsp://admin:1234/5@192.168.1.5/s", cleaned: "rtsp://192.168.1.5/s"),
+            (saved: "rtsp://admin:pw@192.168.1.5/s?a=b@c", cleaned: "rtsp://192.168.1.5/s?a=b@c")
+        ]
+        for (saved, _) in cases {
+            XCTAssertTrue(SourceCredentials.hasAmbiguousUserInfo(saved), saved)
+            XCTAssertNotNil(URLComponents(string: saved), saved)
+        }
+        try seed(cases.map { saved, _ in
+            CameraSource(name: "Cam", sourceType: .onvif(ONVIFSourceInfo(
+                host: "192.168.1.5", port: 80, streamURI: saved
+            )))
+        })
+        let (manager, credentialStore) = try makeManager()
+
+        manager.load()
+
+        let uris = manager.sources.map { source -> String? in
+            guard case .onvif(let info) = source.sourceType else { return nil }
+            return info.streamURI
+        }
+        XCTAssertEqual(uris, cases.map(\.cleaned))
+        XCTAssertTrue(credentialStore.writes.isEmpty, "a camera-reported login is not saved as the source's")
+        XCTAssertFalse(try savedJSON().contains("admin"))
+    }
+
     /// With other credentials saved, the part before the last `@` can't be moved, and
     /// it may be part of the address: the URL is left for the user to correct.
     func testLoadLeavesAmbiguousURLWhenOtherCredentialsAreSaved() throws {

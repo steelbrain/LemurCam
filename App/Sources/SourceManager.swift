@@ -393,11 +393,14 @@ private extension SourceManager {
     /// copy of the credentials. So is an ambiguous URL (see
     /// `SourceCredentials.hasAmbiguousUserInfo`) whose source already has saved
     /// credentials: what it holds before its last `@` is only a reading, and may be
-    /// part of the address rather than a login to drop. An ambiguous URL that
+    /// part of the address rather than a login to drop. An ambiguous RTSP URL that
     /// `URLComponents` still reads as an address is never rewritten either: a login in
     /// the query (`rtsp://192.168.1.5:554/user=admin&password=p@ss`) would be split at
     /// the `@` in its password and the address lost. IPCamKit refuses such a URL with a
-    /// message saying how to write the `@`, and the edit form asks for the same fix.
+    /// message saying how to write the `@`, and the edit form asks for the same fix. An
+    /// ONVIF stream URI goes by the rule it is saved and connected to by
+    /// (`SourceCredentials.strippingUserInfo(fromReportedURI:onvifHost:)`), which splits
+    /// it only where its last `@` ends a login, and drops the login it takes out.
     func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {
@@ -481,16 +484,13 @@ private extension SourceManager {
         }
     }
 
-    /// Whether the saved RTSP URL or ONVIF stream URI has ambiguous userinfo (see
+    /// Whether the saved RTSP URL has ambiguous userinfo (see
     /// `SourceCredentials.hasAmbiguousUserInfo`) yet parses as an address, so the part
-    /// before its last `@` may well be address rather than login.
+    /// before its last `@` may well be address rather than login. Not an ONVIF stream
+    /// URI: v1.5 saved those as reported, so this kept the login in
+    /// `rtsp://admin:1234/5@192.168.1.5/s` and `rtsp://admin:pw@192.168.1.5/s?a=b@c`.
     static func hasAmbiguousURLReadableAsAnAddress(_ sourceType: SourceType) -> Bool {
-        let url: String?
-        switch sourceType {
-        case .rtsp(let info): url = info.url
-        case .onvif(let info): url = info.streamURI
-        }
-        guard let url, SourceCredentials.hasAmbiguousUserInfo(url) else { return false }
-        return URLComponents(cameraURL: url) != nil
+        guard case .rtsp(let info) = sourceType, SourceCredentials.hasAmbiguousUserInfo(info.url) else { return false }
+        return URLComponents(cameraURL: info.url) != nil
     }
 }
