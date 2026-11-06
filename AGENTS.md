@@ -30,6 +30,11 @@ settings. Do not hand-edit `LemurCam.xcodeproj`.
   driver and restarts `coreaudiod`.
 - `Shared/`: Shared configuration, IPC constants, audio shared-memory types,
   placeholder rendering, tuning, and logging helpers.
+  `Shared/DriverInstall/` is the helper's audio-driver install and removal
+  pipeline (staging, ownership audit, signature and downgrade checks, atomic
+  swap) and its `coreaudiod` restart. It is compiled into `Helper`, and into
+  the app only so the unit tests can reach it; `project.yml` excludes it from
+  `Extension`.
 - `Tests/`: XCTest coverage for source storage, Keychain behavior, ONVIF,
   RTSP processing, audio decoding/ring behavior, setup decisions, extension
   state, logging, configuration, and boot sanity checks.
@@ -164,9 +169,9 @@ The app supports direct RTSP URLs and ONVIF cameras. ONVIF discovery uses
 WS-Discovery UDP probing. Stream decoding uses `IPCamKit`, VideoToolbox, and a
 jitter buffer before frames are converted to sample buffers for the extension.
 
-Demand matters. The RTSP pipeline should run only when there is an external
-camera consumer or when in-app preview is enabled. Avoid background work that
-keeps cameras connected with no consumer.
+Demand matters. The RTSP pipeline should run only when an external app is using
+the virtual camera or the virtual microphone, or when in-app preview is enabled.
+Avoid background work that keeps cameras connected with no consumer.
 
 Camera audio is decoded in `App/RTSP/AudioDecoder.swift`:
 
