@@ -167,8 +167,22 @@ setup or issue message, and closing Settings or switching it to another pane)
 drops preview demand, so streams can pause when no external app is using the
 camera or the microphone.
 
-Resolution and frame-rate choices are stored in the app group and require an app
-restart to apply to the extension stream format.
+The Resolution and Frame Rate settings take effect without a restart. The app
+stores them in the app group, which only the app can read. The camera extension
+offers every resolution at 30 and 60 fps on both of its streams
+(`StreamFormatTable`), starting in the default 1080p at 60 fps. The app sets the
+chosen format on the sink stream (`SinkStreamFormatWriter`, see Extension And
+IPC Rules) each time discovery finds a new device and each time the setting
+changes. The extension makes it the source stream's default
+(`SourceFormatState`): it applies at once while no app uses the camera, and
+otherwise when the last consumer stops, so the app never changes the format
+under a running consumer. An app that picks its own format or frame rate on the
+source stream gets it at once, and keeps it until the next change. The
+extension scales the app's frames to the active resolution, letterboxed, with a
+`VTPixelTransferSession` and a pixel buffer pool per format, passes frames that
+already match through without a copy, and paces them to the active frame rate
+(`ExtensionDeviceRuntime`, `FramePacer`). Its own placeholder is drawn at the
+active resolution.
 
 ## Streaming And Demand
 
@@ -222,10 +236,23 @@ Extension-to-app signaling:
   sink stream, so it means "an external consumer" only before the app starts
   that stream.
 - Do not use app-group `UserDefaults(suiteName:)` to share state between the
-  extension and the app. The resolution, frame rate and
-  `runningExtensionVersion` still go through it, so they do not cross today.
+  extension and the app. `runningExtensionVersion` still goes through it, so it
+  does not cross today. The extension can't read the Resolution and Frame Rate
+  settings there either; they reach it as described below.
 - Do not use `DistributedNotificationCenter` from the extension to the app; it is
   blocked by the extension sandbox in practice.
+
+App-to-extension signaling:
+
+- Set standard CMIO properties of the sink stream, which only the app uses.
+  Setting `kCMIOStreamPropertyFormatDescription` (to one of the stream's
+  `kCMIOStreamPropertyFormatDescriptions`) and `kCMIOStreamPropertyFrameRate`
+  reaches the extension's `setStreamProperties` as the sink's active format
+  index and frame duration, which the extension takes as the default format.
+  The sink offers the same formats as the source for this; it still accepts the
+  app's frames at any size.
+- A restarted, re-enabled or repaired extension starts over in its default
+  format, so the app sets the format again on every newly discovered device.
 
 Sink stream lifecycle:
 
