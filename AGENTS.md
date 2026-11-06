@@ -67,7 +67,7 @@ Core commands:
 ```bash
 xcodegen generate       # Regenerate LemurCam.xcodeproj from project.yml
 swiftlint lint --strict # Lint only; warnings are errors
-scripts/ci.sh           # Full local CI: SwiftLint, build, tests (signed)
+scripts/ci.sh           # Full local CI: SwiftLint, clean build, unused imports, tests (signed)
 scripts/ci.sh --unsigned # Same, with CODE_SIGNING_ALLOWED=NO like GitHub CI
 scripts/dev-run.sh      # Build Debug, install to /Applications, launch
 scripts/dev-camera.sh   # Fake RTSP + ONVIF camera for testing without hardware
@@ -83,20 +83,35 @@ npm run build
 npm run lint
 ```
 
-`scripts/ci.sh` runs SwiftLint, generates the Xcode project, builds the app
-targets, and runs tests. Do not weaken SwiftLint or build settings to make a
-change pass; fix the code.
+`scripts/ci.sh` runs SwiftLint, generates the Xcode project, builds the app and
+test targets from clean, checks for unused imports on that build's log
+(`scripts/check-unused-imports.sh`), and runs the tests on the same build. Do not
+weaken SwiftLint or build settings to make a change pass; fix the code.
+
+The unused-import check runs `swiftlint analyze --strict --only-rule
+unused_import`. Only that rule is enforced; the other `analyzer_rules` in
+`.swiftlint.yml` are not run in CI. Analyze reads each file's compiler arguments
+from the xcodebuild log and silently skips a file it finds none for, and an
+incremental build logs only the files it recompiles. So the build always starts
+clean, and the script fails unless analyze covered as many files as
+`swiftlint lint` does. It is the slowest step of `scripts/ci.sh`, at about a
+second per Swift file. Fix an unused import by removing it, and check that the
+file still compiles in every target that builds it (`Shared/` files go into
+several; `project.yml` says which). For an import the rule flags but the file
+needs, add `// swiftlint:disable:next unused_import` with a one-line reason.
 
 SwiftLint must be exactly the version `.swiftlint.yml` pins with
 `swiftlint_version` (0.65.1). Any other version makes `swiftlint lint` exit 2
 with only a one-line warning, so `scripts/ci.sh` checks `swiftlint version`
 first and stops with an error naming the required version. Homebrew's formula
 can be a different version; install the release's `portable_swiftlint.zip` the
-way `.github/workflows/ci.yml` does (steps in `README.md`). To move to a new
+way the GitHub workflow does (`.github/actions/install-swiftlint`; steps in
+`README.md`). To move to a new
 SwiftLint, bump `swiftlint_version` and the workflow's `SWIFTLINT_VERSION`
 together, along with the version README.md and this guide name.
 
-The GitHub workflow runs SwiftLint and `xcodebuild test` on macOS with code
+The GitHub workflow runs SwiftLint, then a clean build for testing, the same
+unused-import check on that build's log, and the tests, on macOS with code
 signing disabled for CI. Local app runs and distribution builds require proper
 Apple signing configuration.
 

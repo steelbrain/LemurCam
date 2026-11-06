@@ -49,8 +49,9 @@ formats, including AAC, G.711, and L16.
 ## Building From Source
 
 LemurCam is an XcodeGen project. `project.yml` is the source of truth for the
-Xcode project. `scripts/ci.sh` runs SwiftLint, generates the project, builds,
-and runs the tests:
+Xcode project. `scripts/ci.sh` runs SwiftLint, generates the project, builds
+it from clean, checks for unused imports with `swiftlint analyze`, and runs the
+tests:
 
 ```bash
 scripts/ci.sh             # signed with the team in project.yml
@@ -62,6 +63,11 @@ It is also used when `LEMURCAM_UNSIGNED=1` is set, or `CI` is set to anything
 but an empty string, `false` or `0`. An unsigned build
 compiles and passes the tests, but the app cannot install the camera extension
 or the audio driver.
+
+The unused-import check (`scripts/check-unused-imports.sh`) reads each file's
+compiler arguments from the build's log, and an incremental build logs only the
+files it recompiles, so `scripts/ci.sh` always builds from clean. The tests then
+run on that build.
 
 `scripts/ci.sh` needs XcodeGen and SwiftLint 0.65.1. `.swiftlint.yml` pins that
 exact version (`swiftlint_version`), and any other SwiftLint version fails the

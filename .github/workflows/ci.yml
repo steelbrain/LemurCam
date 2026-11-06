@@ -35,25 +35,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install SwiftLint ${{ env.SWIFTLINT_VERSION }}
-        run: |
-          dir="$RUNNER_TEMP/swiftlint"
-          mkdir -p "$dir"
-          curl --fail --silent --show-error --location --retry 3 \
-            --output "$dir/swiftlint.zip" \
-            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
-          unzip -q "$dir/swiftlint.zip" -d "$dir"
-          bin="$(find "$dir" -type f -name swiftlint | head -n 1)"
-          if [ -z "$bin" ]; then
-            echo "::error::No swiftlint binary in portable_swiftlint.zip"
-            exit 1
-          fi
-          chmod +x "$bin"
-          installed="$("$bin" version)"
-          if [ "$installed" != "$SWIFTLINT_VERSION" ]; then
-            echo "::error::Expected SwiftLint $SWIFTLINT_VERSION, got $installed"
-            exit 1
-          fi
-          dirname "$bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-swiftlint
+        with:
+          version: ${{ env.SWIFTLINT_VERSION }}
 
       - name: Lint
         run: swiftlint lint --strict --reporter github-actions-logging
@@ -97,11 +81,31 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build & Test LemurCam
-        # CI runners have no signing certificates or provisioning profiles. The app's
-        # entitlements (system extension, app group) otherwise demand a profile, so
-        # disable code signing — the linker still ad-hoc signs the binaries on arm64,
-        # which is enough to launch the test host and run the unit tests.
+      - name: Install SwiftLint ${{ env.SWIFTLINT_VERSION }}
+        uses: ./.github/actions/install-swiftlint
+        with:
+          version: ${{ env.SWIFTLINT_VERSION }}
+
+      # CI runners have no signing certificates or provisioning profiles. The app's
+      # entitlements (system extension, app group) otherwise demand a profile, so
+      # disable code signing — the linker still ad-hoc signs the binaries on arm64,
+      # which is enough to launch the test host and run the unit tests.
+      #
+      # The unused-import check (swiftlint analyze) reads each Swift file's
+      # compiler arguments from this build's log, and a build logs only the files
+      # it compiles, so it starts clean, as scripts/ci.sh does, even though a new
+      # runner has nothing built.
+      - name: Build LemurCam for testing
         run: >-
-          xcodebuild test -scheme LemurCam -destination 'platform=macOS'
+          xcodebuild clean build-for-testing -scheme LemurCam -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Check for unused imports
+        run: >-
+          scripts/check-unused-imports.sh "$RUNNER_TEMP/xcodebuild.log"
+          --reporter github-actions-logging
+
+      - name: Test LemurCam
+        run: >-
+          xcodebuild test-without-building -scheme LemurCam -destination 'platform=macOS'
           CODE_SIGNING_ALLOWED=NO

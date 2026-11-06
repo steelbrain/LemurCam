@@ -1,0 +1,36 @@
+name: Install SwiftLint
+description: >-
+  Install a pinned SwiftLint from its release's portable_swiftlint.zip, check
+  its version, and put it on PATH for the job's later steps.
+
+inputs:
+  version:
+    description: The SwiftLint version; must equal swiftlint_version in .swiftlint.yml.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install SwiftLint ${{ inputs.version }}
+      shell: bash
+      env:
+        SWIFTLINT_VERSION: ${{ inputs.version }}
+      run: |
+        dir="$RUNNER_TEMP/swiftlint"
+        mkdir -p "$dir"
+        curl --fail --silent --show-error --location --retry 3 \
+          --output "$dir/swiftlint.zip" \
+          "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
+        unzip -q "$dir/swiftlint.zip" -d "$dir"
+        bin="$(find "$dir" -type f -name swiftlint | head -n 1)"
+        if [ -z "$bin" ]; then
+          echo "::error::No swiftlint binary in portable_swiftlint.zip"
+          exit 1
+        fi
+        chmod +x "$bin"
+        installed="$("$bin" version)"
+        if [ "$installed" != "$SWIFTLINT_VERSION" ]; then
+          echo "::error::Expected SwiftLint $SWIFTLINT_VERSION, got $installed"
+          exit 1
+        fi
+        dirname "$bin" >> "$GITHUB_PATH"

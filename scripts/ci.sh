@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local CI: SwiftLint, project generation, build, and tests.
+# Local CI: SwiftLint, project generation, a clean build, the unused-import
+# analysis (swiftlint analyze), and tests.
 #
 # By default the build is signed with the team in project.yml. Without that
 # team's certificates, build unsigned the way the GitHub workflow does
@@ -73,14 +74,25 @@ else
   TEST_ARGS=(-quiet)
 fi
 
-echo "==> [1/3] Linting..."
+# The unused-import check (swiftlint analyze) reads each Swift file's compiler
+# arguments from the build's log, and an incremental build logs only the files
+# it recompiles. So the build starts clean, its log goes to this file, and the
+# tests run on that build.
+BUILD_LOG="$(mktemp -t lemurcam-ci-build)"
+trap 'rm -f "$BUILD_LOG"' EXIT
+
+echo "==> [1/4] Linting..."
 swiftlint lint --strict
 
-echo "==> [2/3] Building app targets..."
+echo "==> [2/4] Building app and test targets from clean..."
 xcodegen generate
-xcodebuild build -scheme LemurCam -destination 'platform=macOS' "${BUILD_ARGS[@]}"
+xcodebuild clean build-for-testing -scheme LemurCam -destination 'platform=macOS' "${BUILD_ARGS[@]}" \
+  | tee "$BUILD_LOG"
 
-echo "==> [3/3] Running tests..."
-xcodebuild test -scheme LemurCam -destination 'platform=macOS' "${TEST_ARGS[@]}"
+echo "==> [3/4] Checking for unused imports..."
+scripts/check-unused-imports.sh "$BUILD_LOG"
+
+echo "==> [4/4] Running tests..."
+xcodebuild test-without-building -scheme LemurCam -destination 'platform=macOS' "${TEST_ARGS[@]}"
 
 echo "==> All CI checks passed."
