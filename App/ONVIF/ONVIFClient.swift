@@ -26,6 +26,7 @@ internal final class ONVIFClient: Sendable {
         self.useHTTPS = useHTTPS
 
         configuration.timeoutIntervalForRequest = Tuning.onvifRequestTimeout
+        configuration.timeoutIntervalForResource = ONVIFTimeout.resource
         self.session = URLSession(configuration: configuration)
     }
 

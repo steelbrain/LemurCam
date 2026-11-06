@@ -289,13 +289,14 @@ private extension DiscoveryView {
         step = .profiles
         let client = makeClient(for: device)
         Task {
-            async let profilesResult = client.getProfiles()
-            async let deviceInfoResult: ONVIFDeviceInfo? = {
-                try? await client.getDeviceInformation()
-            }()
             do {
-                let fetchedProfiles = try await profilesResult
-                let info = await deviceInfoResult
+                let (fetchedProfiles, info) = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                    async let profilesResult = client.getProfiles()
+                    async let deviceInfoResult: ONVIFDeviceInfo? = {
+                        try? await client.getDeviceInformation()
+                    }()
+                    return try await (profilesResult, deviceInfoResult)
+                }
                 await MainActor.run {
                     profiles = fetchedProfiles; deviceInfo = info; isFetchingProfiles = false
                 }
@@ -310,7 +311,9 @@ private extension DiscoveryView {
         let client = makeClient(for: device)
         Task {
             do {
-                let uri = try await client.getStreamURI(profileToken: profileToken)
+                let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                    try await client.getStreamURI(profileToken: profileToken)
+                }
                 await MainActor.run { streamURI = uri }
             } catch {
                 await MainActor.run { fetchError = error.localizedDescription }

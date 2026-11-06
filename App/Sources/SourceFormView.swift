@@ -274,12 +274,13 @@ private extension SourceFormView {
         let client = makeONVIFClient()
         Task {
             do {
-                async let profilesResult = client.getProfiles()
-                async let deviceInfoResult: ONVIFDeviceInfo? = {
-                    try? await client.getDeviceInformation()
-                }()
-                let profiles = try await profilesResult
-                let info = await deviceInfoResult
+                let (profiles, info) = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                    async let profilesResult = client.getProfiles()
+                    async let deviceInfoResult: ONVIFDeviceInfo? = {
+                        try? await client.getDeviceInformation()
+                    }()
+                    return try await (profilesResult, deviceInfoResult)
+                }
                 await MainActor.run {
                     onvifProfiles = profiles
                     isProbing = false
@@ -296,7 +297,9 @@ private extension SourceFormView {
         let client = makeONVIFClient()
         Task {
             do {
-                let uri = try await client.getStreamURI(profileToken: profileToken)
+                let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                    try await client.getStreamURI(profileToken: profileToken)
+                }
                 await MainActor.run { streamURI = uri }
             } catch {
                 await MainActor.run { probeError = error.localizedDescription }

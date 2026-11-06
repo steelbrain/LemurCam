@@ -45,6 +45,7 @@ internal enum ONVIFError: LocalizedError {
     case soapFault(String)
     case parseError
     case authenticationFailed
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -58,6 +59,8 @@ internal enum ONVIFError: LocalizedError {
             return "Failed to parse ONVIF response"
         case .authenticationFailed:
             return "Authentication failed"
+        case .timedOut:
+            return "The camera did not respond in time"
         }
     }
 }

@@ -67,7 +67,9 @@ internal final class BootSanityChecker {
             password: credentials?.password
         )
         do {
-            _ = try await client.getProfiles()
+            _ = try await ONVIFTimeout.run(seconds: ONVIFTimeout.launchProbe) {
+                try await client.getProfiles()
+            }
             return true
         } catch {
             return false
