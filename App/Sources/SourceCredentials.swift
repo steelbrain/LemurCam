@@ -50,7 +50,7 @@ internal extension SourceCredentials {
     static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
         guard var components = URLComponents(cameraURL: uri), let host = components.host else { return nil }
         guard comparableHost(host) == comparableHost(oldHost) else { return uri }
-        let encoded = newHost.contains(":") && !newHost.hasPrefix("[") ? "[\(newHost)]" : newHost
+        let encoded = ONVIFClient.urlHost(newHost)
         // Setting a host URLComponents would not read back raises an exception.
         guard URLComponents(string: "rtsp://\(encoded)/")?.encodedHost == encoded else { return nil }
         components.encodedHost = encoded

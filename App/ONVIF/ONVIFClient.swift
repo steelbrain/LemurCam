@@ -207,8 +207,7 @@ internal final class ONVIFClient: Sendable {
     private func exchange(
         path: String, body: XMLKit.XMLElement, signed: Bool
     ) async throws -> (Data, URLResponse) {
-        let scheme = useHTTPS ? "https" : "http"
-        guard let url = URL(string: "\(scheme)://\(host):\(port)\(path)") else {
+        guard let url = Self.serviceURL(host: host, port: port, useHTTPS: useHTTPS, path: path) else {
             throw ONVIFError.invalidURL
         }
 
