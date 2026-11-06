@@ -17,7 +17,16 @@ internal final class LemurCamModel: Sendable {
         label: "com.steelbrain.LemurCam.discovery", qos: .userInitiated
     )
 
-    init() {
+    /// Whether an external app is using the discovered device; read once discovery
+    /// succeeds, before this app starts its own sink stream. Injected for testability.
+    private let consumerProbe: @Sendable (CMIODeviceID) -> Bool
+
+    init(
+        consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
+            CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
+        }
+    ) {
+        self.consumerProbe = consumerProbe
         observeConsumerChanges()
     }
 
@@ -105,16 +114,16 @@ internal final class LemurCamModel: Sendable {
             return
         case .retry:
             scheduleRetry()
-        case .ready:
-            Log.ipc.info("Device discovered, waiting for consumer demand")
-
-            // If consumers are already active (e.g. app restarted while Zoom
-            // was using the camera), start immediately.
-            let hasConsumers = LemurCamConfig.sharedDefaults?.bool(
-                forKey: LemurCamConfig.hasExternalConsumersKey
-            ) ?? false
-            if hasConsumers {
+        case .ready(let deviceID):
+            // If an app is already using the camera (e.g. this app relaunched while
+            // Zoom had it open, or its consumerStarted notification fired before
+            // discovery finished), start immediately. The app hasn't started its own
+            // sink stream on this device yet, so "running somewhere" is external.
+            if consumerProbe(deviceID) {
+                Log.ipc.info("Device discovered with an active consumer, starting sink stream")
                 startStream()
+            } else {
+                Log.ipc.info("Device discovered, waiting for consumer demand")
             }
         }
     }

@@ -54,6 +54,12 @@ internal enum LemurCamConfig {
     // MARK: - Shared Defaults
 
     static let activeSourceKey = "LemurCam.activeSourceID"
+    /// Deprecated: nothing writes this key any more. The camera extension runs as
+    /// `_cmiodalassistants`, not as the logged-in user, so the app-group defaults it
+    /// wrote were a different domain from the app's and the flag never reached the
+    /// app. Use `CameraConsumerProbe` (the CMIO property
+    /// `kCMIODevicePropertyDeviceIsRunningSomewhere`) for camera demand. Kept only
+    /// until the last reader (the quit warning) moves off it; then delete it.
     static let hasExternalConsumersKey = "LemurCam.hasExternalConsumers"
     static var consumerStartedNotification: CFString {
         "cam.lemur.consumerStarted" as CFString

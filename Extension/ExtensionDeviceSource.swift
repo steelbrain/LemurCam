@@ -78,14 +78,12 @@ internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource 
         // app starts feeding frames and they are forwarded; only the placeholder
         // timer needs the rendered placeholder.
         let result = runtime.startStreaming(timerQueue: _timerQueue)
-        LemurCamConfig.sharedDefaults?.set(true, forKey: LemurCamConfig.hasExternalConsumersKey)
         postConsumerNotification(started: true)
         result.timer?.resume()
     }
 
     func stopStreaming() {
         let result = runtime.stopStreaming()
-        LemurCamConfig.sharedDefaults?.set(result.hasConsumers, forKey: LemurCamConfig.hasExternalConsumersKey)
         postConsumerNotification(started: result.hasConsumers)
         result.timer?.cancel()
     }

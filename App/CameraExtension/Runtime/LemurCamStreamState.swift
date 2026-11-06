@@ -56,10 +56,10 @@ internal final class LemurCamStreamState: Sendable {
         case discover(attempt: Int)
     }
 
-    internal enum DiscoveryResultAction {
+    internal enum DiscoveryResultAction: Equatable {
         case alreadyReady
         case retry
-        case ready
+        case ready(deviceID: CMIODeviceID)
     }
 
     private struct State: Sendable {
@@ -122,7 +122,7 @@ internal final class LemurCamStreamState: Sendable {
             state.deviceID = result.deviceID
             state.streamID = result.streamID
             state.isReady = true
-            return .ready
+            return .ready(deviceID: result.deviceID)
         }
     }
 

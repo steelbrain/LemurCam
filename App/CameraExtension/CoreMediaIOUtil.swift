@@ -95,25 +95,63 @@ internal enum CoreMediaIOUtil {
     /// it is ready and selectable by other apps. The most direct liveness signal,
     /// independent of AVFoundation discovery and camera authorization.
     static func isAlive(deviceID: CMIODeviceID) -> Bool {
+        let value = readUInt32Property(
+            deviceID: deviceID,
+            selector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsAlive),
+            name: "kCMIODevicePropertyDeviceIsAlive"
+        )
+        return (value ?? 0) != 0
+    }
+
+    /// The raw `kCMIODevicePropertyDeviceIsRunningSomewhere` value (1 when any
+    /// process on the system is doing IO on the device), or nil if unreadable.
+    static func runningSomewhereValue(deviceID: CMIODeviceID) -> UInt32? {
+        readUInt32Property(
+            deviceID: deviceID,
+            selector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+            name: "kCMIODevicePropertyDeviceIsRunningSomewhere"
+        )
+    }
+
+    /// Whether an external app is using the given (already discovered) LemurCam
+    /// device. Only meaningful before this app starts its own sink stream on it;
+    /// see `CameraConsumerProbe`.
+    static func hasExternalConsumer(deviceID: CMIODeviceID) -> Bool {
+        CameraConsumerProbe.hasExternalConsumer(deviceID: deviceID, readRunningSomewhere: runningSomewhereValue)
+    }
+
+    /// Whether an external app is using the LemurCam virtual camera, looked up by
+    /// its fixed device UID. False when the device isn't present or can't be read.
+    /// Only meaningful before this app starts its own sink stream (e.g. at launch).
+    static func lemurCameraHasExternalConsumer() -> Bool {
+        CameraConsumerProbe.hasExternalConsumer(deviceID: lemurDeviceID(), readRunningSomewhere: runningSomewhereValue)
+    }
+
+    /// Reads a UInt32 device property. Returns nil without logging when the device
+    /// doesn't expose the property (a device still registering may not yet), and
+    /// nil with an error log when the read itself fails.
+    private static func readUInt32Property(
+        deviceID: CMIODeviceID,
+        selector: CMIOObjectPropertySelector,
+        name: String
+    ) -> UInt32? {
         var opa = CMIOObjectPropertyAddress(
-            mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsAlive),
+            mSelector: selector,
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
-        // A device still registering may not yet expose the property; treat its
-        // absence as "not alive" without logging a spurious error.
-        guard CMIOObjectHasProperty(deviceID, &opa) else { return false }
-        var isAlive: UInt32 = 0
+        guard CMIOObjectHasProperty(deviceID, &opa) else { return nil }
+        var value: UInt32 = 0
         var dataUsed: UInt32 = 0
         let res = CMIOObjectGetPropertyData(
             deviceID, &opa, 0, nil,
-            UInt32(MemoryLayout<UInt32>.size), &dataUsed, &isAlive
+            UInt32(MemoryLayout<UInt32>.size), &dataUsed, &value
         )
         if res != noErr {
-            Log.ipc.error("failed to read kCMIODevicePropertyDeviceIsAlive: \(res)")
-            return false
+            Log.ipc.error("failed to read \(name): \(res)")
+            return nil
         }
-        return isAlive != 0
+        return value
     }
 
     /// Convenience: the LemurCam virtual camera exists and is live/selectable.

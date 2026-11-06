@@ -21,6 +21,8 @@ internal final class StreamCoordinator {
     private let audioRing = AudioRingBuffer()
     /// Whether the virtual mic is already running IO; injected for testability.
     private let audioConsumerProbe: () -> Bool
+    /// Whether an external app is already using the virtual camera; injected for testability.
+    private let cameraConsumerProbe: () -> Bool
     /// The aggregate-demand value we last acted on. Demand changes that don't cross
     /// the zero/non-zero boundary leave an already-running stream alone, so toggling
     /// one consumer never tears down and reconnects a stream another consumer needs.
@@ -36,7 +38,8 @@ internal final class StreamCoordinator {
 
     init(
         sourceManager: SourceManager,
-        audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() }
+        audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
+        cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() }
     ) {
         let streamModel = LemurCamModel()
         let previews = PreviewStore()
@@ -45,6 +48,7 @@ internal final class StreamCoordinator {
         self.previewStore = previews
         self.sourceManager = sourceManager
         self.audioConsumerProbe = audioConsumerProbe
+        self.cameraConsumerProbe = cameraConsumerProbe
         self.fallbackGenerator = FrameGenerator(model: streamModel)
         self.frameDispatcher = StreamFrameDispatcher(
             model: streamModel,
@@ -65,9 +69,7 @@ internal final class StreamCoordinator {
     func start() {
         frameDispatcher.setPreviewEnabled(previewStore.isPreviewEnabled)
         audioRing.open()
-        _hasConsumers = LemurCamConfig.sharedDefaults?.bool(
-            forKey: LemurCamConfig.hasExternalConsumersKey
-        ) ?? false
+        _hasConsumers = cameraConsumerProbe()
         recoverAudioDemandOnLaunch()
         syncToActiveSource()
         // Record the demand state we just brought the pipeline into, so the first
