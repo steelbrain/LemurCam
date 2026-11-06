@@ -16,10 +16,27 @@ internal final class ONVIFURLInputTests: XCTestCase {
     func testAHostTheHostFieldRefusesIsRefused() {
         let login = "http://admin%3Asecret%40192.168.1.64/onvif/device_service"
         XCTAssertEqual(URLComponents(string: login)?.host, "admin:secret@192.168.1.64", "the host as it was taken")
-        XCTAssertEqual(ONVIFURLInput.address(in: login), refusal(ONVIFHostInput.loginMessage))
+        XCTAssertEqual(ONVIFURLInput.address(in: login), refusal(ONVIFURLInput.loginMessage))
         XCTAssertEqual(
-            ONVIFURLInput.address(in: "http://cam%2Fonvif/x"), refusal(ONVIFHostInput.notAnAddressMessage)
+            ONVIFURLInput.address(in: "http://cam%2Fonvif/x"), refusal(ONVIFURLInput.notAnAddressMessage)
         )
+    }
+
+    /// The Host field's messages name that field and its Port field, and say to leave
+    /// out `http://`, none of which fits the add form's URL field.
+    func testTheAddFormSaysWhatIsWrongWithItsURL() {
+        let cases = [
+            "http://192.168.1.64%3A8080/onvif/device_service": ONVIFURLInput.notAnAddressMessage,
+            "http://my%20cam.local/onvif/device_service": ONVIFURLInput.notAnAddressMessage,
+            "http://admin%40192.168.1.64/onvif/device_service": ONVIFURLInput.loginMessage
+        ]
+        for (url, message) in cases {
+            XCTAssertEqual(ONVIFURLInput.address(in: url), refusal(message), url)
+        }
+        for message in [ONVIFURLInput.loginMessage, ONVIFURLInput.notAnAddressMessage] {
+            XCTAssertFalse(message.contains("here"), message)
+            XCTAssertFalse(message.contains("Port field"), message)
+        }
     }
 
     func testTheAddressIsTakenFromTheURL() {
@@ -48,6 +65,17 @@ internal final class ONVIFURLInputTests: XCTestCase {
             host: address.host, port: address.port, useHTTPS: address.useHTTPS, path: ONVIFClient.deviceServicePath
         )
         XCTAssertEqual(url?.absoluteString, "http://[fe80::1%25en0]:8080/onvif/device_service")
+    }
+
+    /// A `/` in the password made the user name the host and the start of the password
+    /// the port, and Fetch Profiles sent the form's login there.
+    func testALoginTheAddressCantBeReadPastIsRefused() {
+        for url in [
+            "http://admin:1234/5@192.168.1.64/onvif/device_service",
+            "http://admin:Admin#123@192.168.1.64/onvif/device_service"
+        ] {
+            XCTAssertEqual(ONVIFURLInput.address(in: url), refusal(RTSPURLInput.ambiguousUserInfoMessage), url)
+        }
     }
 
     func testAURLWithoutAHostIsInvalid() {
