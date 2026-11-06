@@ -212,11 +212,7 @@ internal enum MicrophoneVersionReply: Equatable {
     private static func installed(
         _ check: InstalledDriverCheck, redo: MicrophoneDriverOperation?, context: MicrophoneCheckContext
     ) -> Self {
-        guard let version = check.version else {
-            // Redoing a removal never installs, whatever setup started before it.
-            if (context.autoInstallPending && redo != .remove) || redo == .install { return .installDriver }
-            return .setStatus(.notSetUp)
-        }
+        guard let version = check.version else { return notInstalled(check, redo: redo, context: context) }
         if redo == .remove { return .uninstallDriver }
         guard check.sealed else {
             // Still unsealed right after the helper installed a copy: the helper
@@ -224,9 +220,9 @@ internal enum MicrophoneVersionReply: Equatable {
             // not exited). Installing again would only repeat that, so ask for the
             // restart that replaces it. A helper that identified itself as current
             // seals what it installs: Update (or the redo) goes through it.
-            let stale = check.helper == .stale
-                || (check.helper != .current && (context.verifyingInstall || context.staleHelperSeen))
-            if stale { return .setStatus(.needsReboot) }
+            if isStale(check.helper, seen: context.verifyingInstall || context.staleHelperSeen) {
+                return .setStatus(.needsReboot)
+            }
             return redo == .install ? .installDriver : .setStatus(.ready)
         }
         if redo == .install,
@@ -234,6 +230,30 @@ internal enum MicrophoneVersionReply: Equatable {
             return .installDriver
         }
         return .setStatus(.ready)
+    }
+
+    /// What a check that reached the helper and found no driver shows.
+    private static func notInstalled(
+        _ check: InstalledDriverCheck, redo: MicrophoneDriverOperation?, context: MicrophoneCheckContext
+    ) -> Self {
+        // Redoing a removal never installs, whatever setup started before it.
+        if (context.autoInstallPending && redo != .remove) || redo == .install { return .installDriver }
+        // A restart asked for (Enable refused because a stale helper serves the app,
+        // or an install through it left an unsealed copy) stays asked for while that
+        // helper serves the app: "Not set up" would offer Enable again, which is
+        // refused until the restart. Never asked for here on its own (the first
+        // launch after an update, after a removal): only once the user asked to
+        // install.
+        if context.currentStatus == .needsReboot, isStale(check.helper, seen: context.staleHelperSeen) {
+            return .setStatus(.needsReboot)
+        }
+        return .setStatus(.notSetUp)
+    }
+
+    /// Whether a stale helper answered: it identified itself as one, or it did not
+    /// tell and `seen` says one serves the app.
+    private static func isStale(_ helper: AudioHelperIdentity, seen: Bool) -> Bool {
+        helper == .stale || (helper != .current && seen)
     }
 
     /// A known status survives an unreachable helper: it is a hiccup, not "not
@@ -297,6 +317,15 @@ internal enum MicrophoneStatusCopy {
     static let newerVersion = "A newer version is available — updating briefly restarts audio."
     static let unfinishedInstall = "The last install didn’t finish, so apps may not be using this copy yet. "
         + "Updating installs it again and briefly restarts audio."
+
+    /// The "Remove Microphone…" confirmation's message. While a restart is asked for,
+    /// an older helper serves the app and no install goes through it, so the
+    /// microphone can be re-enabled only after the restart.
+    static func removal(restartAsked: Bool) -> String {
+        "This uninstalls the audio component and briefly restarts audio. " + (restartAsked
+            ? "You can re-enable it without approving again once you restart your Mac."
+            : "You can re-enable it anytime without approving again.")
+    }
 
     /// Why "Update Microphone" is offered.
     static func update(_ reason: MicrophoneUpdateReason) -> String {

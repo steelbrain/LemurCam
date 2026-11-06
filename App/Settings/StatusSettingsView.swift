@@ -45,8 +45,7 @@ internal struct StatusSettingsView: View {
             Button("Remove Microphone", role: .destructive) { setup.disableMicrophone() }
             Button("Cancel", role: .cancel) { showRemoveMic = false }
         } message: {
-            Text("This uninstalls the audio component and briefly restarts audio. "
-                + "You can re-enable it anytime without approving again.")
+            Text(MicrophoneStatusCopy.removal(restartAsked: setup.micStatus == .needsReboot))
         }
     }
 
