@@ -119,14 +119,20 @@ internal extension ONVIFDiscovery {
         }
         var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
         guard inet_ntop(AF_INET6, &ipv6, &buffer, socklen_t(buffer.count)) != nil else { return nil }
-        return String(cString: buffer)
+        return string(nulTerminated: buffer)
     }
 
     static func format(_ address: in_addr) -> String? {
         var address = address
         var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         guard inet_ntop(AF_INET, &address, &buffer, socklen_t(buffer.count)) != nil else { return nil }
-        return String(cString: buffer)
+        return string(nulTerminated: buffer)
+    }
+
+    /// The text `inet_ntop` wrote into `buffer`, up to its NUL. `String(cString:)`
+    /// taking an array is deprecated.
+    private static func string(nulTerminated buffer: [CChar]) -> String? {
+        String(bytes: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8)
     }
 
     /// `RelatesTo` must echo the probe's `MessageID`. Compared case-insensitively and
