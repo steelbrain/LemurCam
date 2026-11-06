@@ -333,7 +333,7 @@ private extension SetupView {
             Button("Enable Microphone") { coordinator.enableMicrophone() }
                 .buttonStyle(.borderedProminent)
         case .failed:
-            Button("Try Again") { coordinator.enableMicrophone() }
+            Button("Try Again") { coordinator.retryMicrophone() }
                 .buttonStyle(.borderedProminent)
         }
     }

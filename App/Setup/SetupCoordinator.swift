@@ -63,6 +63,11 @@ internal final class SetupCoordinator {
     /// Monotonic token so only the latest installed-version reply applies; drops
     /// stale async replies that would otherwise clobber freshly-changed state.
     @ObservationIgnored private var micRefreshToken = 0
+    /// The install or removal the user last started, until a check shows how it
+    /// ended: what "Try Again" redoes if that is still needed.
+    @ObservationIgnored private var micLastOperation: MicrophoneDriverOperation?
+    /// "Try Again" is re-checking.
+    @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
     @ObservationIgnored private var verifyingDriverInstall = false
     /// An install through the helper left an unsealed copy this session, so the
@@ -200,6 +205,21 @@ extension SetupCoordinator {
         }
     }
 
+    /// "Try Again" after a failure. With the helper approved, check the installed
+    /// driver first and redo the failed install or removal only if that check shows
+    /// it is still needed: installing restarts coreaudiod, cutting audio in every
+    /// app, which a helper that was only briefly unreachable does not call for.
+    func retryMicrophone() {
+        guard audioInstaller.state == .enabled else {
+            enableMicrophone()
+            return
+        }
+        guard !isInstallingDriver else { return }
+        micRetrying = true
+        micStatus = .unknown
+        queryInstalledDriverVersion()
+    }
+
     /// Open the Login Items pane where the audio helper is approved.
     func openMicrophoneSystemSettings() {
         audioInstaller.openLoginItemsSettings()
@@ -248,6 +268,7 @@ extension SetupCoordinator {
     ) {
         guard !isInstallingDriver else { return }
         isInstallingDriver = true
+        micLastOperation = kind
         micStatus = .installing
         micInstallTimeout?.cancel()
         micInstallTimeout = Task { [weak self] in
@@ -312,16 +333,20 @@ extension SetupCoordinator {
         let reply = MicrophoneVersionReply.decide(check, context: MicrophoneCheckContext(
             currentStatus: micStatus,
             autoInstallPending: autoInstallDriver,
+            retrying: micRetrying,
+            lastOperation: micLastOperation,
             verifyingInstall: verifyingDriverInstall,
             staleHelperSeen: staleHelperSeen,
             bundledVersion: bundledDriverVersion
         ))
+        micRetrying = false
         if check.reachable {
             installedDriverVersion = check.version
             installedDriverSealed = check.sealed
             if check.version != nil { autoInstallDriver = false }
-            // The check shows how the last install ended.
+            // The check shows how the last operation ended.
             verifyingDriverInstall = false
+            micLastOperation = nil
         }
         switch reply {
         case .keepStatus:
@@ -329,6 +354,8 @@ extension SetupCoordinator {
         case .installDriver:
             autoInstallDriver = false
             installMicDriver()
+        case .uninstallDriver:
+            disableMicrophone()
         case .setStatus(let status):
             if status == .needsReboot { staleHelperSeen = true }
             micStatus = status

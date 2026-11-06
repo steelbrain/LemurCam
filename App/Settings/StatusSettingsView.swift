@@ -155,7 +155,7 @@ internal struct StatusSettingsView: View {
         case .notSetUp:
             return button("Enable Microphone") { setup.enableMicrophone() }
         case .failed:
-            return button("Try Again") { setup.enableMicrophone() }
+            return button("Try Again") { setup.retryMicrophone() }
         }
     }
 

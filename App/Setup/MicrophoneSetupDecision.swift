@@ -26,6 +26,11 @@ internal struct MicrophoneCheckContext: Equatable {
     var currentStatus: MicrophoneStatus
     /// The user started mic setup and the helper was just approved.
     var autoInstallPending = false
+    /// "Try Again" is re-checking after a failure.
+    var retrying = false
+    /// The install or removal the user last started, until a check shows how it
+    /// ended; nil when only a check failed. What "Try Again" redoes, if needed.
+    var lastOperation: MicrophoneDriverOperation?
     /// The check follows an install the helper reported as done.
     var verifyingInstall = false
     /// An install through the helper already left an unsealed copy this session.
@@ -41,24 +46,36 @@ internal enum MicrophoneVersionReply: Equatable {
     case keepStatus
     /// Show this status.
     case setStatus(MicrophoneStatus)
-    /// The helper was just approved mid-setup and no driver is installed yet:
-    /// install it now instead of making the user click again.
+    /// Install the bundled driver now: the helper was just approved mid-setup and no
+    /// driver is installed yet, or "Try Again" after a failed install found it still
+    /// needed.
     case installDriver
+    /// "Try Again" after a failed removal found the driver still installed.
+    case uninstallDriver
 
     static let unreachableMessage = "Couldn’t reach the microphone helper. Please try again."
 
     static func decide(_ check: InstalledDriverCheck, context: MicrophoneCheckContext) -> Self {
         guard check.reachable else { return unreachable(currentStatus: context.currentStatus) }
-        guard check.version != nil else {
-            return context.autoInstallPending ? .installDriver : .setStatus(.notSetUp)
+        // "Try Again" redoes the failed install or removal only if this check shows
+        // it is still needed: each one restarts coreaudiod, cutting audio everywhere.
+        let redo = context.retrying ? context.lastOperation : nil
+        guard let version = check.version else {
+            if context.autoInstallPending || redo == .install { return .installDriver }
+            return .setStatus(.notSetUp)
         }
+        if redo == .remove { return .uninstallDriver }
         guard check.sealed else {
             // Still unsealed right after the helper installed a copy: the helper
             // serving us predates sealing (one from before an app update that has
             // not exited). Installing again would only repeat that, so ask for the
             // restart that replaces it.
             if context.verifyingInstall || context.staleHelperSeen { return .setStatus(.needsReboot) }
-            return .setStatus(.ready)
+            return redo == .install ? .installDriver : .setStatus(.ready)
+        }
+        if redo == .install,
+           MicrophoneUpdateReason.reason(installed: version, bundled: context.bundledVersion, sealed: true) != nil {
+            return .installDriver
         }
         return .setStatus(.ready)
     }
