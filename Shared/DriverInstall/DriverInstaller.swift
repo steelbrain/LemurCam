@@ -45,7 +45,7 @@ internal struct DriverInstaller {
             try? Files.removeTree(at: plugins, name: staging.name)
         }
         try Files.copyTree(from: sourcePath, to: staging.descriptor, name: bundleName, owner: owner)
-        let problems = Files.audit(staging.descriptor, name: bundleName, owner: owner)
+        let problems = Files.audit(staging.descriptor, name: bundleName, owner: owner, copy: .staged)
         guard problems.isEmpty else {
             throw Files.Failure(description: "Staged driver is not sealed: \(problems.joined(separator: "; "))")
         }
@@ -58,7 +58,7 @@ internal struct DriverInstaller {
         // anyone else can write to (every copy installed before the helper sealed
         // them was user-owned) could carry any CFBundleVersion, and must be
         // replaced, not allowed to block every later install.
-        if Files.isSealed(plugins, name: bundleName, owner: owner),
+        if Files.isSealed(plugins, name: bundleName, owner: owner, copy: .installed),
            let installed = Files.bundleVersion(at: plugins, bundle: bundleName),
            let staged = Files.bundleVersion(at: staging.descriptor, bundle: bundleName),
            Self.isDowngrade(from: installed, to: staged) {
@@ -97,14 +97,14 @@ internal struct DriverInstaller {
         return Files.bundleVersion(at: plugins, bundle: bundleName)
     }
 
-    /// Whether the installed bundle exists and is sealed to `owner` (the same audit
-    /// the staged copy passes) in a plug-ins directory only `owner` can write.
-    /// Read-only, so the app runs it as the user to tell a copy the helper sealed
-    /// from one an older helper installed user-owned.
+    /// Whether the installed bundle exists and is sealed to `owner` (the audit the
+    /// staged copy passes, less the link count anyone can raise) in a plug-ins
+    /// directory only `owner` can write. Read-only, so the app runs it as the user to
+    /// tell a copy the helper sealed from one an older helper installed user-owned.
     func installedCopyIsSealed() -> Bool {
         guard let plugins = try? openExistingPluginsDirectory() else { return false }
         defer { close(plugins) }
-        return Files.isSealed(plugins, name: bundleName, owner: owner)
+        return Files.isSealed(plugins, name: bundleName, owner: owner, copy: .installed)
     }
 
     /// True when `staged` is numerically older than `installed`. Equal versions

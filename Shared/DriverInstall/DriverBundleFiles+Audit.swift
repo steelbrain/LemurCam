@@ -4,13 +4,30 @@ import Foundation
 extension DriverBundleFiles {
     // MARK: - Audit
 
+    /// Which copy of the driver an audit checks. It decides whether a file's other
+    /// hard links count as a problem.
+    enum AuditedCopy {
+        /// The copy just made in the private staging directory (0700, owned by the
+        /// owner), which nobody else can reach: a file there with more than one link
+        /// is not the fresh file the copy wrote.
+        case staged
+        /// The copy in the plug-ins directory. Every user can read it, and macOS lets
+        /// any user hard-link a file they can read, even one they do not own. That
+        /// raises the file's link count but gives them no way to change it (owner and
+        /// mode belong to the file, not to a link), so the link count is not checked:
+        /// otherwise anyone could make a sealed copy look unsealed.
+        case installed
+    }
+
     /// Every reason the tree at `name` inside `parent` could be modified by anyone
     /// but `owner`: entries owned by someone else, writable by group or others,
-    /// setuid/setgid/sticky bits, an ACL, a hard-linked file, a symlink, or a special
-    /// file. Empty means the tree is sealed to `owner`. With `limit`, stops after
-    /// that many problems.
-    static func audit(_ parent: Int32, name: String, owner: Owner, limit: Int = .max) -> [String] {
-        var problems = Problems(limit: limit)
+    /// setuid/setgid/sticky bits, an ACL, a symlink, or a special file, plus, for the
+    /// `.staged` copy, a hard-linked file. Empty means the tree is sealed to `owner`.
+    /// With `limit`, stops after that many problems.
+    static func audit(
+        _ parent: Int32, name: String, owner: Owner, copy: AuditedCopy, limit: Int = .max
+    ) -> [String] {
+        var problems = Problems(limit: limit, rejectsHardLinks: copy == .staged)
         auditEntry(Entry(name), in: parent, path: name, depth: 0, owner: owner, problems: &problems)
         return problems.found
     }
@@ -18,13 +35,15 @@ extension DriverBundleFiles {
     /// Whether the tree at `name` inside `parent` exists and is sealed to `owner`:
     /// `audit` reports nothing. Stops at the first problem, so a large tree someone
     /// else can write to is not walked in full.
-    static func isSealed(_ parent: Int32, name: String, owner: Owner) -> Bool {
-        audit(parent, name: name, owner: owner, limit: 1).isEmpty
+    static func isSealed(_ parent: Int32, name: String, owner: Owner, copy: AuditedCopy) -> Bool {
+        audit(parent, name: name, owner: owner, copy: copy, limit: 1).isEmpty
     }
 
-    /// Problems found so far, up to `limit`.
+    /// Problems found so far, up to `limit`, and whether a regular file with more
+    /// than one link is one of them (see `AuditedCopy`).
     private struct Problems {
         let limit: Int
+        let rejectsHardLinks: Bool
         var found: [String] = []
 
         var isFull: Bool { found.count >= limit }
@@ -64,7 +83,9 @@ extension DriverBundleFiles {
             problems.append("\(path): changed while auditing")
             return
         }
-        problems += permissionProblems(opened, descriptor: descriptor, owner: owner).map { "\(path): \($0)" }
+        problems += permissionProblems(
+            opened, descriptor: descriptor, owner: owner, rejectsHardLinks: problems.rejectsHardLinks
+        ).map { "\(path): \($0)" }
         guard isDirectory(opened) else { return }
         guard depth < Limits.maxDepth, let children = try? entries(of: descriptor) else {
             problems.append("\(path): cannot be listed")
@@ -78,14 +99,16 @@ extension DriverBundleFiles {
         }
     }
 
-    private static func permissionProblems(_ info: stat, descriptor: Int32, owner: Owner) -> [String] {
+    private static func permissionProblems(
+        _ info: stat, descriptor: Int32, owner: Owner, rejectsHardLinks: Bool
+    ) -> [String] {
         var problems: [String] = []
         if info.st_uid != owner.uid || info.st_gid != owner.gid {
             problems.append("owned by \(info.st_uid):\(info.st_gid)")
         }
         if info.st_mode & 0o022 != 0 { problems.append("writable by group or others") }
         if info.st_mode & 0o7000 != 0 { problems.append("has setuid, setgid, or sticky bits") }
-        if isRegularFile(info), info.st_nlink != 1 { problems.append("hard-linked") }
+        if rejectsHardLinks, isRegularFile(info), info.st_nlink != 1 { problems.append("hard-linked") }
         if hasACL(descriptor) { problems.append("has an access control list") }
         return problems
     }

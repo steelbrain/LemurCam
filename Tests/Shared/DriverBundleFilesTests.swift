@@ -23,7 +23,7 @@ internal final class DriverBundleFilesTests: XCTestCase {
     }
 
     private func audit(_ directory: String, _ name: String, owner: Files.Owner? = nil) throws -> [String] {
-        try Support.withDirectory(directory) { Files.audit($0, name: name, owner: owner ?? self.owner) }
+        try Support.withDirectory(directory) { Files.audit($0, name: name, owner: owner ?? self.owner, copy: .staged) }
     }
 
     // MARK: - Copy
@@ -153,19 +153,21 @@ internal final class DriverBundleFilesTests: XCTestCase {
         try withScratch { root in
             let tree = try Support.makeDriver(in: root, version: "5")
             XCTAssertTrue(try Support.withDirectory(root) {
-                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner)
+                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner, copy: .staged)
             })
-            XCTAssertFalse(try Support.withDirectory(root) { Files.isSealed($0, name: "Absent.driver", owner: owner) })
+            XCTAssertFalse(try Support.withDirectory(root) {
+                Files.isSealed($0, name: "Absent.driver", owner: owner, copy: .installed)
+            })
 
             try Support.check(chmod("\(tree)/Contents/Info.plist", 0o666))
             try Support.check(chmod("\(tree)/Contents/MacOS/LemurCamAudio", 0o777))
             XCTAssertEqual(try audit(root, LemurAudioHelper.driverBundleName).count, 2)
             let first = try Support.withDirectory(root) {
-                Files.audit($0, name: LemurAudioHelper.driverBundleName, owner: owner, limit: 1)
+                Files.audit($0, name: LemurAudioHelper.driverBundleName, owner: owner, copy: .staged, limit: 1)
             }
             XCTAssertEqual(first.count, 1)
             XCTAssertFalse(try Support.withDirectory(root) {
-                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner)
+                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner, copy: .staged)
             })
         }
     }

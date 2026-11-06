@@ -65,7 +65,7 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertEqual(scratch.installer().installedVersion(), "5")
         XCTAssertEqual(try scratch.pluginsEntries(), [bundleName], "staging must be gone afterwards")
         let audit = try Support.withDirectory(scratch.plugins) {
-            DriverBundleFiles.audit($0, name: bundleName, owner: Support.owner)
+            DriverBundleFiles.audit($0, name: bundleName, owner: Support.owner, copy: .installed)
         }
         XCTAssertEqual(audit, [])
         // The signature was checked on the staged copy in a private directory, not on
@@ -102,6 +102,21 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertEqual(try scratch.pluginsEntries(), [bundleName])
     }
 
+    func testSomeoneElsesHardLinkDoesNotLiftTheDowngradeRefusal() throws {
+        // Any user can hard-link a file of the installed copy they can read. That
+        // changes nothing about who can modify it, so the copy is still sealed and
+        // its version still blocks an older install.
+        let scratch = try Scratch()
+        try scratch.installer().install(from: scratch.source(version: "7"))
+        let elsewhere = (scratch.root as NSString).appendingPathComponent("someone-elses-link")
+        try Support.check(link("\(scratch.installedPath)/Contents/MacOS/LemurCamAudio", elsewhere))
+
+        XCTAssertThrowsError(try scratch.installer().install(from: scratch.source(version: "5"))) { error in
+            XCTAssertTrue("\(error)".contains("older version 5"), "\(error)")
+        }
+        XCTAssertEqual(scratch.installer().installedVersion(), "7")
+    }
+
     func testUnsealedInstalledCopyIsReplacedWhateverVersionItClaims() throws {
         // Copies installed before the helper sealed them were user-owned, so anything
         // running as the user could rewrite their version. A version read from such a
@@ -115,7 +130,7 @@ internal final class DriverInstallerTests: XCTestCase {
             XCTAssertNoThrow(try scratch.installer().install(from: scratch.source(version: "6")), entry)
             XCTAssertEqual(scratch.installer().installedVersion(), "6", entry)
             let audit = try Support.withDirectory(scratch.plugins) {
-                DriverBundleFiles.audit($0, name: bundleName, owner: Support.owner)
+                DriverBundleFiles.audit($0, name: bundleName, owner: Support.owner, copy: .installed)
             }
             XCTAssertEqual(audit, [], entry)
         }

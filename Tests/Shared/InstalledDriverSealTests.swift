@@ -66,6 +66,19 @@ internal final class InstalledDriverSealTests: XCTestCase {
         }
     }
 
+    func testSomeoneElsesHardLinkLeavesTheCopySealed() throws {
+        // Any user can hard-link a root-owned file they can read; the link gives them
+        // no way to change it. Counting it would show "unsealed" and offer Update, or
+        // right after an install claim a stale helper and ask for a restart.
+        let scratch = try Scratch()
+        try scratch.installSealedCopy()
+        for (index, entry) in ["/Contents/Info.plist", "/Contents/MacOS/LemurCamAudio"].enumerated() {
+            let link = (scratch.root as NSString).appendingPathComponent("someone-elses-link-\(index)")
+            try Support.check(Darwin.link(scratch.installedPath + entry, link))
+        }
+        XCTAssertTrue(scratch.installer().installedCopyIsSealed())
+    }
+
     func testCopyOwnedBySomeoneElseIsNotSealed() throws {
         let scratch = try Scratch()
         try scratch.installSealedCopy()
