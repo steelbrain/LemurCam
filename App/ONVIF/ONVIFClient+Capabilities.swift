@@ -15,6 +15,24 @@ internal extension ONVIFClient {
         return xaddr.flatMap(servicePath(fromXAddr:))
     }
 
+    /// Whether a reply to an unsigned request says the request needs authentication:
+    /// HTTP 401, or a SOAP fault whose subcode is ONVIF's `ter:NotAuthorized`.
+    static func refusesUnauthenticated(_ data: Data, response: URLResponse) -> Bool {
+        if (response as? HTTPURLResponse)?.statusCode == 401 { return true }
+        guard let root = try? ONVIFXML.parse(data) else { return false }
+        var notAuthorized = false
+        root.findElements(named: "Fault") { fault in
+            // Subcodes nest: Code > Subcode > Subcode ...; any level may name it.
+            var subcode = fault["Code"]?["Subcode"]
+            while let current = subcode, !notAuthorized {
+                let value = current["Value"]?.getText()?.trimmingCharacters(in: .whitespacesAndNewlines)
+                notAuthorized = value?.split(separator: ":").last == "NotAuthorized"
+                subcode = current["Subcode"]
+            }
+        }
+        return notAuthorized
+    }
+
     /// The GUID from a GetEndpointReference response, without a `urn:uuid:` prefix,
     /// in the form `ONVIFDiscovery` uses for endpoint UUIDs.
     static func parseEndpointReference(_ data: Data) -> String? {

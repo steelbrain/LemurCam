@@ -79,8 +79,9 @@ internal final class ONVIFClient: Sendable {
     /// is. Only the path of the returned address is used: requests stay on the host
     /// and port the user configured, so a device cannot point signed requests at
     /// another host, and cameras behind port forwarding (which report their internal
-    /// address) keep working. GetCapabilities needs no authentication and is sent
-    /// unsigned, so a wrong password does not add a failed login.
+    /// address) keep working. GetCapabilities needs no authentication on most cameras
+    /// and is sent unsigned, so a wrong password does not add a failed login; a camera
+    /// that does require it is asked again, signed (see `capabilities()`).
     private func mediaServicePath() async throws -> String {
         if let cached = mediaPath.withLock({ $0 }) { return cached }
         let resolved = try await resolveMediaServicePath()
@@ -91,9 +92,7 @@ internal final class ONVIFClient: Sendable {
     private func resolveMediaServicePath() async throws -> String {
         let fallback = Self.defaultMediaServicePath
         do {
-            let data = try await post(
-                path: Self.deviceServicePath, body: ONVIFSOAP.getMediaCapabilities(), signed: false
-            )
+            let data = try await capabilities()
             if let path = Self.parseMediaServicePath(data) { return path }
             Log.app.info("ONVIF device listed no media service; using \(fallback)")
         } catch let error as ONVIFError where error.isTransportFailure {
@@ -102,6 +101,21 @@ internal final class ONVIFClient: Sendable {
             Log.app.info("ONVIF GetCapabilities failed (\(error.localizedDescription)); using \(fallback)")
         }
         return Self.defaultMediaServicePath
+    }
+
+    /// The GetCapabilities reply, asked for unsigned. A camera that refuses it without
+    /// authentication (HTTP 401 or a `NotAuthorized` fault) used to get the default
+    /// media path, which fails on cameras that serve media elsewhere; with credentials
+    /// it is now asked once more, signed.
+    private func capabilities() async throws -> Data {
+        let body = ONVIFSOAP.getMediaCapabilities()
+        let (data, response) = try await exchange(path: Self.deviceServicePath, body: body, signed: false)
+        guard hasCredentials, Self.refusesUnauthenticated(data, response: response) else {
+            try checkReply(data, response: response)
+            return data
+        }
+        Log.app.info("ONVIF GetCapabilities requires authentication; asking again signed")
+        return try await post(path: Self.deviceServicePath, body: body)
     }
 
     // MARK: - SOAP
@@ -166,9 +180,19 @@ internal final class ONVIFClient: Sendable {
 
     // MARK: - HTTP
 
-    /// Sends `body` to `path`. Signed requests carry a WS-Security header when the
+    /// Sends `body` to `path` and returns the reply's body, throwing for an error
+    /// reply (see `checkReply`). Signed requests carry a WS-Security header when the
     /// client has credentials; the first one measures the device's clock first.
     private func post(path: String, body: XMLKit.XMLElement, signed: Bool = true) async throws -> Data {
+        let (data, response) = try await exchange(path: path, body: body, signed: signed)
+        try checkReply(data, response: response)
+        return data
+    }
+
+    /// Sends `body` to `path` and returns the reply as it came, whatever its status.
+    private func exchange(
+        path: String, body: XMLKit.XMLElement, signed: Bool
+    ) async throws -> (Data, URLResponse) {
         let scheme = useHTTPS ? "https" : "http"
         guard let url = URL(string: "\(scheme)://\(host):\(port)\(path)") else {
             throw ONVIFError.invalidURL
@@ -186,8 +210,12 @@ internal final class ONVIFClient: Sendable {
         request.setValue("application/soap+xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(envelope.utf8)
 
-        let (data, response) = try await send(request)
+        return try await send(request)
+    }
 
+    /// Throws the error a reply stands for: `authenticationFailed` for HTTP 401, the
+    /// SOAP fault it carries (in any status), or its HTTP error status.
+    private func checkReply(_ data: Data, response: URLResponse) throws {
         if let httpResponse = response as? HTTPURLResponse {
             if httpResponse.statusCode == 401 {
                 throw ONVIFError.authenticationFailed
@@ -204,8 +232,6 @@ internal final class ONVIFClient: Sendable {
         if let fault = extractSOAPFault(from: data) {
             throw ONVIFError.soapFault(fault)
         }
-
-        return data
     }
 
     /// Reads the response body, giving up once it exceeds `ONVIFXML.maxDocumentBytes`
