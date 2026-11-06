@@ -10,9 +10,19 @@ internal final class FakeAudioHelper: AudioHelperClient {
     private(set) var installs: [(MicrophoneOperationResult) -> Void] = []
     private(set) var removals: [(MicrophoneOperationResult) -> Void] = []
     private(set) var checks: [(InstalledDriverCheck) -> Void] = []
+    private(set) var registrations = 0
+    private(set) var loginItemsOpened = 0
 
-    func registerHelper() {}
-    func openLoginItemsSettings() {}
+    /// Registering leaves the helper waiting for the user's approval, as it does
+    /// the first time.
+    func registerHelper() {
+        registrations += 1
+        state = .requiresApproval
+    }
+
+    func openLoginItemsSettings() {
+        loginItemsOpened += 1
+    }
 
     func installDriver(completion: @escaping (MicrophoneOperationResult) -> Void) {
         installs.append(completion)

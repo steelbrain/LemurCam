@@ -60,6 +60,9 @@ internal final class SetupCoordinator {
     /// redoes. While set, routine refreshes leave that failure up (see
     /// `MicrophoneRefresh`); the user's next microphone action clears it.
     @ObservationIgnored private var micOperationFailure: MicrophoneOperationFailure?
+    /// Try Again on that failure found the helper no longer approved: the first check
+    /// after approval redoes it (`MicrophoneVersionReply`). Enable or an operation ends it.
+    @ObservationIgnored private var micRedoAfterApproval: MicrophoneOperationFailure?
     /// "Try Again" is re-checking.
     @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
@@ -212,16 +215,25 @@ extension SetupCoordinator {
     /// register the helper, open Login Items to approve it, or install the driver.
     func enableMicrophone() {
         micOperationFailure = nil
+        micRedoAfterApproval = nil
+        guard audioInstaller.state == .enabled else {
+            autoInstallDriver = true
+            approveMicHelper()
+            return
+        }
+        installMicDriver()
+    }
+
+    /// Register the helper, or open Login Items where it is approved.
+    private func approveMicHelper() {
         switch audioInstaller.state {
         case .notRegistered, .notFound:
-            autoInstallDriver = true
             registerMicHelper()
         case .requiresApproval:
-            autoInstallDriver = true
             micStatus = .needsApproval
             audioInstaller.openLoginItemsSettings()
         case .enabled:
-            installMicDriver()
+            refreshMicrophoneStatus()
         }
     }
 
@@ -229,14 +241,22 @@ extension SetupCoordinator {
     /// helper reported as failed is redone. After one it never answered, check the
     /// installed driver first and redo it only if that check shows it is still
     /// needed: each one restarts coreaudiod, cutting audio in every app, which a
-    /// helper that was only briefly unreachable does not call for.
+    /// helper that was only briefly unreachable does not call for. When the helper is
+    /// no longer approved, it goes on to approving it, and the first check after that
+    /// redoes the operation that failed (it never installs for a removal).
     func retryMicrophone() {
         let failure = micOperationFailure
         switch MicrophoneRetry.decide(
             helperEnabled: audioInstaller.state == .enabled, operationRunning: isInstallingDriver, failure: failure
         ) {
-        case .continueSetup:
+        case .continueSetup where failure == nil && micRedoAfterApproval == nil:
             enableMicrophone()
+        case .continueSetup:
+            micRedoAfterApproval = failure ?? micRedoAfterApproval
+            micOperationFailure = nil
+            autoInstallDriver = false
+            dropPendingDriverCheck()
+            approveMicHelper()
         case .ignore:
             return
         case .redo(.install):
@@ -332,6 +352,7 @@ extension SetupCoordinator {
         let token = micOperationToken
         micLastOperation = kind
         micOperationFailure = nil
+        micRedoAfterApproval = nil
         micStatus = .installing
         dropPendingDriverCheck()
         micInstallTimeout?.cancel()
@@ -444,7 +465,8 @@ extension SetupCoordinator {
             verifyingInstall: verifyingDriverInstall,
             staleHelperSeen: staleHelperSeen,
             bundledVersion: bundledDriverVersion,
-            holdingFailure: micOperationFailure != nil
+            holdingFailure: micOperationFailure != nil,
+            redoAfterApproval: micRedoAfterApproval
         ))
         micRetrying = false
         if check.reachable {
@@ -454,6 +476,7 @@ extension SetupCoordinator {
             // The check shows how the last operation ended.
             verifyingDriverInstall = false
             micLastOperation = nil
+            micRedoAfterApproval = nil
         }
         switch reply {
         case .keepStatus:
