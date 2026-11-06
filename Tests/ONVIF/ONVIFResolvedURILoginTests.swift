@@ -6,9 +6,10 @@ import XCTest
 /// IPCamKit refuses such a URI as ambiguous, so the camera could never stream. The
 /// login is now taken out of the URI, and used only when the camera has no saved
 /// credentials. That first covered only URIs `URLComponents` can't parse; one it
-/// misreads as an address (`viewer:1234#ab@`) is split too when what follows the
-/// last `@` is the camera's own host. Cameras are stubbed; nothing goes on the
-/// network.
+/// misreads as an address (`viewer:1234#ab@`) is split too. Either is split only
+/// when what follows the last `@` is the camera's own host, so a login is never
+/// taken from (or sent to a host made of) a query. Cameras are stubbed; nothing
+/// goes on the network.
 @MainActor
 internal final class ONVIFResolvedURILoginTests: XCTestCase {
     nonisolated private static let reportedURI = "rtsp://viewer:p#ss@192.0.2.5:554/stream"
@@ -57,12 +58,62 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         XCTAssertEqual(target.credentials, Self.savedLogin)
     }
 
-    /// A URI `URLComponents` can't read is split wherever it points, as before: the
-    /// camera may report an address other than the one its ONVIF service answers at.
-    func testALoginURLComponentsCantReadIsTakenOutWhateverTheHost() {
-        let target = Self.target(Self.reportedURI, reportedBy: "porch-camera.local")
+    /// A URI `URLComponents` can't read is split only when what follows its last `@`
+    /// is the camera, as one it reads is: that `@` may be in a query. With
+    /// `?password=p@ss word` the split made `ss word`, the rest of the password, the
+    /// host the login went to.
+    func testALoginURLComponentsCantReadIsTakenOutOnlyWhenTheRestIsTheCamera() {
+        let elsewhere = Self.target(Self.reportedURI, reportedBy: "porch-camera.local", saved: Self.savedLogin)
+        XCTAssertEqual(elsewhere.url, Self.reportedURI)
+        XCTAssertEqual(elsewhere.credentials, Self.savedLogin)
 
-        XCTAssertEqual(target.url, Self.addressOnly)
+        // Whether `URLComponents` reads a space or a raw `%` depends on the macOS
+        // version; the outcome must not. The last one it can't read on any.
+        let queries = [
+            "rtsp://192.0.2.5:554/stream?password=p@ss word",
+            "rtsp://192.0.2.5/stream?user=viewer&password=p@ss word/x",
+            "rtsp://192.0.2.5/stream?password=p@ss%zz",
+            "rtsp://192.0.2.5:554:1/stream?password=p@ss word"
+        ]
+        XCTAssertNil(URLComponents(string: queries[3]))
+        for uri in queries {
+            let target = Self.target(uri, saved: Self.savedLogin)
+            XCTAssertEqual(target.url, uri)
+            XCTAssertEqual(target.credentials, Self.savedLogin)
+            XCTAssertNil(Self.target(uri).credentials, "no login is taken from the query")
+        }
+    }
+
+    /// The host after the last `@` of a URI `URLComponents` can't read: up to a port,
+    /// path, query or fragment, or a bracketed IPv6 literal.
+    func testTheRestOfAnUnreadableURIIsMatchedToTheCamera() {
+        let cases: [(uri: String, reporter: String, url: String)] = [
+            ("rtsp://viewer:p#ss@192.0.2.5/stream", "192.0.2.5", "rtsp://192.0.2.5/stream"),
+            ("rtsp://viewer:p#ss@192.0.2.5", "192.0.2.5", "rtsp://192.0.2.5"),
+            ("rtsp://viewer:p#ss@192.0.2.5?x=1", "192.0.2.5", "rtsp://192.0.2.5?x=1"),
+            ("rtsp://viewer:p#ss@CAM.example:554/s", "cam.example", "rtsp://CAM.example:554/s"),
+            ("rtsp://viewer:p#ss@[fe80::1]:554/s", "fe80:0::1", "rtsp://[fe80::1]:554/s")
+        ]
+        for (uri, reporter, url) in cases {
+            XCTAssertNil(URLComponents(string: uri), "URLComponents can't read \(uri)")
+            let target = Self.target(uri, reportedBy: reporter)
+            XCTAssertEqual(target.url, url, uri)
+            XCTAssertEqual(target.credentials, SourceCredentials(username: "viewer", password: "p#ss"), uri)
+        }
+        // No host to match: used as reported.
+        for uri in ["rtsp://viewer:p#ss@[fe80::1:554/s", "rtsp://viewer:p#ss@:554/s"] {
+            XCTAssertEqual(Self.target(uri, reportedBy: "fe80::1").url, uri)
+        }
+    }
+
+    func testTheLeadingHostIsReadByHand() {
+        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://ss word"), "ss word")
+        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://host:554/s"), "host")
+        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://host#f"), "host")
+        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://[::1]:554"), "[::1]")
+        XCTAssertNil(StreamCoordinator.leadingHost(of: "rtsp://[::1"))
+        XCTAssertNil(StreamCoordinator.leadingHost(of: "rtsp:///s"))
+        XCTAssertNil(StreamCoordinator.leadingHost(of: "host/s"))
     }
 
     /// Logins `URLComponents` reads as part of the address (host `viewer` and port
@@ -114,24 +165,41 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
     // MARK: - Through the coordinator
 
     func testACameraWithoutSavedCredentialsConnectsWithTheLoginFromTheURI() async throws {
-        let harness = try makeHarness(cameraAt: "login-in-uri.test", credentials: nil)
+        let host = "login-in-uri.test"
+        let harness = try makeHarness(cameraAt: host, credentials: nil)
 
         harness.coordinator.previewStore.isPreviewEnabled = true
         let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
 
         XCTAssertTrue(connected)
-        XCTAssertEqual(harness.pipeline.connectedURLs, [Self.addressOnly])
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(host):554/stream"])
         XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.loginInURI])
     }
 
     func testACameraWithSavedCredentialsConnectsWithThem() async throws {
-        let harness = try makeHarness(cameraAt: "saved-login.test", credentials: Self.savedLogin)
+        let host = "saved-login.test"
+        let harness = try makeHarness(cameraAt: host, credentials: Self.savedLogin)
 
         harness.coordinator.previewStore.isPreviewEnabled = true
         let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
 
         XCTAssertTrue(connected)
-        XCTAssertEqual(harness.pipeline.connectedURLs, [Self.addressOnly])
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(host):554/stream"])
+        XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.savedLogin])
+    }
+
+    /// A login `URLComponents` can't read, in a URI for a host other than the camera
+    /// that reported it, is left in the URI, and the saved credentials go with it.
+    func testAnUnreadableLoginForAnotherHostIsConnectedToAsReported() async throws {
+        let harness = try makeHarness(
+            cameraAt: "reports-another-host.test", credentials: Self.savedLogin, reporting: Self.reportedURI
+        )
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
+
+        XCTAssertTrue(connected)
+        XCTAssertEqual(harness.pipeline.connectedURLs, [Self.reportedURI])
         XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.savedLogin])
     }
 
@@ -154,12 +222,14 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
     }
 
     /// A coordinator whose ONVIF requests go to a stub camera at `host`, which
-    /// reports `uri`, and an ONVIF camera saved there.
+    /// reports `uri` (by default, the reported login at its own host), and an ONVIF
+    /// camera saved there.
     private func makeHarness(
-        cameraAt host: String, credentials: SourceCredentials?, reporting uri: String = reportedURI
+        cameraAt host: String, credentials: SourceCredentials?, reporting uri: String? = nil
     ) throws -> CoordinatorHarness {
         stubHosts.append(host)
-        ONVIFStubURLProtocol.register(host: host) { _, _ in ONVIFResolveFixture.streamURIReply(uri) }
+        let reply = ONVIFResolveFixture.streamURIReply(uri ?? "rtsp://viewer:p#ss@\(host):554/stream")
+        ONVIFStubURLProtocol.register(host: host) { _, _ in reply }
         let harness = CoordinatorHarness(onvifEnvironment: ONVIFResolveEnvironment(
             scan: { [] },
             makeClient: { info, credentials in
