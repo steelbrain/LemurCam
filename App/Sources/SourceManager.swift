@@ -29,24 +29,6 @@ internal struct SourceFileSaveError: LocalizedError {
     }
 }
 
-/// An edit was written to the cameras file, its new credentials couldn't be stored in
-/// the Keychain, and the file couldn't be put back. The camera stays as edited, and its
-/// old credentials are removed: they belong to the camera as it was, maybe another
-/// address. Only when the Keychain can't remove them either do they stay. The edit is
-/// saved, so the edit form closes and the camera list shows this
-/// (`SourceFormSaveOutcome`).
-internal struct EditSavedWithoutLoginError: LocalizedError {
-    let oldLoginRemoved: Bool
-
-    var errorDescription: String? {
-        oldLoginRemoved
-            ? "The camera was saved without its username and password: they couldn't be saved in the "
-                + "Keychain, and the change couldn't be undone. Edit the camera to enter them again."
-            : "The camera was saved, but its new username and password couldn't be saved in the Keychain, "
-                + "and its old ones couldn't be removed. Edit the camera to enter them again, or delete it."
-    }
-}
-
 @MainActor @Observable
 internal final class SourceManager {
     private(set) var sources: [CameraSource] = []
@@ -190,6 +172,12 @@ internal final class SourceManager {
         updated.updatedAt = Date()
         sources[index] = updated
         try saveChange(undoingTo: previous, activeSourceID: activeSourceID)
+        if id != activeSourceID {
+            // The launch check's status (only the active camera's is the stream's),
+            // about the camera as it was before this edit.
+            connectionStatuses[id] = .disconnected
+            updateErrorMessage(for: id, message: nil)
+        }
         do {
             try apply(change, for: id, sourceName: name)
         } catch {

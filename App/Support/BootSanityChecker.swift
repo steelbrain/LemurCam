@@ -28,7 +28,7 @@ internal final class BootSanityChecker {
                     group.addTask {
                         let failure = await Self.probe(source: source, credentials: credentials)
                         await MainActor.run {
-                            self.recordProbeResult(failure: failure, for: source.id)
+                            self.recordProbeResult(failure: failure, for: source)
                         }
                     }
                 }
@@ -37,15 +37,18 @@ internal final class BootSanityChecker {
         }
     }
 
-    /// Shows a probe's result in the source list: `failure` says why the camera could
-    /// not be used, and is nil when it answered. A probe can finish many seconds after
-    /// launch; by then the user may have made that camera the active one, whose status
-    /// belongs to the live stream, or deleted it. In both cases the result is dropped.
-    func recordProbeResult(failure: String?, for sourceID: UUID) {
-        guard sourceID != sourceManager.activeSourceID,
-              sourceManager.sources.contains(where: { $0.id == sourceID }) else { return }
-        sourceManager.updateConnectionStatus(for: sourceID, status: failure == nil ? .connected : .error)
-        sourceManager.updateErrorMessage(for: sourceID, message: failure)
+    /// Shows a probe's result in the source list: `failure` says why `probed`, the
+    /// camera as saved when its probe started, could not be used, and is nil when it
+    /// answered. A probe can finish many seconds after launch; by then the user may
+    /// have made that camera the active one, whose status belongs to the live stream,
+    /// deleted it, or edited it. A result about the camera before an edit (a password
+    /// fixed since, say) said "Authentication failed" until the next launch. Unless the
+    /// camera is still saved as it was probed, the result is dropped.
+    func recordProbeResult(failure: String?, for probed: CameraSource) {
+        guard probed.id != sourceManager.activeSourceID,
+              sourceManager.sources.first(where: { $0.id == probed.id }) == probed else { return }
+        sourceManager.updateConnectionStatus(for: probed.id, status: failure == nil ? .connected : .error)
+        sourceManager.updateErrorMessage(for: probed.id, message: failure)
     }
 
     /// What to show for a camera the probe could not use, such as "Authentication

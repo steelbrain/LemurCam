@@ -108,10 +108,11 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let sourceManager = try XCTUnwrap(manager)
         try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
         try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
-        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let other = try XCTUnwrap(sourceManager.sources.last)
+        let otherID = other.id
         let checker = BootSanityChecker(sourceManager: sourceManager)
 
-        checker.recordProbeResult(failure: "Authentication failed", for: otherID)
+        checker.recordProbeResult(failure: "Authentication failed", for: other)
 
         XCTAssertEqual(sourceManager.connectionStatuses[otherID], .error)
         XCTAssertEqual(sourceManager.errorMessages[otherID], "Authentication failed")
@@ -123,12 +124,13 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let sourceManager = try XCTUnwrap(manager)
         try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
         try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
-        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let other = try XCTUnwrap(sourceManager.sources.last)
+        let otherID = other.id
         let checker = BootSanityChecker(sourceManager: sourceManager)
         sourceManager.setActiveSource(id: otherID)
         sourceManager.updateConnectionStatus(for: otherID, status: .connected)
 
-        checker.recordProbeResult(failure: "Authentication failed", for: otherID)
+        checker.recordProbeResult(failure: "Authentication failed", for: other)
 
         XCTAssertEqual(sourceManager.connectionStatuses[otherID], .connected)
         XCTAssertNil(sourceManager.errorMessages[otherID])
@@ -138,11 +140,12 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let sourceManager = try XCTUnwrap(manager)
         try sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
         try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
-        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+        let other = try XCTUnwrap(sourceManager.sources.last)
+        let otherID = other.id
         let checker = BootSanityChecker(sourceManager: sourceManager)
         try sourceManager.removeSource(id: otherID)
 
-        checker.recordProbeResult(failure: nil, for: otherID)
+        checker.recordProbeResult(failure: nil, for: other)
 
         XCTAssertNil(sourceManager.connectionStatuses[otherID])
     }
