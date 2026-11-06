@@ -204,6 +204,21 @@ internal enum MicrophoneVersionReply: Equatable {
     }
 }
 
+/// When the Settings status card offers "Remove Microphone…". Pure, so it is
+/// testable without the view.
+internal enum MicrophoneRemoval {
+    /// With the microphone working, and while a restart is asked for (an older helper
+    /// still serves the app) if a driver is installed: removing goes through that
+    /// helper too, and needs no copy sealed to root, so it need not wait for a restart.
+    static func isOffered(status: MicrophoneStatus, installedVersion: String?) -> Bool {
+        switch status {
+        case .ready: return true
+        case .needsReboot: return installedVersion != nil
+        case .unknown, .checking, .notSetUp, .needsApproval, .installing, .failed: return false
+        }
+    }
+}
+
 /// Why a working microphone should be updated (reinstalled from this app).
 internal enum MicrophoneUpdateReason: Equatable {
     /// This app bundles a newer driver.

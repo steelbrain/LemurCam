@@ -83,6 +83,10 @@ internal final class SetupCoordinator {
     }
     /// The mic is installed and working, but should be updated (see the reason).
     var microphoneNeedsUpdate: Bool { microphoneUpdateReason != nil }
+    /// Settings offers "Remove Microphone…" (see `MicrophoneRemoval`).
+    var offersMicrophoneRemoval: Bool {
+        MicrophoneRemoval.isOffered(status: micStatus, installedVersion: installedDriverVersion)
+    }
 
     /// The defaults are the app's; tests pass a fake helper, their own marker
     /// defaults, and short time limits.

@@ -144,9 +144,10 @@ internal struct StatusSettingsView: View {
 
     private var micAction: AnyView? {
         switch setup.micStatus {
-        case .ready:
-            return AnyView(micManageButtons)
-        case .installing, .unknown, .checking, .needsReboot:
+        case .ready, .needsReboot:
+            // Waiting for a restart, an installed microphone can still be removed.
+            return setup.offersMicrophoneRemoval ? AnyView(micManageButtons) : nil
+        case .installing, .unknown, .checking:
             return nil
         case .needsApproval:
             return button("Open System Settings") { setup.openMicrophoneSystemSettings() }

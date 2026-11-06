@@ -38,14 +38,18 @@ internal final class FakeAudioHelper: AudioHelperClient {
 internal final class SetupCoordinatorFixture {
     let helper = FakeAudioHelper()
     let coordinator: SetupCoordinator
+    /// The coordinator's stale-helper mark. It is first read when the coordinator
+    /// first needs it, so a test can record it before then.
+    let staleHelperMarker: StaleHelperMarker
     private let suite = "SetupCoordinatorTests.\(UUID().uuidString)"
     private let defaults: UserDefaults
 
     init(operationTimeLimit: Duration = .seconds(30), checkTimeLimit: Duration = .seconds(10)) throws {
         defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        staleHelperMarker = StaleHelperMarker(defaults: defaults, bootTime: { 1 })
         coordinator = SetupCoordinator(
             audioInstaller: helper,
-            staleHelperMarker: StaleHelperMarker(defaults: defaults, bootTime: { 1 }),
+            staleHelperMarker: staleHelperMarker,
             micOperationTimeLimit: operationTimeLimit,
             micCheckTimeLimit: checkTimeLimit
         )
