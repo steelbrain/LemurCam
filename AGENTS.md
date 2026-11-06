@@ -158,8 +158,9 @@ active because approval happens out of process in System Settings.
 approval gates. `SettingsView` is a `NavigationSplitView` sidebar, not a `TabView`.
 
 The Preview settings tab and the menu bar popover intentionally create preview
-demand. Closing both should drop preview demand so streams can pause when no
-external app is using the camera.
+demand. Showing neither (closing the popover, and closing Settings or switching
+it to another pane) drops preview demand, so streams can pause when no external
+app is using the camera or the microphone.
 
 Resolution and frame-rate choices are stored in the app group and require an app
 restart to apply to the extension stream format.

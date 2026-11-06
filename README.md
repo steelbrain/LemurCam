@@ -58,7 +58,8 @@ scripts/ci.sh --unsigned  # no Apple signing identity needed
 ```
 
 `--unsigned` builds with `CODE_SIGNING_ALLOWED=NO`, like the GitHub workflow.
-It is also used when `LEMURCAM_UNSIGNED=1` or `CI` is set. An unsigned build
+It is also used when `LEMURCAM_UNSIGNED=1` is set, or `CI` is set to anything
+but an empty string, `false` or `0`. An unsigned build
 compiles and passes the tests, but the app cannot install the camera extension
 or the audio driver.
 
