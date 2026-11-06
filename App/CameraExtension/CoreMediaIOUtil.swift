@@ -4,7 +4,20 @@ import os
 
 internal enum CoreMediaIOUtil {
 
+    private struct DeviceListUnreadable: Error {}
+
     static func getDeviceIDs() -> [CMIODeviceID] {
+        (try? deviceIDs()) ?? []
+    }
+
+    /// Every CMIO device, with LemurCam's picked out.
+    static func deviceList() -> CMIODeviceList {
+        guard let deviceIDs = try? deviceIDs() else { return .unreadable }
+        return .read(deviceIDs: deviceIDs, lemurDeviceID: lemurDeviceID(among: deviceIDs))
+    }
+
+    /// Every CMIO device; throws when the device list can't be read.
+    private static func deviceIDs() throws -> [CMIODeviceID] {
         var res: OSStatus
         var opa = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
@@ -16,7 +29,7 @@ internal enum CoreMediaIOUtil {
                                             &opa, 0, nil, &dataSize)
         if res != noErr {
             Log.ipc.error("failed CMIOObjectGetPropertyDataSize")
-            return []
+            throw DeviceListUnreadable()
         }
         let count = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
         var dataUsed: UInt32 = 0
@@ -25,7 +38,7 @@ internal enum CoreMediaIOUtil {
                                         &opa, 0, nil, dataSize, &dataUsed, &devices)
         if res != noErr {
             Log.ipc.error("failed CMIOObjectGetPropertyData")
-            return []
+            throw DeviceListUnreadable()
         }
         return devices
     }
@@ -86,7 +99,12 @@ internal enum CoreMediaIOUtil {
     /// when the extension is not installed/loaded, so this doubles as a presence
     /// check that needs neither AVFoundation nor camera permission.
     static func lemurDeviceID() -> CMIODeviceID? {
-        getDeviceIDs().first {
+        lemurDeviceID(among: getDeviceIDs())
+    }
+
+    /// The LemurCam device among `deviceIDs`, or nil when none of them is it.
+    static func lemurDeviceID(among deviceIDs: [CMIODeviceID]) -> CMIODeviceID? {
+        deviceIDs.first {
             getDeviceUID(deviceID: $0)?.caseInsensitiveCompare(LemurCamConfig.deviceID) == .orderedSame
         }
     }

@@ -28,6 +28,25 @@ internal final class CMIOStreamQueueAlteredRegistration: Sendable {
     }
 }
 
+/// The CMIO device list as one change left it.
+internal enum CMIODeviceList: Equatable, Sendable {
+    /// Every listed device, and which of them is LemurCam's (nil when none is).
+    case read(deviceIDs: [CMIODeviceID], lemurDeviceID: CMIODeviceID?)
+    /// The list could not be read.
+    case unreadable
+
+    var lemurDeviceID: CMIODeviceID? {
+        guard case .read(_, let lemurDeviceID) = self else { return nil }
+        return lemurDeviceID
+    }
+
+    /// Whether `deviceID` may still be listed: it is, or the list couldn't be read.
+    func mayList(_ deviceID: CMIODeviceID) -> Bool {
+        guard case .read(let deviceIDs, _) = self else { return true }
+        return deviceIDs.contains(deviceID)
+    }
+}
+
 internal final class CMIOStreamQueueResources: Sendable {
     let queue: SendableSimpleQueue
     let queueAlteredRegistration: CMIOStreamQueueAlteredRegistration
@@ -276,24 +295,27 @@ extension LemurCamStreamState {
         }
     }
 
-    /// The CMIO device list changed; `lemurDeviceID` is the LemurCam device's ID
-    /// in the new list, or nil when it is absent. Drops the cache when the cached
-    /// device is gone or was replaced, and arms discovery when a device is there
-    /// to find. Device-list changes start discovery only after setup has asked for
-    /// it once (`requestDiscovery`), and not while a pass is already in flight: that
+    /// The CMIO device list changed to `list`. Drops the cache when the cached
+    /// device is gone or was replaced, and arms discovery when a device is there to
+    /// find. Device-list changes start discovery only after setup has asked for it
+    /// once (`requestDiscovery`), and not while a pass is already in flight: that
     /// pass starts after this lookup (both run on the same serial queue), so its
     /// result is at least as fresh.
-    func deviceListChanged(lemurDeviceID: CMIODeviceID?) -> DeviceListChangeAction {
-        let (action, lostResources) = state.withLock { state -> (DeviceListChangeAction, CMIOStreamQueueResources?) in
+    func deviceListChanged(_ list: CMIODeviceList) -> DeviceListChangeAction {
+        let lemurDeviceID = list.lemurDeviceID
+        let (action, unlistedResources) = state.withLock { state -> (
+            DeviceListChangeAction, CMIOStreamQueueResources?
+        ) in
             if let cachedDeviceID = state.deviceID {
                 guard cachedDeviceID != lemurDeviceID else { return (.unchanged, nil) }
                 let dropped = state.dropDevice()
+                let drainable = list.mayList(cachedDeviceID) ? nil : dropped
                 guard lemurDeviceID != nil else {
                     state.discoveryPending = false
-                    return (.deviceLost, dropped)
+                    return (.deviceLost, drainable)
                 }
                 state.armDiscovery()
-                return (.deviceReplaced, nil)
+                return (.deviceReplaced, drainable)
             }
             guard state.discoveryRequested, lemurDeviceID != nil, !state.isDiscovering else {
                 return (.unchanged, nil)
@@ -302,12 +324,14 @@ extension LemurCamStreamState {
             return (.rediscover, nil)
         }
         // The buffers still queued were enqueued retained and would leak with the
-        // queue. Draining is safe only here: no LemurCam device is listed any more,
-        // so CMIO has torn down the device's streams and no longer dequeues from
-        // this queue, and `enqueue` can't reach it since it left the state above.
-        // A replaced device is not drained: the old one may still be listed, and a
-        // second thread dequeuing alongside CMIO would corrupt the queue.
-        lostResources?.queue.releaseRetainedElements()
+        // queue. Draining is safe only once the dropped device is not in the device
+        // list at all, whether it went away or another device replaced it: CMIO has
+        // then torn down its streams and no longer dequeues from this queue, and
+        // `enqueue` can't reach it since it left the state above. While the old
+        // device is still listed, or the list couldn't be read, CMIO may still be
+        // dequeuing, and a second thread dequeuing alongside it would corrupt the
+        // queue, so its buffers are left alone.
+        unlistedResources?.queue.releaseRetainedElements()
         return action
     }
 }

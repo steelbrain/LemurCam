@@ -62,17 +62,17 @@ internal final class LemurCamModelConsumerReportTests: XCTestCase {
         let fixture = Fixture()
         fixture.model.applyDiscoveryResult(device)
 
-        fixture.model.applyDeviceListChange(device.deviceID)
+        fixture.model.applyDeviceListChange(.lemur(device.deviceID))
         XCTAssertEqual(fixture.reports, [false], "an unrelated device-list change reports nothing")
 
-        fixture.model.applyDeviceListChange(nil)
+        fixture.model.applyDeviceListChange(.empty)
         XCTAssertEqual(fixture.reports, [false, false], "a lost device takes its consumers with it")
     }
 
     func testDeviceListChangesWithoutACachedDeviceReportNothing() {
         let fixture = Fixture()
 
-        fixture.model.applyDeviceListChange(nil)
+        fixture.model.applyDeviceListChange(.empty)
 
         XCTAssertEqual(fixture.reports, [])
     }

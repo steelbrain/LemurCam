@@ -21,7 +21,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         let state = LemurCamStreamState()
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .idle)
         // Device-list changes don't start discovery before setup asked for it.
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: oldDevice.deviceID), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.lemur(oldDevice.deviceID)), .unchanged)
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .idle)
     }
 
@@ -117,7 +117,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
         try connect(state)
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: oldDevice.deviceID), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.lemur(oldDevice.deviceID)), .unchanged)
         XCTAssertTrue(state.isReady)
         XCTAssertTrue(state.isStreaming)
         XCTAssertTrue(state.hasStreamResources)
@@ -131,7 +131,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         // stream stays "streaming" and a new start is refused.
         XCTAssertNil(state.beginStarting())
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: nil), .deviceLost)
+        XCTAssertEqual(state.deviceListChanged(.empty), .deviceLost)
         XCTAssertFalse(state.isReady)
         XCTAssertFalse(state.isStreaming)
         XCTAssertFalse(state.hasStreamResources)
@@ -144,9 +144,9 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         let state = LemurCamStreamState()
         discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
         try connect(state)
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: nil), .deviceLost)
+        XCTAssertEqual(state.deviceListChanged(.empty), .deviceLost)
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .rediscover)
+        XCTAssertEqual(state.deviceListChanged(.lemur(newDevice.deviceID)), .rediscover)
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .discover(attempt: 1))
         XCTAssertEqual(state.applyDiscoveryResult(newDevice), .ready(deviceID: newDevice.deviceID))
 
@@ -160,7 +160,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
         try connect(state)
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .deviceReplaced)
+        XCTAssertEqual(state.deviceListChanged(.lemur(newDevice.deviceID)), .deviceReplaced)
         XCTAssertFalse(state.isReady)
         XCTAssertFalse(state.isStreaming)
         XCTAssertFalse(state.hasStreamResources)
@@ -179,7 +179,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         }
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .failed)
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .rediscover)
+        XCTAssertEqual(state.deviceListChanged(.lemur(newDevice.deviceID)), .rediscover)
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .discover(attempt: 1), "fresh retry budget")
     }
 
@@ -188,7 +188,7 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         state.requestDiscovery()
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .discover(attempt: 1))
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: newDevice.deviceID), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.lemur(newDevice.deviceID)), .unchanged)
         XCTAssertEqual(state.applyDiscoveryResult(newDevice), .ready(deviceID: newDevice.deviceID))
     }
 

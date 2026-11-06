@@ -181,9 +181,9 @@ internal final class LemurCamModel: Sendable {
     /// Runs on `discoveryQueue`, so the lookup is ordered with discovery passes:
     /// a discovery result applied after this change is never older than it.
     private func deviceListChanged() {
-        let lemurDeviceID = CoreMediaIOUtil.lemurDeviceID()
+        let list = CoreMediaIOUtil.deviceList()
         DispatchQueue.main.async { [weak self] in
-            self?.applyDeviceListChange(lemurDeviceID)
+            self?.applyDeviceListChange(list)
         }
     }
 
@@ -192,8 +192,8 @@ internal final class LemurCamModel: Sendable {
     /// `consumerStopped` arrived) belong to a device that no longer exists. Its
     /// consumers went with it. Internal so tests can apply changes without CMIO.
     @MainActor
-    func applyDeviceListChange(_ lemurDeviceID: CMIODeviceID?) {
-        switch streamState.deviceListChanged(lemurDeviceID: lemurDeviceID) {
+    func applyDeviceListChange(_ list: CMIODeviceList) {
+        switch streamState.deviceListChanged(list) {
         case .unchanged:
             return
         case .deviceLost:

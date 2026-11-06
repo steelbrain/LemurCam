@@ -34,7 +34,7 @@ internal final class StreamCoordinatorCameraDemandTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a"])
         let cancelsBefore = harness.pipeline.silentCancels
 
-        model.applyDeviceListChange(nil)
+        model.applyDeviceListChange(.empty)
 
         XCTAssertFalse(harness.coordinator.hasExternalConsumers, "quitting must not ask about a camera in use")
         XCTAssertFalse(harness.coordinator.hasDemand)
@@ -79,7 +79,7 @@ internal final class StreamCoordinatorCameraDemandTests: XCTestCase {
         harness.coordinator.simulateAudioConsumerChange(active: true)
         let cancelsBefore = harness.pipeline.silentCancels
 
-        harness.coordinator.model.applyDeviceListChange(nil)
+        harness.coordinator.model.applyDeviceListChange(.empty)
 
         XCTAssertTrue(harness.coordinator.hasDemand)
         XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a"])

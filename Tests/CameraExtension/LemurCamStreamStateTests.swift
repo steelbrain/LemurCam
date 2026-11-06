@@ -5,6 +5,7 @@ import XCTest
 
 internal final class LemurCamStreamStateTests: XCTestCase {
     private let deviceID: CMIODeviceID = 10
+    private let replacementID: CMIODeviceID = 20
 
     func testQueueAlteredRegistrationProvidesStableCallbackAndRefCon() {
         let registration = CMIOStreamQueueAlteredRegistration()
@@ -60,7 +61,7 @@ internal final class LemurCamStreamStateTests: XCTestCase {
         }
         XCTAssertEqual(freed.pointee, 0, "the queue holds the only retains left")
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: nil), .deviceLost)
+        XCTAssertEqual(state.deviceListChanged(.empty), .deviceLost)
 
         XCTAssertEqual(CMSimpleQueueGetCount(queue), 0, "the lost device's queue must be drained")
         XCTAssertEqual(freed.pointee, 1, "drained buffers must be released")
@@ -74,7 +75,60 @@ internal final class LemurCamStreamStateTests: XCTestCase {
         try connect(state, queue: queue)
         XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
 
-        XCTAssertEqual(state.deviceListChanged(lemurDeviceID: deviceID), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.lemur(deviceID)), .unchanged)
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 1)
+
+        XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
+    }
+
+    /// A device replaced by another in one device-list change used to have its
+    /// queue dropped without the drain a lost device gets. Once the old device is
+    /// no longer listed, CMIO no longer dequeues from it, so it is drained too.
+    func testReplacingTheDeviceReleasesTheBuffersLeftInTheSinkQueue() throws {
+        let state = LemurCamStreamState()
+        let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try connect(state, queue: queue)
+        let freed = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+        freed.initialize(to: 0)
+        defer { freed.deallocate() }
+
+        try autoreleasepool {
+            let buffer = try makeSampleBuffer(countingFreesIn: freed)
+            XCTAssertTrue(state.enqueue(buffer))
+            XCTAssertTrue(state.enqueue(buffer))
+        }
+        XCTAssertEqual(freed.pointee, 0, "the queue holds the only retains left")
+
+        XCTAssertEqual(state.deviceListChanged(.lemur(replacementID)), .deviceReplaced)
+
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 0, "the replaced device's queue must be drained")
+        XCTAssertEqual(freed.pointee, 1, "drained buffers must be released")
+    }
+
+    /// The old device is still listed beside its replacement, so CMIO may still be
+    /// dequeuing: its buffers are left alone.
+    func testAReplacedDeviceThatIsStillListedKeepsItsQueuedBuffers() throws {
+        let state = LemurCamStreamState()
+        let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try connect(state, queue: queue)
+        XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
+
+        let list = CMIODeviceList.read(deviceIDs: [deviceID, replacementID], lemurDeviceID: replacementID)
+        XCTAssertEqual(state.deviceListChanged(list), .deviceReplaced)
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 1)
+
+        XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
+    }
+
+    /// A device list that can't be read says nothing about whether the device is
+    /// gone, so its buffers are left alone.
+    func testAnUnreadableDeviceListKeepsTheQueuedBuffers() throws {
+        let state = LemurCamStreamState()
+        let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try connect(state, queue: queue)
+        XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
+
+        XCTAssertEqual(state.deviceListChanged(.unreadable), .deviceLost)
         XCTAssertEqual(CMSimpleQueueGetCount(queue), 1)
 
         XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
