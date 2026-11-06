@@ -11,7 +11,10 @@ import XCTest
 /// otherwise only when what follows that `@` is the camera's own host, so a login is
 /// never taken from (or sent to a host made of) a query. Requiring the camera's host
 /// in every case left a camera saved by a name that reports its IP address unable to
-/// stream. Cameras are stubbed; nothing goes on the network.
+/// stream. A URI that is not split was connected to as reported while its saved copy
+/// lost the login `URLComponents` reads; that login is now taken out for connecting
+/// too, so the URL connected to is the one saved. Cameras are stubbed; nothing goes on
+/// the network.
 @MainActor
 internal final class ONVIFResolvedURILoginTests: XCTestCase {
     nonisolated private static let reportedURI = "rtsp://viewer:p#ss@192.0.2.5:554/stream"
@@ -76,6 +79,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             let target = Self.target(uri, reportedBy: "frontdoor.local")
             XCTAssertEqual(target.url, url, uri)
             XCTAssertEqual(target.credentials, login, uri)
+            assertConnectsWhereSaved(uri, reportedBy: "frontdoor.local")
         }
     }
 
@@ -87,6 +91,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         let elsewhere = Self.target("rtsp://viewer:p?ss@192.0.2.5:554/stream", reportedBy: "frontdoor.local")
         XCTAssertEqual(elsewhere.url, "rtsp://viewer:p?ss@192.0.2.5:554/stream")
         XCTAssertNil(elsewhere.credentials)
+        assertConnectsWhereSaved("rtsp://viewer:p?ss@192.0.2.5:554/stream", reportedBy: "frontdoor.local")
 
         // Whether `URLComponents` reads a space or a raw `%` depends on the macOS
         // version; the outcome must not. The last one it can't read on any.
@@ -102,6 +107,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             XCTAssertEqual(target.url, uri)
             XCTAssertEqual(target.credentials, Self.savedLogin)
             XCTAssertNil(Self.target(uri).credentials, "no login is taken from the query")
+            assertConnectsWhereSaved(uri)
         }
     }
 
@@ -120,10 +126,12 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             let target = Self.target(uri, reportedBy: reporter)
             XCTAssertEqual(target.url, url, uri)
             XCTAssertEqual(target.credentials, SourceCredentials(username: "viewer", password: "p#ss"), uri)
+            assertConnectsWhereSaved(uri, reportedBy: reporter)
         }
         // No host to match: used as reported.
         for uri in ["rtsp://viewer:p#ss@[fe80::1:554/s", "rtsp://viewer:p#ss@:554/s"] {
             XCTAssertEqual(Self.target(uri, reportedBy: "fe80::1").url, uri)
+            assertConnectsWhereSaved(uri, reportedBy: "fe80::1")
         }
     }
 
@@ -143,6 +151,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             XCTAssertEqual(target.url, Self.addressOnly, uri)
             XCTAssertEqual(target.credentials, login, uri)
             XCTAssertEqual(Self.target(uri, saved: Self.savedLogin).credentials, Self.savedLogin, uri)
+            assertConnectsWhereSaved(uri)
         }
     }
 
@@ -155,10 +164,11 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
                        "rtsp://[fe80::1]:554/stream")
     }
 
+    /// With no login `URLComponents` reads: used as reported. A login it reads is taken
+    /// out, as from the saved copy (`ONVIFUnsplitURILoginTests`).
     func testAURIThatURLComponentsCanReadIsUsedAsReported() {
         let uris = [
             Self.addressOnly,
-            "rtsp://viewer:pw@192.0.2.5:554/stream",
             // Ambiguous to IPCamKit too, but the `@` may well belong to the query:
             // split there, the saved login would go to host `ss`.
             "rtsp://192.0.2.5:554/stream?user=viewer&password=p@ss",
@@ -170,6 +180,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             let target = Self.target(uri, saved: Self.savedLogin)
             XCTAssertEqual(target.url, uri)
             XCTAssertEqual(target.credentials, Self.savedLogin)
+            assertConnectsWhereSaved(uri)
         }
     }
 
@@ -275,4 +286,15 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         )
         return harness
     }
+}
+
+/// Asserts that the URL connected to for a stream URI the camera at `host` reported is
+/// the one saved as its fallback, or the URI as reported when none is saved: one rule
+/// decides both.
+internal func assertConnectsWhereSaved(
+    _ uri: String, reportedBy host: String = "192.0.2.5", file: StaticString = #filePath, line: UInt = #line
+) {
+    let saved = SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: host)
+    let connected = StreamCoordinator.connectionTarget(forResolvedURI: uri, reportedBy: host, savedCredentials: nil)
+    XCTAssertEqual(connected.url, saved ?? uri, uri, file: file, line: line)
 }

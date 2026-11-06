@@ -66,9 +66,8 @@ internal extension SourceCredentials {
     /// after the `@` is `onvifHost`, the camera that reported it
     /// (`rtsp://admin:1234/5@192.0.2.5/s`). A camera saved by a name
     /// (`frontdoor.local`) usually reports its IP address, so the host alone can't
-    /// decide every URI. The same rule decides what is saved
-    /// (`strippingUserInfo(fromReportedURI:onvifHost:)`) and what is connected to
-    /// (`StreamCoordinator.connectionTarget`), so they can't disagree.
+    /// decide every URI. The same rule decides what is saved and what is connected to
+    /// (`extractingLogin(fromReportedURI:onvifHost:)`), so they can't disagree.
     ///
     /// The host is `URLComponents`' when it can parse the URI. When it can't (a `#`
     /// or `?` in the password: `rtsp://user:p#ss@192.0.2.5/s`, or a space in a query
@@ -85,18 +84,34 @@ internal extension SourceCredentials {
     }
 
     /// A stream URI an ONVIF camera at `onvifHost` reported, without the login some
-    /// cameras put in its userinfo, for saving as the camera's fallback URI. It is
-    /// split at its last `@` only when `splitsAtLastAt(reportedURI:onvifHost:)` says
-    /// so; otherwise only the userinfo `URLComponents` reads is removed, and an `@`
-    /// in the path or query stays where it is. Nil for a URI `URLComponents` can't
-    /// read that is not split: a login in it could not be taken out, and nothing could
-    /// connect to it anyway.
+    /// cameras put in its userinfo, for saving as the camera's fallback URI (see
+    /// `extractingLogin(fromReportedURI:onvifHost:)`).
     static func strippingUserInfo(fromReportedURI uri: String, onvifHost: String) -> String? {
-        guard hasAmbiguousUserInfo(uri), !splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) else {
-            return strippingUserInfo(from: uri)
+        extractingLogin(fromReportedURI: uri, onvifHost: onvifHost).url
+    }
+
+    /// A stream URI an ONVIF camera at `onvifHost` reported, without the login some
+    /// cameras put in its userinfo, and that login: what is saved as the camera's
+    /// fallback URI, and what is connected to (`StreamCoordinator.connectionTarget`),
+    /// so the two can't disagree. It is split at its last `@` only when
+    /// `splitsAtLastAt(reportedURI:onvifHost:)` says so; otherwise only the userinfo
+    /// `URLComponents` reads is taken out, and an `@` in the path or query stays where
+    /// it is. That userinfo can hold what IPCamKit refuses in a URL to connect to (a
+    /// space: `rtsp://admin:pa ss@cam/s`), or stand before an `@` in the query that
+    /// makes the URL ambiguous to it (`rtsp://admin:pw@cam/s?a=b@c`), so it is taken
+    /// out for connecting too. The URL is nil for a URI `URLComponents` can't read
+    /// that is not split: a login in it could not be taken out, and nothing could
+    /// connect to it anyway.
+    static func extractingLogin(
+        fromReportedURI uri: String, onvifHost: String
+    ) -> (url: String?, credentials: SourceCredentials?) {
+        if splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) {
+            let split = extractingFromRTSPURL(uri)
+            return (split.url, split.credentials)
         }
-        guard URLComponents(string: uri) != nil else { return nil }
-        return extractingReadableLogin(from: uri).url
+        if hasAmbiguousUserInfo(uri), URLComponents(string: uri) == nil { return (nil, nil) }
+        let readable = extractingReadableLogin(from: uri)
+        return (readable.url, readable.login?.credentials)
     }
 
     /// Whether `urlString` has an `@` after its host that may end a user name or

@@ -87,26 +87,49 @@ internal final class ReportedStreamURITests: XCTestCase {
         XCTAssertTrue(splits("rtsp://admin:1234/5@[FE80::1]/s", host: "fe80:0:0::1"))
     }
 
-    /// What is saved and what is connected to follow one rule: a URI split for one is
-    /// split the same way for the other.
+    /// What is saved and what is connected to follow one rule: the URL connected to is
+    /// the one saved, split or not. A URI that is not split was connected to as
+    /// reported, its login and all, so IPCamKit refused one whose login has a space or
+    /// that has an `@` in its query, while the saved copy had neither. A URI nothing is
+    /// saved for is connected to as reported.
     func testSavingAndConnectingAgree() {
         let uris = [
             "rtsp://user:p#ss@192.0.2.5/s", "rtsp://user:p#ss@192.0.2.9/s", "rtsp://admin:1234/5@192.0.2.5/s",
             "rtsp://admin:1234/5@192.0.2.9/s", "rtsp://192.0.2.5:554/live?password=Adm1n@2024",
             "rtsp://192.0.2.5:554/live?password=p@ss word", "rtsp://192.0.2.5:554:1/live?password=p@ss word",
-            "rtsp://admin:pw@192.0.2.5/s", "rtsp://user:1234#ab@192.0.2.9/s", "rtsp://user:p?ss@192.0.2.9/s"
+            "rtsp://admin:pw@192.0.2.5/s", "rtsp://user:1234#ab@192.0.2.9/s", "rtsp://user:p?ss@192.0.2.9/s",
+            "rtsp://admin:pa ss@192.0.2.5/s", "rtsp://admin:pw@192.0.2.5/s?a=b@c"
         ]
         for uri in uris {
             let connected = StreamCoordinator.connectionTarget(
                 forResolvedURI: uri, reportedBy: "192.0.2.5", savedCredentials: nil
             )
             let saved = SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: "192.0.2.5")
+            XCTAssertEqual(connected.url, saved ?? uri, uri)
             if splits(uri) {
-                XCTAssertEqual(connected.url, saved, uri)
                 XCTAssertNotEqual(connected.url, uri, uri)
-            } else {
-                XCTAssertEqual(connected.url, uri, uri)
             }
+        }
+    }
+
+    /// The reported cases: every resolve worked and every connect was refused, with a
+    /// space in the login and with an `@` in the query after a login. Both are saved
+    /// and connected to without the login; IPCamKit accepts what is left.
+    func testALoginThatIsNotSplitIsTakenOutForConnectingToo() {
+        let cases: [(uri: String, url: String, login: SourceCredentials)] = [
+            ("rtsp://admin:pa ss@192.0.2.5/s", "rtsp://192.0.2.5/s", .init(username: "admin", password: "pa ss")),
+            ("rtsp://admin:pw@192.0.2.5/s?a=b@c", "rtsp://192.0.2.5/s?a=b@c", .init(username: "admin", password: "pw"))
+        ]
+        for (uri, url, login) in cases {
+            XCTAssertFalse(splits(uri), uri)
+            XCTAssertEqual(SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: "192.0.2.5"), url)
+            let connected = StreamCoordinator.connectionTarget(
+                forResolvedURI: uri, reportedBy: "192.0.2.5", savedCredentials: nil
+            )
+            XCTAssertEqual(connected.url, url, uri)
+            XCTAssertEqual(connected.credentials, login, uri)
+            XCTAssertFalse(connected.url.contains(" "), uri)
+            XCTAssertFalse(SourceCredentials.hasAmbiguousUserInfo(connected.url), uri)
         }
     }
 
@@ -140,7 +163,9 @@ internal final class ReportedStreamURITests: XCTestCase {
             "rtsp://user:p#ss@192.0.2.5/s": "rtsp://192.0.2.5/s",
             "rtsp://user:p#ss@192.0.2.9/s": "rtsp://192.0.2.9/s",
             "rtsp://user:1234#ab@192.0.2.9/s": "rtsp://192.0.2.9/s",
-            "rtsp://admin:pw@192.0.2.5/s": "rtsp://192.0.2.5/s"
+            "rtsp://admin:pw@192.0.2.5/s": "rtsp://192.0.2.5/s",
+            "rtsp://admin:pa ss@192.0.2.5/s": "rtsp://192.0.2.5/s",
+            "rtsp://admin:pw@192.0.2.5/s?a=b@c": "rtsp://192.0.2.5/s?a=b@c"
         ]
         for (uri, stripped) in cases {
             let saved = SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: "192.0.2.5")

@@ -117,16 +117,19 @@ extension StreamCoordinator {
     /// belong to a query (`?password=p@ss`), and the saved login must never go to a
     /// host taken from a query. That holds for a URI `URLComponents` can't read as
     /// well: split at the `@` in `?password=p@ss word`, the rest of the password,
-    /// `ss word`, was taken for the host. Any other URI is connected to as reported,
-    /// with the saved credentials.
+    /// `ss word`, was taken for the host. A URI that is not split loses the userinfo
+    /// `URLComponents` reads, as the saved copy does: connected to as reported, a space
+    /// in that login (`rtsp://admin:pa ss@cam/s`) or an `@` in the query after it
+    /// (`?a=b@c`) made IPCamKit refuse every connect, even with saved credentials to
+    /// use instead. Both go by `SourceCredentials.extractingLogin(fromReportedURI:onvifHost:)`,
+    /// which decides the saved copy too. A URI it can't take a login out of is
+    /// connected to as reported, with the saved credentials.
     nonisolated static func connectionTarget(
         forResolvedURI uri: String, reportedBy onvifHost: String, savedCredentials: SourceCredentials?
     ) -> (url: String, credentials: SourceCredentials?) {
-        guard SourceCredentials.splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) else {
-            return (uri, savedCredentials)
-        }
-        let split = SourceCredentials.extractingFromRTSPURL(uri)
-        return (split.url, savedCredentials ?? split.credentials)
+        let reported = SourceCredentials.extractingLogin(fromReportedURI: uri, onvifHost: onvifHost)
+        guard let url = reported.url else { return (uri, savedCredentials) }
+        return (url, savedCredentials ?? reported.credentials)
     }
 
     /// Whether a camera whose stream URI could not be resolved at its saved address may
