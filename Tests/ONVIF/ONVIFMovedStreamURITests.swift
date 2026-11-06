@@ -47,6 +47,7 @@ internal final class ONVIFMovedStreamURITests: XCTestCase {
         XCTAssertEqual(info.host, "192.168.1.31")
         XCTAssertEqual(info.streamURI, "rtsp://192.168.1.31:554/main")
         let reloaded = SourceManager(storage: SourceStorage(fileURL: fileURL), keychain: InMemoryCredentialStore())
+        reloaded.load()
         XCTAssertEqual(reloaded.sources.first?.sourceType, .onvif(info), "the move is saved with the URI")
     }
 
