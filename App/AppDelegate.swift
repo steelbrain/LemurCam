@@ -26,6 +26,7 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPopoverOpen = false
     var helpWindow: NSWindow?
     var aboutWindow: NSWindow?
+    var acknowledgementsWindow: NSWindow?
     /// Set when the user puts the launch banner away ("Later", its close button,
     /// Cmd-W), so it doesn't reappear on every reactivation this session; it returns
     /// at the next launch if the upgrade-pending state persists.
@@ -481,16 +482,11 @@ extension AppDelegate: NSWindowDelegate {
             setupWindow = nil
         } else if window === nudgeWindow {
             nudgeWindow = nil
-        } else if window === helpWindow {
-            helpWindow = nil
-        } else if window === aboutWindow {
-            aboutWindow = nil
-        } else {
+        } else if !forgetUtilityWindow(window) {
             return
         }
         // Drop back to menu-bar-only once no app window remains open.
-        if settingsWindow == nil, setupWindow == nil, nudgeWindow == nil,
-           helpWindow == nil, aboutWindow == nil {
+        if settingsWindow == nil, setupWindow == nil, nudgeWindow == nil, !hasUtilityWindowOpen {
             NSApp.setActivationPolicy(.accessory)
         }
     }

@@ -8,6 +8,9 @@ internal struct AboutView: View {
     private static let siteURL = URL(string: "https://lemur.cam")
     private static let authorURL = URL(string: "https://aneesiqbal.ai")
 
+    /// Opens the Acknowledgements window with the bundled third-party notices.
+    let showAcknowledgements: () -> Void
+
     var body: some View {
         VStack(spacing: 12) {
             if let icon = NSApp.applicationIconImage {
@@ -42,6 +45,10 @@ internal struct AboutView: View {
                 }
             }
             .font(.callout)
+
+            Button("Acknowledgements", action: showAcknowledgements)
+                .buttonStyle(.link)
+                .font(.callout)
         }
         .padding(24)
         .frame(width: Tuning.aboutWindowWidth, height: Tuning.aboutWindowHeight)
