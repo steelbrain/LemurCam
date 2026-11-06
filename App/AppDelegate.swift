@@ -63,6 +63,7 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if terminateIfAlreadyRunning() { return }
         if terminateIfNotInApplications() { return }
+        RuntimeFlags.captureLaunchedFormat()
 
         DualLogger.onEmit = { category, level, message in
             Task { @MainActor in

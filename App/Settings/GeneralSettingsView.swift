@@ -75,7 +75,7 @@ internal struct GeneralSettingsView: View {
                 LemurCamConfig.storedFrameRate = newValue
             }
 
-            if RuntimeFlags.needsRestart {
+            if RuntimeFlags.needsRestart(resolution: selectedResolution, frameRate: selectedFrameRate) {
                 HStack {
                     Text("Restart LemurCam to apply changes.")
                         .font(.caption)
