@@ -100,8 +100,7 @@ internal final class ExtensionDeviceRuntime: Sendable {
         }
         guard let sourceStream else { return }
 
-        let pts = CMClockGetTime(CMClockGetHostTimeClock())
-        let nanoSec = UInt64(pts.seconds * Double(NSEC_PER_SEC))
+        let nanoSec = HostTimeNanoseconds.now()
         sourceStream.withValue {
             $0.send(buffer, discontinuity: [], hostTimeInNanoseconds: nanoSec)
         }
@@ -147,7 +146,7 @@ internal final class ExtensionDeviceRuntime: Sendable {
             $0.send(
                 sampleBuffer,
                 discontinuity: [],
-                hostTimeInNanoseconds: UInt64(timingInfo.presentationTimeStamp.seconds * Double(NSEC_PER_SEC))
+                hostTimeInNanoseconds: HostTimeNanoseconds.nanosecondsOrNow(timingInfo.presentationTimeStamp)
             )
         }
     }

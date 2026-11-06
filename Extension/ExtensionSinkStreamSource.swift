@@ -204,7 +204,8 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
     private static func forward(_ sampleBuffer: CMSampleBuffer, sequenceNumber: UInt64, context: ConsumeContext) {
         context.state.deliver(sampleBuffer)
         context.stream.withValue { stream in
-            let presentationNanoSec = UInt64(sampleBuffer.presentationTimeStamp.seconds * Double(NSEC_PER_SEC))
+            // The producer sets this timestamp; an invalid/NaN/negative one must not trap.
+            let presentationNanoSec = HostTimeNanoseconds.nanosecondsOrNow(sampleBuffer.presentationTimeStamp)
             let output = CMIOExtensionScheduledOutput(sequenceNumber: sequenceNumber,
                                                       hostTimeInNanoseconds: presentationNanoSec)
             stream.notifyScheduledOutputChanged(output)
