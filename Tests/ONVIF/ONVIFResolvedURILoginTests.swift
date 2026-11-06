@@ -170,10 +170,6 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
     func testAURIThatURLComponentsCanReadIsUsedAsReported() {
         let uris = [
             Self.addressOnly,
-            // Ambiguous to IPCamKit too, but the `@` may well belong to the query:
-            // split there, the saved login would go to host `ss`. With the camera's
-            // own host, it is written `%40` instead (`ONVIFUnsplitURILoginTests`).
-            "rtsp://192.0.2.9:554/stream?user=viewer&password=p@ss",
             // Misread like the logins above, with a `/` before the `@`, and what
             // follows it is not the camera that reported it.
             "rtsp://viewer:12/34@192.0.2.99:554/stream"
@@ -184,6 +180,8 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             XCTAssertEqual(target.credentials, Self.savedLogin)
             assertConnectsWhereSaved(uri)
         }
+        // An `@` in the query after an IP address and a port, ambiguous to IPCamKit, is
+        // written `%40` (`ONVIFUnsplitURILoginTests`).
     }
 
     // MARK: - Through the coordinator

@@ -91,20 +91,35 @@ internal final class ONVIFUnsplitURILoginTests: XCTestCase {
         )
     }
 
-    /// Only where the host is the camera that reported the URI: `URLComponents` reads
-    /// the login in the first as host `viewer`, where the saved login would go. The
-    /// second is still refused by IPCamKit: a camera saved by a name reporting its IP
-    /// address can't be told from one reporting another device.
-    func testAnAtSignAfterAnotherHostIsLeftAsReported() {
+    /// Not where `URLComponents` reads the host from a login (`viewer`, where the saved
+    /// login would go), or from what can't be told from one: a host name other than the
+    /// camera's.
+    func testAnAtSignAfterAHostThatMayBeALoginIsLeftAsReported() {
         let cases = [
             ("rtsp://viewer:12/34@192.0.2.99:554/stream", "192.0.2.5"),
-            ("rtsp://192.168.1.20:554/live?password=Adm1n@2024", "frontdoor.local"),
-            ("rtsp://192.0.2.9:554/live?password=Adm1n@2024", "192.0.2.5")
+            ("rtsp://nvr.local:554/live?password=Adm1n@2024", "192.0.2.5")
         ]
         for (uri, camera) in cases {
             let target = Self.target(uri, reportedBy: camera)
             XCTAssertEqual(target.url, uri)
             XCTAssertNil(target.credentials, uri)
+            assertConnectsWhereSaved(uri, reportedBy: camera)
+        }
+    }
+
+    /// A camera saved by a name reports its IP address, and a recorder serving the
+    /// stream has one too. All were refused by IPCamKit on every connect. Split at the
+    /// last `@`, the login would go to host `2024` or `ss`.
+    func testAnAtSignAfterAnIPAddressIsWrittenAsAnEscape() {
+        let cases = [
+            ("rtsp://192.168.1.20:554/live?password=Adm1n@2024", "frontdoor.local"),
+            ("rtsp://192.0.2.9:554/live?password=Adm1n@2024", "192.0.2.5"),
+            ("rtsp://192.0.2.9:554/stream?user=viewer&password=p@ss", "192.0.2.5")
+        ]
+        for (uri, camera) in cases {
+            let target = Self.target(uri, reportedBy: camera)
+            XCTAssertEqual(target.url, uri.replacingOccurrences(of: "@", with: "%40"), uri)
+            XCTAssertFalse(SourceCredentials.hasAmbiguousUserInfo(target.url), uri)
             assertConnectsWhereSaved(uri, reportedBy: camera)
         }
     }

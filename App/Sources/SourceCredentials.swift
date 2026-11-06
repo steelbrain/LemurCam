@@ -166,17 +166,21 @@ private extension SourceCredentials {
 
     /// `url`, a stream URI the camera at `onvifHost` reported, its login taken out, with
     /// each `@` after its host written `%40` when IPCamKit would refuse it as ambiguous
-    /// (`hasAmbiguousUserInfo`) and the host `URLComponents` reads in it is the camera's.
-    /// Such an `@` is in the path, query or fragment, but with a port in the URL
-    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`) IPCamKit can't tell it from the
-    /// end of a login, so the camera never streamed, and an ONVIF camera has no URL
-    /// field where it could be written `%40`. The host has to be the camera's: where
-    /// `URLComponents` reads a login as the address (`rtsp://viewer:12/34@192.0.2.9/s`
-    /// as host `viewer`, port 12), the saved login would go there. The URL is written as
-    /// `URLComponents(cameraURL:)` reads it. Otherwise `url` as it is.
+    /// (`hasAmbiguousUserInfo`) and the host `URLComponents` reads in it is the camera's
+    /// or an IP address. Such an `@` is in the path, query or fragment, but with a port
+    /// in the URL (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`) IPCamKit can't tell
+    /// it from the end of a login, so the camera never streamed, and an ONVIF camera has
+    /// no URL field where it could be written `%40`. Where `URLComponents` reads a login
+    /// as the address (`rtsp://viewer:12/34@192.0.2.9/s` as host `viewer`, port 12), the
+    /// saved login would go there, so another host has to be an IP address: a user name
+    /// that reads as one is not a login. A camera saved by a name reports its IP address
+    /// (`rtsp://192.168.1.20:554/…` from `frontdoor.local`), and a recorder serving the
+    /// stream is connected to with the saved login like any URI naming another host.
+    /// The URL is written as `URLComponents(cameraURL:)` reads it. Otherwise `url` as it is.
     static func escapingAtSignsAfterTheHost(of url: String, reportedBy onvifHost: String) -> String {
-        guard hasAmbiguousUserInfo(url), var components = URLComponents(cameraURL: url),
-              let host = components.host, comparableHost(host) == comparableHost(onvifHost) else { return url }
+        guard hasAmbiguousUserInfo(url), var components = URLComponents(cameraURL: url), let host = components.host,
+              comparableHost(host) == comparableHost(onvifHost) || ONVIFDiscovery.normalizedIPAddress(host) != nil
+        else { return url }
         let escaped = { (part: String) in part.replacingOccurrences(of: "@", with: "%40") }
         components.percentEncodedPath = escaped(components.percentEncodedPath)
         components.percentEncodedQuery = components.percentEncodedQuery.map(escaped)

@@ -253,11 +253,12 @@ internal final class ReportedStreamURITests: XCTestCase {
         XCTAssertFalse(unreadable.file.contains("s3c"))
     }
 
-    /// Kept as reported, or not at all where `URLComponents` can't read it (that
-    /// depends on the macOS version); never split into host `ss word`.
+    /// Saved with the `@` and the space escaped, so IPCamKit connects to it, or not at
+    /// all where `URLComponents` can't read it; never split into host `ss word`.
     func testALoginInAQueryWithASpaceIsNotSplitBeforeSaving() throws {
         let reported = "rtsp://192.168.1.20:554/live?password=p@ss word"
         let saved = try save(reported: reported, host: "frontdoor.local")
-        XCTAssertTrue(saved.uri == nil || saved.uri == reported, saved.uri ?? "nil")
+        let escaped = "rtsp://192.168.1.20:554/live?password=p%40ss%20word"
+        XCTAssertTrue(saved.uri == nil || saved.uri == escaped, saved.uri ?? "nil")
     }
 }
