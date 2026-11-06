@@ -237,7 +237,7 @@ private extension SetupView {
         switch coordinator.micStatus {
         case .ready: return .ready
         case .installing, .unknown: return .working
-        case .needsApproval, .notSetUp: return .actionNeeded
+        case .needsApproval, .notSetUp, .needsReboot: return .actionNeeded
         case .failed: return .failed
         }
     }
@@ -314,6 +314,7 @@ private extension SetupView {
         case .needsApproval:
             return "Approve LemurCam in System Settings → General → Login Items & Extensions, then come back."
         case .installing: return "Setting up… this can take a few seconds."
+        case .needsReboot: return MicrophoneStatusCopy.needsReboot
         case .failed(let message): return message
         case .unknown, .notSetUp:
             return "Optional. Adds a microphone fed by your camera’s audio. You can skip this."
@@ -323,7 +324,7 @@ private extension SetupView {
     @ViewBuilder
     func micControl(_ status: MicrophoneStatus) -> some View {
         switch status {
-        case .ready, .installing, .unknown:
+        case .ready, .installing, .unknown, .needsReboot:
             EmptyView()
         case .needsApproval:
             Button("Open System Settings") { coordinator.openMicrophoneSystemSettings() }

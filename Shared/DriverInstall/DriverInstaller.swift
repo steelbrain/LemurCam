@@ -97,6 +97,16 @@ internal struct DriverInstaller {
         return Files.bundleVersion(at: plugins, bundle: bundleName)
     }
 
+    /// Whether the installed bundle exists and is sealed to `owner` (the same audit
+    /// the staged copy passes) in a plug-ins directory only `owner` can write.
+    /// Read-only, so the app runs it as the user to tell a copy the helper sealed
+    /// from one an older helper installed user-owned.
+    func installedCopyIsSealed() -> Bool {
+        guard let plugins = try? openExistingPluginsDirectory() else { return false }
+        defer { close(plugins) }
+        return Files.isSealed(plugins, name: bundleName, owner: owner)
+    }
+
     /// True when `staged` is numerically older than `installed`. Equal versions
     /// reinstall (repair); a version that is not dot-separated integers is never
     /// treated as a downgrade, since every signed build uses integer build numbers.

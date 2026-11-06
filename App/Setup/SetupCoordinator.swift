@@ -15,6 +15,10 @@ internal enum MicrophoneStatus: Equatable {
     case installing
     /// Helper enabled and driver installed — the microphone is available.
     case ready
+    /// The helper reported an install, but the installed copy is still not sealed
+    /// to root: the helper serving the app is one from before an app update that
+    /// has not exited. Only a restart replaces it.
+    case needsReboot
     /// A setup step failed; the associated string is a user-facing reason.
     case failed(String)
 }
@@ -31,6 +35,8 @@ internal final class SetupCoordinator {
     private(set) var micStatus: MicrophoneStatus = .unknown
     /// CFBundleVersion of the currently installed audio driver, or nil if none.
     private(set) var installedDriverVersion: String?
+    /// Whether the installed driver is sealed to root (only meaningful with a version).
+    private(set) var installedDriverSealed = true
 
     /// Fires on the main thread when the camera transitions into `.ready`, so the
     /// streaming model can (re)run CMIO device discovery.
@@ -56,6 +62,11 @@ internal final class SetupCoordinator {
     /// Monotonic token so only the latest installed-version reply applies; drops
     /// stale async replies that would otherwise clobber freshly-changed state.
     @ObservationIgnored private var micRefreshToken = 0
+    /// The helper reported an install; the next check verifies the installed copy.
+    @ObservationIgnored private var verifyingDriverInstall = false
+    /// An install through the helper left an unsealed copy this session, so the
+    /// helper is a stale one: never install through it again (no reinstall loop).
+    @ObservationIgnored private var staleHelperSeen = false
 
     /// Fail an in-progress driver install if the privileged helper vends a proxy
     /// but never replies (e.g. it crashes mid-request), so `micStatus` can't stick.
@@ -64,12 +75,14 @@ internal final class SetupCoordinator {
     /// The camera is the core feature and is required; the microphone is optional.
     var isCameraReady: Bool { cameraStatus == .ready }
     var isMicrophoneReady: Bool { micStatus == .ready }
-    /// The mic is installed and working, but this app build ships a newer driver.
-    var microphoneNeedsUpdate: Bool {
-        guard micStatus == .ready, let installed = installedDriverVersion,
-              let bundled = bundledDriverVersion else { return false }
-        return ExtensionUpgradeDecision.isUpdateAvailable(installed: installed, bundled: bundled)
+    /// Why the working mic should be reinstalled from this app (a newer bundled
+    /// driver, or an installed copy not sealed to root), or nil.
+    var microphoneUpdateReason: MicrophoneUpdateReason? {
+        guard micStatus == .ready else { return nil }
+        return .reason(installed: installedDriverVersion, bundled: bundledDriverVersion, sealed: installedDriverSealed)
     }
+    /// The mic is installed and working, but should be updated (see the reason).
+    var microphoneNeedsUpdate: Bool { microphoneUpdateReason != nil }
     /// Whether the guided setup flow should be surfaced (camera not yet running).
     var needsSetup: Bool { cameraStatus != .ready }
 
@@ -161,9 +174,11 @@ internal final class SetupCoordinator {
         cameraStatus = status
         onCameraStatusChange?()
     }
+}
 
-    // MARK: - Microphone Actions
+// MARK: - Microphone Actions
 
+extension SetupCoordinator {
     /// Advance the microphone setup by one step based on the current state:
     /// register the helper, open Login Items to approve it, or install the driver.
     func enableMicrophone() {
@@ -196,7 +211,13 @@ internal final class SetupCoordinator {
     }
 
     private func installMicDriver() {
-        runMicDriverOperation(audioInstaller.installDriver, failureFallback: "Driver installation failed.")
+        // A stale helper installs unsealed copies; installing again through it
+        // would only cut audio again for the same result.
+        guard !staleHelperSeen else {
+            micStatus = .needsReboot
+            return
+        }
+        runMicDriverOperation(.install, audioInstaller.installDriver, failureFallback: "Driver installation failed.")
     }
 
     /// Reinstall the bundled driver to pick up a newer version (helper already
@@ -208,12 +229,15 @@ internal final class SetupCoordinator {
     /// Remove the installed driver. The helper stays registered, so the mic can be
     /// re-enabled later without re-approving in System Settings.
     func disableMicrophone() {
-        runMicDriverOperation(audioInstaller.uninstallDriver, failureFallback: "Couldn’t remove the microphone.")
+        runMicDriverOperation(
+            .remove, audioInstaller.uninstallDriver, failureFallback: "Couldn’t remove the microphone."
+        )
     }
 
     /// Shared runner for install/update/remove: shows progress, coalesces
     /// overlapping operations, times out a silent helper, then re-reads state.
     private func runMicDriverOperation(
+        _ kind: MicrophoneDriverOperation,
         _ operation: (@escaping (Bool, String) -> Void) -> Void,
         failureFallback: String
     ) {
@@ -233,6 +257,7 @@ internal final class SetupCoordinator {
                 self.micInstallTimeout?.cancel()
                 self.isInstallingDriver = false
                 if success {
+                    if kind == .install { self.verifyingDriverInstall = true }
                     self.refreshMicrophoneStatus()
                 } else {
                     self.micStatus = .failed(message.isEmpty ? failureFallback : message)
@@ -261,61 +286,39 @@ internal final class SetupCoordinator {
     private func queryInstalledDriverVersion() {
         micRefreshToken += 1
         let token = micRefreshToken
-        audioInstaller.installedVersion { [weak self] reachable, version in
+        audioInstaller.installedDriver { [weak self] check in
             Task { @MainActor in
-                // Apply only the latest query, and never during an install.
-                guard let self, token == self.micRefreshToken, !self.isInstallingDriver else { return }
-                let reply = MicrophoneVersionReply.decide(
-                    reachable: reachable,
-                    version: version,
-                    currentStatus: self.micStatus,
-                    autoInstallPending: self.autoInstallDriver
-                )
-                if reachable {
-                    self.installedDriverVersion = version
-                    if version != nil { self.autoInstallDriver = false }
-                }
-                switch reply {
-                case .keepStatus:
-                    return
-                case .installDriver:
-                    self.autoInstallDriver = false
-                    self.installMicDriver()
-                case .setStatus(let status):
-                    self.micStatus = status
-                }
+                self?.applyDriverCheck(check, token: token)
             }
         }
     }
-}
 
-/// What to do with the helper's installed-driver-version reply. Pure, so the
-/// reply handling (including an unreachable helper) is unit testable without XPC.
-internal enum MicrophoneVersionReply: Equatable {
-    /// Leave `micStatus` as it is.
-    case keepStatus
-    /// Show this status.
-    case setStatus(MicrophoneStatus)
-    /// The helper was just approved mid-setup and no driver is installed yet:
-    /// install it now instead of making the user click again.
-    case installDriver
-
-    static let unreachableMessage = "Couldn’t reach the microphone helper. Please try again."
-
-    static func decide(
-        reachable: Bool,
-        version: String?,
-        currentStatus: MicrophoneStatus,
-        autoInstallPending: Bool
-    ) -> Self {
-        guard reachable else {
-            // Once the status is known, an unreachable helper is a hiccup, not "not
-            // installed", so keep it. Before that, waiting would leave a spinner
-            // with no action forever; fail so "Try Again" is offered. A later
-            // successful query (poll or reactivation) replaces the failure.
-            return currentStatus == .unknown ? .setStatus(.failed(unreachableMessage)) : .keepStatus
+    private func applyDriverCheck(_ check: InstalledDriverCheck, token: Int) {
+        // Apply only the latest query, and never during an install.
+        guard token == micRefreshToken, !isInstallingDriver else { return }
+        let reply = MicrophoneVersionReply.decide(check, context: MicrophoneCheckContext(
+            currentStatus: micStatus,
+            autoInstallPending: autoInstallDriver,
+            verifyingInstall: verifyingDriverInstall,
+            staleHelperSeen: staleHelperSeen,
+            bundledVersion: bundledDriverVersion
+        ))
+        if check.reachable {
+            installedDriverVersion = check.version
+            installedDriverSealed = check.sealed
+            if check.version != nil { autoInstallDriver = false }
+            // The check shows how the last install ended.
+            verifyingDriverInstall = false
         }
-        if version == nil, autoInstallPending { return .installDriver }
-        return .setStatus(version == nil ? .notSetUp : .ready)
+        switch reply {
+        case .keepStatus:
+            return
+        case .installDriver:
+            autoInstallDriver = false
+            installMicDriver()
+        case .setStatus(let status):
+            if status == .needsReboot { staleHelperSeen = true }
+            micStatus = status
+        }
     }
 }

@@ -110,18 +110,24 @@ internal struct StatusSettingsView: View {
     // MARK: - Microphone mapping
 
     private var micSubtitle: String {
-        if case .failed(let message) = setup.micStatus { return message }
+        switch setup.micStatus {
+        case .failed(let message): return message
+        case .needsReboot: return MicrophoneStatusCopy.needsReboot
+        default: break
+        }
         let base = "Optional — exposes your camera’s audio as a “LemurCam Microphone”."
-        return setup.microphoneNeedsUpdate
-            ? base + " A newer version is available — updating briefly restarts audio."
-            : base
+        switch setup.microphoneUpdateReason {
+        case .newerVersion: return base + " A newer version is available — updating briefly restarts audio."
+        case .unsealed: return base + " " + MicrophoneStatusCopy.unsealed
+        case nil: return base
+        }
     }
 
     private var micCardState: SetupStepState {
         switch setup.micStatus {
         case .ready: return .ready
         case .installing, .unknown: return .working
-        case .needsApproval: return .actionNeeded
+        case .needsApproval, .needsReboot: return .actionNeeded
         case .notSetUp: return .inactive
         case .failed: return .failed
         }
@@ -131,6 +137,7 @@ internal struct StatusSettingsView: View {
         switch setup.micStatus {
         case .ready: return "Running"
         case .needsApproval: return "Needs approval"
+        case .needsReboot: return "Restart Mac"
         case .installing, .unknown: return "Working\u{2026}"
         case .notSetUp: return "Not set up"
         case .failed: return "Failed"
@@ -141,7 +148,7 @@ internal struct StatusSettingsView: View {
         switch setup.micStatus {
         case .ready:
             return AnyView(micManageButtons)
-        case .installing, .unknown:
+        case .installing, .unknown, .needsReboot:
             return nil
         case .needsApproval:
             return button("Open System Settings") { setup.openMicrophoneSystemSettings() }

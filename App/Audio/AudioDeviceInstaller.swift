@@ -76,20 +76,38 @@ internal final class AudioDeviceInstaller {
         })
     }
 
-    /// Reports the installed driver's CFBundleVersion. `reachable` is false when the
-    /// privileged helper couldn't be reached (a transient condition) — distinct from
-    /// a reachable helper reporting no installed driver (`reachable == true,
+    /// Reports the installed driver: its CFBundleVersion from the helper, and whether
+    /// the installed copy is sealed to root, checked here. `reachable` is false when
+    /// the privileged helper couldn't be reached (a transient condition) — distinct
+    /// from a reachable helper reporting no installed driver (`reachable == true,
     /// version == nil`), so callers don't mistake a hiccup for "not installed".
-    func installedVersion(completion: @escaping (_ reachable: Bool, _ version: String?) -> Void) {
-        withHelper(onUnavailable: { _ in completion(false, nil) }, body: { helper, connection in
+    ///
+    /// The seal is checked by the app, not asked of the helper: a helper from an
+    /// older version can still be the one serving requests (see `HelperIdleExit`),
+    /// and the copies those helpers installed are user-owned. The HAL plug-ins
+    /// directory is readable by every user, so this needs no privileges.
+    func installedDriver(completion: @escaping (InstalledDriverCheck) -> Void) {
+        withHelper(onUnavailable: { _ in completion(.unreachable) }, body: { helper, connection in
             helper.installedVersion { version in
-                completion(true, version)
+                let sealed = version != nil && Self.installedCopy.installedCopyIsSealed()
+                completion(InstalledDriverCheck(reachable: true, version: version, sealed: sealed))
                 connection.invalidate()
             }
         })
     }
 
     // MARK: - Private
+
+    /// The installed location, for the read-only seal check; this side never
+    /// installs, so its signature check refuses everything.
+    private static var installedCopy: DriverInstaller {
+        DriverInstaller(
+            pluginsDirectory: LemurAudioHelper.halPluginsDirectory,
+            bundleName: LemurAudioHelper.driverBundleName,
+            owner: .root,
+            validateSignature: { _ in "the app does not install the driver itself" }
+        )
+    }
 
     /// The same location the helper derives from this app's code signature; the
     /// helper ignores the path it is sent, which is kept for older helpers.

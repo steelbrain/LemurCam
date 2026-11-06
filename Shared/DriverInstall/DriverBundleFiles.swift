@@ -8,8 +8,9 @@ import Foundation
 /// installed with the user as owner) cannot redirect a root copy, chown, read, or
 /// delete through a symlink or a swapped directory.
 ///
-/// Compiled into the helper, which runs these as root, and into the app only so the
-/// unit tests can exercise them on temporary directories as the current user.
+/// Compiled into the helper, which runs these as root, and into the app, which runs
+/// only the read-only audit of the installed copy (as the user), and whose unit tests
+/// exercise all of them on temporary directories as the current user.
 /// Copy, audit, and removal live in the `+Copy` and `+Audit` files.
 internal enum DriverBundleFiles {
     /// Owner every copied entry is given (root:wheel in the helper).
