@@ -14,7 +14,8 @@ internal final class StreamCoordinator {
     private var currentSourceUpdatedAt: Date?
     private var retryTask: Task<Void, Never>?
     private var onvifTask: Task<Void, Never>?
-    private var retryCount: Int = 0
+    private var backoff = ReconnectBackoff()
+    private let firstDecodedFrame = FirstDecodedFrameSignal()
     private var _hasConsumers: Bool = false
     private var _hasAudioConsumers: Bool = false
     private let audioRing = AudioRingBuffer()
@@ -114,8 +115,13 @@ internal final class StreamCoordinator {
 
     private func wirePipelineCallbacks() {
         let dispatcher = frameDispatcher
+        let firstFrame = firstDecodedFrame
+        let resetBackoff: @MainActor @Sendable () -> Void = { [weak self] in self?.backoff.reset() }
         pipeline.onPixelBuffer = { pixelBuffer in
             dispatcher.handleDecodedFrame(pixelBuffer)
+            if firstFrame.take() {
+                Task { @MainActor in resetBackoff() }
+            }
         }
 
         let ringBuffer = audioRing
@@ -394,6 +400,7 @@ private extension StreamCoordinator {
         guard lastDemand else { return }
         if state != .streaming {
             frameDispatcher.reset()
+            firstDecodedFrame.disarm()
         }
         guard let sourceID = currentSourceID else { return }
 
@@ -411,7 +418,8 @@ private extension StreamCoordinator {
         case .streaming:
             connectionStatus = .connected
             sourceManager.updateErrorMessage(for: sourceID, message: nil)
-            retryCount = 0
+            // Connected is not yet working: the backoff resets on the first decoded frame.
+            firstDecodedFrame.arm()
             fallbackGenerator.stop()
         case .error(let msg):
             connectionStatus = .error
@@ -428,9 +436,8 @@ private extension StreamCoordinator {
 
     func scheduleRetry() {
         retryTask?.cancel()
-        let delay = min(Tuning.reconnectBackoffCap, Tuning.reconnectBackoffBase * pow(2.0, Double(retryCount)))
-        retryCount += 1
-        Log.rtsp.info("Scheduling reconnect in \(delay)s (attempt \(self.retryCount))")
+        let delay = backoff.delayAfterFailure(of: .init(id: currentSourceID, updatedAt: currentSourceUpdatedAt))
+        Log.rtsp.info("Scheduling reconnect in \(delay)s (attempt \(self.backoff.failures))")
 
         retryTask = Task { [weak self] in
             do {
@@ -457,6 +464,11 @@ extension StreamCoordinator {
     /// Whether a reconnect is scheduled and not yet run or cancelled.
     var hasPendingRetry: Bool {
         retryTask != nil
+    }
+
+    /// Failures counted toward the next reconnect delay.
+    var reconnectFailures: Int {
+        backoff.failures
     }
 
     /// Whether decoded camera frames are being sent on to the virtual camera.
