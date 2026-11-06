@@ -83,7 +83,7 @@ internal final class ONVIFDeviceDetailsFetchTests: XCTestCase {
         }
         let client = ONVIFClient(
             host: host, port: 80, username: "viewer", password: "pw",
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         do {
             let details = try await client.fetchDeviceDetails(includingEndpointReference: includingEndpointReference)

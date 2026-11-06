@@ -43,8 +43,17 @@ internal final class ONVIFAddressDecisionsTests: XCTestCase {
             """
         let info = try JSONDecoder().decode(ONVIFSourceInfo.self, from: Data(json.utf8))
         XCTAssertNil(info.pinnedCertificate)
+        XCTAssertFalse(info.allowsPlainHTTPOutsideLocalNetwork)
         XCTAssertEqual(info.connectionPolicy, ONVIFConnectionPolicy())
         XCTAssertTrue(info.useHTTPS)
+    }
+
+    func testTheAllowanceIsSavedAndReadBack() throws {
+        var allowed = ONVIFSourceInfo(host: "203.0.113.5", port: 80)
+        allowed.allowsPlainHTTPOutsideLocalNetwork = true
+        let decoded = try JSONDecoder().decode(ONVIFSourceInfo.self, from: try JSONEncoder().encode(allowed))
+        XCTAssertTrue(decoded.allowsPlainHTTPOutsideLocalNetwork)
+        XCTAssertTrue(decoded.connectionPolicy.allowsPlainHTTPOutsideLocalNetwork)
     }
 
     func testThePinIsSavedAsOpenSSLWritesItAndReadBack() throws {
@@ -88,6 +97,13 @@ internal final class ONVIFAddressDecisionsTests: XCTestCase {
         let info = try XCTUnwrap(Self.onvifInfo(manager))
         XCTAssertEqual(info.host, "192.168.1.31")
         XCTAssertNil(info.pinnedCertificate)
+    }
+
+    func testAnAddressChangeDropsEveryDecision() {
+        var info = Self.saved
+        info.allowsPlainHTTPOutsideLocalNetwork = true
+        info.clearAddressDecisions()
+        XCTAssertEqual(info.connectionPolicy, ONVIFConnectionPolicy())
     }
 
     /// The form loaded the camera with its pin at the old address; saving it after the

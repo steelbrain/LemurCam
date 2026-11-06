@@ -23,12 +23,16 @@ internal struct ONVIFSourceInfo: Codable, Equatable {
     /// The camera's certificate the user trusted for this address, accepted though
     /// macOS doesn't trust it (`ONVIFServerTrust`).
     var pinnedCertificate: CertificateFingerprint?
+    /// Whether the user allowed plain HTTP to this address, which is outside the local
+    /// network (`ONVIFLocalNetwork`).
+    var allowsPlainHTTPOutsideLocalNetwork = false
 }
 
 extension ONVIFSourceInfo {
-    /// Decodes sources saved before a field existed: `useHTTPS`, `serialNumber` and
-    /// `pinnedCertificate` were added later and default to HTTP, nil and nil when
-    /// absent. `host` and `port` stay required. A pinned certificate that can't be read
+    /// Decodes sources saved before a field existed: `useHTTPS`, `serialNumber`,
+    /// `pinnedCertificate` and `allowsPlainHTTPOutsideLocalNetwork` were added later
+    /// and default to HTTP, nil, nil and not allowed when absent. `host` and `port`
+    /// stay required. A pinned certificate that can't be read
     /// is dropped, so the camera's certificate is asked about again, rather than the
     /// whole cameras file failing to load.
     init(from decoder: Decoder) throws {
@@ -41,23 +45,30 @@ extension ONVIFSourceInfo {
         useHTTPS = try container.decodeIfPresent(Bool.self, forKey: .useHTTPS) ?? false
         serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
         pinnedCertificate = try? container.decodeIfPresent(CertificateFingerprint.self, forKey: .pinnedCertificate)
+        allowsPlainHTTPOutsideLocalNetwork =
+            try container.decodeIfPresent(Bool.self, forKey: .allowsPlainHTTPOutsideLocalNetwork) ?? false
     }
 
     /// What a client for this camera may accept beyond what macOS allows on its own.
     var connectionPolicy: ONVIFConnectionPolicy {
-        ONVIFConnectionPolicy(pinnedCertificate: pinnedCertificate)
+        ONVIFConnectionPolicy(
+            pinnedCertificate: pinnedCertificate,
+            allowsPlainHTTPOutsideLocalNetwork: allowsPlainHTTPOutsideLocalNetwork
+        )
     }
 
     /// Forgets the decisions the user made about the camera at its saved address,
-    /// for a camera that now answers somewhere else: a certificate trusted at one
-    /// address is not trusted at another without the user seeing it.
+    /// for a camera that now answers somewhere else: a certificate trusted, or plain
+    /// HTTP allowed, at one address is not at another without the user seeing it.
     mutating func clearAddressDecisions() {
         pinnedCertificate = nil
+        allowsPlainHTTPOutsideLocalNetwork = false
     }
 
     /// Takes the decisions saved with `other`, whose address these settings take.
     mutating func takeAddressDecisions(of other: Self) {
         pinnedCertificate = other.pinnedCertificate
+        allowsPlainHTTPOutsideLocalNetwork = other.allowsPlainHTTPOutsideLocalNetwork
     }
 
     /// The device UUID to keep after the form fetches a camera's details.

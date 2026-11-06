@@ -78,7 +78,7 @@ internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
         }
         let client = ONVIFClient(
             host: host, port: 80, username: username, password: username.map { _ in "pw" },
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         do {
             _ = try await client.getProfiles()

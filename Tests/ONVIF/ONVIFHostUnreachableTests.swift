@@ -83,7 +83,8 @@ internal final class ONVIFHostUnreachableTests: XCTestCase {
             ONVIFStubURLProtocol.register(host: host) { _, _ in .failing(with: failure) }
         }
         let client = ONVIFClient(
-            host: host, port: 80, username: nil, password: nil, configuration: ONVIFStubURLProtocol.configuration()
+            host: host, port: 80, username: nil, password: nil,
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         do {
             throw UnexpectedStreamURI(uri: try await client.getStreamURI(profileToken: "main"))

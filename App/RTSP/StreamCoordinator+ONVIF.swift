@@ -155,7 +155,7 @@ extension StreamCoordinator {
     nonisolated static func mayFallBackToStoredURI(after error: any Error) -> Bool {
         guard let onvifError = error as? ONVIFError else { return true }
         switch onvifError {
-        case .authenticationFailed, .soapFault, .certificateNotTrusted:
+        case .authenticationFailed, .soapFault, .certificateNotTrusted, .plainHTTPRefused:
             return false
         case .invalidURL, .networkError, .httpStatus, .parseError, .timedOut:
             return true

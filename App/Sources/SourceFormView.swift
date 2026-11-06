@@ -128,6 +128,7 @@ internal struct SourceFormView: View {
                     fetchTickets.invalidate()
                     isProbing = false
                     onvifDetails.clear()
+                    onvifHost = ""
                     if resolvedType != nil {
                         resolvedType = nil
                         probeError = nil
@@ -137,6 +138,7 @@ internal struct SourceFormView: View {
             if let probeError {
                 Text(probeError).font(.caption).foregroundStyle(.red)
             }
+            plainHTTPToggle
             onvifProfilePicker
             streamURILabel
         }
@@ -169,6 +171,7 @@ internal struct SourceFormView: View {
                     .multilineTextAlignment(.trailing)
             }
             Toggle("Use HTTPS", isOn: $onvifUseHTTPS)
+            plainHTTPToggle
             Button {
                 fetchProfiles()
             } label: {
@@ -196,6 +199,13 @@ internal struct SourceFormView: View {
 // MARK: - Rows
 
 private extension SourceFormView {
+    /// Shown for an ONVIF address outside the local network, once Connect read one.
+    var plainHTTPToggle: some View {
+        ONVIFPlainHTTPToggle(
+            host: onvifHost, useHTTPS: onvifUseHTTPS, isOn: $onvifDetails.allowsPlainHTTPOutsideLocalNetwork
+        )
+    }
+
     var probeProgressRow: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
@@ -343,11 +353,12 @@ private extension SourceFormView {
         case .failure(let problem):
             probeError = problem.message
         case .success(let address):
+            let sameAddress = onvifAddress == .init(host: address.host, port: address.port, useHTTPS: address.useHTTPS)
             onvifHost = address.host
             onvifUseHTTPS = address.useHTTPS
             onvifPort = address.port
             // Connect is for the camera at this URL, which need not be the one before.
-            onvifDetails.clear()
+            onvifDetails.clear(keepingAddressDecisions: sameAddress)
             fetchProfiles()
         }
     }
@@ -455,11 +466,7 @@ private extension SourceFormView {
             onvifHost = info.host
             onvifPort = info.port
             onvifUseHTTPS = info.useHTTPS
-            let saved = SourceFormONVIFAddressEdits.SavedDetails(
-                selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
-                deviceUUID: info.deviceUUID, serialNumber: info.serialNumber,
-                pinnedCertificate: info.pinnedCertificate
-            )
+            let saved = SourceFormONVIFAddressEdits.SavedDetails(info)
             onvifDetails = SourceFormONVIFDetails(saved: saved)
             onvifAddressEdits = SourceFormONVIFAddressEdits(savedAt: onvifAddress, details: saved)
         }

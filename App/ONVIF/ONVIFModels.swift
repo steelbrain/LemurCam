@@ -66,6 +66,10 @@ internal enum ONVIFError: LocalizedError {
     /// trust it, and it is not the one the user trusted for the camera, if any. The
     /// handshake failed, so nothing was sent.
     case certificateNotTrusted(ONVIFCertificateProblem)
+    /// Not sent: the request would have gone over plain HTTP to `host`, which is
+    /// outside the local network, and the user has not allowed that for the camera
+    /// (`ONVIFLocalNetwork`).
+    case plainHTTPRefused(host: String)
 
     /// True when no answer came back from the device at all, as opposed to the
     /// device answering with an error. Not the same as the host being out of reach
@@ -74,7 +78,8 @@ internal enum ONVIFError: LocalizedError {
         switch self {
         case .networkError, .timedOut:
             return true
-        case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed, .certificateNotTrusted:
+        case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed, .certificateNotTrusted,
+             .plainHTTPRefused:
             return false
         }
     }
@@ -90,7 +95,7 @@ internal enum ONVIFError: LocalizedError {
     /// again, or looking for the camera elsewhere, would fail the same way.
     var needsUserDecision: Bool {
         switch self {
-        case .certificateNotTrusted:
+        case .certificateNotTrusted, .plainHTTPRefused:
             return true
         case .invalidURL, .networkError, .httpStatus, .soapFault, .parseError, .authenticationFailed, .timedOut:
             return false
@@ -140,8 +145,21 @@ internal enum ONVIFError: LocalizedError {
             return "Authentication failed"
         case .timedOut:
             return "The camera did not respond in time"
+        case .certificateNotTrusted, .plainHTTPRefused:
+            return userDecisionDescription
+        }
+    }
+
+    /// What the user has to decide, for an error only the user can clear.
+    private var userDecisionDescription: String? {
+        switch self {
         case .certificateNotTrusted(let problem):
             return problem.statusMessage
+        case .plainHTTPRefused(let host):
+            return "\(host) is outside your local network. "
+                + "Use HTTPS, or turn on \(ONVIFLocalNetwork.allowanceName) for this camera."
+        default:
+            return nil
         }
     }
 }

@@ -134,7 +134,7 @@ internal final class ONVIFSOAPTests: XCTestCase {
         }
         let client = ONVIFClient(
             host: host, port: 80, username: nil, password: nil,
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
 
         let uri = try await client.getStreamURI(profileToken: "main")

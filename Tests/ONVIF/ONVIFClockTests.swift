@@ -104,7 +104,7 @@ internal final class ONVIFClockTests: XCTestCase {
         }
         let client = ONVIFClient(
             host: host, port: 80, username: username, password: username.map { _ in "secret" },
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         _ = try await client.getProfiles()
         _ = try await client.getProfiles()

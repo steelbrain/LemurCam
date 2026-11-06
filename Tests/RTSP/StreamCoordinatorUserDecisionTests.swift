@@ -5,7 +5,8 @@ import Security
 import XCTest
 
 /// What connecting does when what answers at a camera's saved address needs the
-/// user's decision: a certificate other than the one the user trusted. Trying again,
+/// user's decision: a certificate other than the one the user trusted, or an address
+/// outside the local network that plain HTTP isn't allowed to. Trying again,
 /// looking for the camera with a scan, or falling back to the stored stream URI would
 /// not change the answer, and the last two may send the login to another device. The
 /// camera shows what to do, and nothing connects until the camera is edited.
@@ -53,6 +54,47 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
                 + "Open the camera in Settings and click Fetch Profiles to review it."
         )
         assertWaitsForTheUser(harness)
+    }
+
+    /// Nothing at all is sent to a camera outside the local network over plain HTTP
+    /// until its checkbox allows it.
+    func testPlainHTTPOutsideTheLocalNetworkShowsWhatToDoAndSendsNothing() async throws {
+        let host = "203.0.113.40"
+        let requests = CapturedBodies()
+        stubHosts.append(host)
+        let reply = ONVIFResolveFixture.streamURIReply("rtsp://\(host):554/main")
+        ONVIFStubURLProtocol.register(host: host) { _, body in
+            requests.append(body)
+            return reply
+        }
+        let (harness, camera) = try makeHarness(saving: Self.camera(at: host))
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let failed = await waitUntil(timeout: 5) { harness.status(camera) == .error }
+
+        XCTAssertTrue(failed)
+        XCTAssertEqual(
+            harness.manager.errorMessages[camera],
+            "203.0.113.40 is outside your local network. "
+                + "Use HTTPS, or turn on Allow Unencrypted HTTP for this camera."
+        )
+        XCTAssertTrue(requests.all.isEmpty)
+        assertWaitsForTheUser(harness)
+    }
+
+    /// With the checkbox on, the same camera connects.
+    func testPlainHTTPOutsideTheLocalNetworkConnectsOnceAllowed() async throws {
+        let host = "203.0.113.41"
+        stub(host, ONVIFResolveFixture.streamURIReply("rtsp://\(host):554/main"))
+        var info = Self.camera(at: host)
+        info.allowsPlainHTTPOutsideLocalNetwork = true
+        let (harness, _) = try makeHarness(saving: info)
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
+
+        XCTAssertTrue(connected)
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(host):554/main"])
     }
 
     // MARK: - Helpers

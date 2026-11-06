@@ -42,7 +42,7 @@ internal enum ONVIFRediscovery {
         case .soapFault, .authenticationFailed:
             guard let uuid = info.deviceUUID, !uuid.isEmpty else { return false }
             return isLANAddress(info.host)
-        case .invalidURL, .certificateNotTrusted:
+        case .invalidURL, .certificateNotTrusted, .plainHTTPRefused:
             return false
         }
     }
@@ -60,7 +60,8 @@ internal enum ONVIFRediscovery {
         switch onvifError {
         case .soapFault, .authenticationFailed:
             return true
-        case .networkError, .timedOut, .httpStatus, .parseError, .invalidURL, .certificateNotTrusted:
+        case .networkError, .timedOut, .httpStatus, .parseError, .invalidURL, .certificateNotTrusted,
+             .plainHTTPRefused:
             return false
         }
     }
@@ -113,7 +114,7 @@ internal enum ONVIFRediscovery {
     /// The saved settings with the address of `device`. A camera saved with HTTPS
     /// keeps HTTPS and its saved port when the scan reports plain HTTP for it, so its
     /// login never goes unencrypted. What the user decided for the saved address (a
-    /// trusted certificate) is not kept for another one.
+    /// trusted certificate, plain HTTP allowed) is not kept for another one.
     private static func settings(for info: ONVIFSourceInfo, at device: DiscoveredDevice) -> ONVIFSourceInfo {
         var found = info
         found.host = device.host

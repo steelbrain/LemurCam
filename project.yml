@@ -61,6 +61,10 @@ targets:
       base:
         CODE_SIGN_ENTITLEMENTS: App/LemurCam.entitlements
         ENABLE_APP_SANDBOX: NO
+        # Holds only what the INFOPLIST_KEY_* settings can't express, the App Transport
+        # Security exception for ONVIF cameras (its comment says why). Xcode merges it
+        # with the keys it generates.
+        INFOPLIST_FILE: App/Info.plist
         ENABLE_HARDENED_RUNTIME: YES
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "LemurCam needs camera access to preview your virtual camera feed."

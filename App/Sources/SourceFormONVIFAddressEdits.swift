@@ -1,6 +1,6 @@
 /// Ties the edit form's ONVIF details (the profile chosen, its stream URL, the device
-/// UUID, the serial number and the trusted certificate) to the address they were read
-/// from. Editing Host, Port
+/// UUID, the serial number, the trusted certificate and plain HTTP allowed) to the
+/// address they were read from. Editing Host, Port
 /// or Use HTTPS used to leave the old camera's details in place, and Save stored them
 /// with the new address, so a later rediscovery looked for the old camera's UUID and
 /// could move the source back to it. Moving the address away clears them; they come
@@ -20,6 +20,7 @@ internal struct SourceFormONVIFAddressEdits {
         let deviceUUID: String?
         let serialNumber: String?
         var pinnedCertificate: CertificateFingerprint?
+        var allowsPlainHTTPOutsideLocalNetwork = false
     }
 
     /// What the form does with its details after an address edit.
@@ -52,6 +53,11 @@ internal struct SourceFormONVIFAddressEdits {
         owner = address
     }
 
+    /// The details saved at `address`, when it is the saved camera's address.
+    func savedDetails(at address: Address) -> SavedDetails? {
+        address == savedAddress ? savedDetails : nil
+    }
+
     /// The user edited the address to `address`.
     mutating func addressEdited(to address: Address) -> Change {
         guard address != owner else { return .keep }
@@ -71,5 +77,16 @@ internal struct SourceFormONVIFAddressEdits {
     /// Whether details may be saved with `address`: they were read from it.
     func allowsSave(at address: Address) -> Bool {
         owner == address
+    }
+}
+
+extension SourceFormONVIFAddressEdits.SavedDetails {
+    /// The details of the camera saved as `info`.
+    init(_ info: ONVIFSourceInfo) {
+        self.init(
+            selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
+            deviceUUID: info.deviceUUID, serialNumber: info.serialNumber, pinnedCertificate: info.pinnedCertificate,
+            allowsPlainHTTPOutsideLocalNetwork: info.allowsPlainHTTPOutsideLocalNetwork
+        )
     }
 }

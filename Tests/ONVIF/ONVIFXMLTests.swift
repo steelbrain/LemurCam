@@ -121,7 +121,7 @@ internal final class ONVIFXMLTests: XCTestCase {
         }
         let client = ONVIFClient(
             host: stubHost, port: 80, username: nil, password: nil,
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         do {
             _ = try await client.getProfiles()

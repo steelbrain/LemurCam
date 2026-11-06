@@ -1,4 +1,5 @@
 import Foundation
+@testable import LemurCam
 import os
 
 /// In-process HTTP stand-in for an ONVIF camera, so `ONVIFClient` request and
@@ -107,4 +108,11 @@ internal final class CapturedBodies: Sendable {
     func append(_ body: Data) {
         bodies.withLock { $0.append(body) }
     }
+}
+
+extension ONVIFConnectionPolicy {
+    /// For clients of stub cameras, which go by made-up names (`*.test`, `*.invalid`)
+    /// and documentation addresses (192.0.2.x, 203.0.113.x). Those are outside the
+    /// local network, where `ONVIFClient` refuses plain HTTP unless the camera allows it.
+    static let stubCamera = Self(allowsPlainHTTPOutsideLocalNetwork: true)
 }

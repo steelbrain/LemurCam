@@ -34,7 +34,7 @@ internal final class ONVIFServiceURLTests: XCTestCase {
     func testTheClientSendsToAnIPv6Address() async {
         let client = ONVIFClient(
             host: "fe80::1%en0", port: 80, username: nil, password: nil,
-            configuration: ONVIFStubURLProtocol.configuration()
+            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
         )
         do {
             _ = try await client.getDeviceInformation()

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Merged with the keys Xcode generates from the INFOPLIST_KEY_* settings in
+	project.yml (GENERATE_INFOPLIST_FILE), for what those can't express.
+
+	NSAllowsArbitraryLoads: ATS blocked plain HTTP to an ONVIF camera outside the
+	local network (a public address, a DDNS name) with no way to allow it.
+	ONVIFClient refuses such a request itself unless the user allowed it for the
+	camera (ONVIFLocalNetwork). Every other URL the app loads must be HTTPS.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

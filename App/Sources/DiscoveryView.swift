@@ -15,8 +15,9 @@ internal struct DiscoveryView: View {
     @State private var selectedProfileToken: String?
     @State private var fetches = DiscoveryFetches()
     @State private var deviceUUID: String?
-    /// The certificate the user trusted for the camera picked (`CertificateTrustPrompt`).
-    @State private var pinnedCertificate: CertificateFingerprint?
+    /// What the user decided for the camera picked: the certificate trusted
+    /// (`CertificateTrustPrompt`) and plain HTTP allowed (`ONVIFPlainHTTPToggle`).
+    @State private var connectionPolicy = ONVIFConnectionPolicy()
     /// A certificate a fetch met that macOS doesn't trust, while the user is asked.
     @State private var trustPrompt: CertificateTrustPrompt?
     @State private var cameraName = ""
@@ -39,7 +40,7 @@ internal struct DiscoveryView: View {
         .onAppear { startScan() }
         .certificateTrustDialog($trustPrompt) { prompt in
             guard fetches.isCurrent(prompt.ticket) else { return }
-            pinnedCertificate = prompt.problem.fingerprint
+            connectionPolicy.pinnedCertificate = prompt.problem.fingerprint
             fetchDeviceProfiles()
         }
     }
@@ -127,37 +128,6 @@ internal struct DiscoveryView: View {
         .padding()
     }
 
-    // MARK: - Credentials
-
-    private var credentialsView: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    HStack {
-                        Text("Connect to Camera").font(.headline)
-                        Spacer()
-                    }
-                    Text("Enter credentials if required by \(selectedDevice?.name ?? "this camera").")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                Section {
-                    Toggle("Requires Authentication", isOn: $hasCredentials)
-                    if hasCredentials {
-                        TextField("Username", text: $username)
-                        SecureField("Password", text: $password)
-                    }
-                }
-            }
-            .formStyle(.grouped)
-            HStack {
-                Button("Back") { goBack(to: .scanning) }
-                Spacer()
-                Button("Connect") { fetchDeviceProfiles() }.keyboardShortcut(.defaultAction)
-            }
-            .padding()
-        }
-    }
-
     // MARK: - Profiles
 
     private var profilesView: some View {
@@ -221,6 +191,47 @@ internal struct DiscoveryView: View {
 
 }
 
+// MARK: - Credentials
+
+private extension DiscoveryView {
+    var credentialsView: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    HStack {
+                        Text("Connect to Camera").font(.headline)
+                        Spacer()
+                    }
+                    Text("Enter credentials if required by \(selectedDevice?.name ?? "this camera").")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                Section {
+                    Toggle("Requires Authentication", isOn: $hasCredentials)
+                    if hasCredentials {
+                        TextField("Username", text: $username)
+                        SecureField("Password", text: $password)
+                    }
+                }
+                if let device = selectedDevice {
+                    Section {
+                        ONVIFPlainHTTPToggle(
+                            host: device.host, useHTTPS: device.useHTTPS,
+                            isOn: $connectionPolicy.allowsPlainHTTPOutsideLocalNetwork
+                        )
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                Button("Back") { goBack(to: .scanning) }
+                Spacer()
+                Button("Connect") { fetchDeviceProfiles() }.keyboardShortcut(.defaultAction)
+            }
+            .padding()
+        }
+    }
+}
+
 // MARK: - Naming
 
 private extension DiscoveryView {
@@ -277,7 +288,7 @@ private extension DiscoveryView {
     func selectDevice(_ device: DiscoveredDevice) {
         selectedDevice = device
         deviceUUID = device.endpointUUID
-        pinnedCertificate = nil
+        connectionPolicy = ONVIFConnectionPolicy()
         username = ""
         password = ""
         hasCredentials = false
@@ -303,7 +314,7 @@ private extension DiscoveryView {
             host: device.host, port: device.port,
             username: hasCredentials ? username : nil,
             password: hasCredentials ? password : nil,
-            useHTTPS: device.useHTTPS, policy: ONVIFConnectionPolicy(pinnedCertificate: pinnedCertificate)
+            useHTTPS: device.useHTTPS, policy: connectionPolicy
         )
     }
 
@@ -374,7 +385,9 @@ private extension DiscoveryView {
             deviceUUID: deviceUUID, host: device.host, port: device.port,
             selectedProfileToken: selectedProfileToken, streamURI: fetches.streamURI, useHTTPS: device.useHTTPS,
             serialNumber: fetches.deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 },
-            pinnedCertificate: pinnedCertificate
+            pinnedCertificate: connectionPolicy.pinnedCertificate,
+            allowsPlainHTTPOutsideLocalNetwork: connectionPolicy.allowsPlainHTTPOutsideLocalNetwork
+                && ONVIFLocalNetwork.needsPlainHTTPAllowance(host: device.host, useHTTPS: device.useHTTPS)
         ))
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty

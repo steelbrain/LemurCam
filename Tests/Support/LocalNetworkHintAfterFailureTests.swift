@@ -115,7 +115,7 @@ internal final class LocalNetworkHintAfterFailureTests: XCTestCase {
             scan: { [] },
             makeClient: { info, _ in
                 ONVIFClient(host: info.host, port: info.port, username: nil, password: nil,
-                            configuration: ONVIFStubURLProtocol.configuration())
+                            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration())
             }
         ))
         try harness.manager.addSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(

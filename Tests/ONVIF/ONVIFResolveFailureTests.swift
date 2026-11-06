@@ -21,7 +21,7 @@ internal final class ONVIFResolveFailureTests: XCTestCase {
             },
             makeClient: { info, _ in
                 ONVIFClient(host: info.host, port: info.port, username: nil, password: nil,
-                            configuration: ONVIFStubURLProtocol.configuration())
+                            policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration())
             }
         )
         let params = ONVIFResolveParams(

@@ -276,7 +276,7 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
                 ONVIFClient(
                     host: info.host, port: info.port, username: credentials?.username,
                     password: credentials?.password, useHTTPS: info.useHTTPS,
-                    configuration: ONVIFStubURLProtocol.configuration()
+                    policy: .stubCamera, configuration: ONVIFStubURLProtocol.configuration()
                 )
             }
         ))

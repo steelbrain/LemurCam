@@ -215,9 +215,16 @@ internal final class ONVIFClient: Sendable {
     }
 
     /// Sends `body` to `path` and returns the reply as it came, whatever its status.
+    /// Nothing goes over plain HTTP to a host outside the local network unless the
+    /// policy allows it (`ONVIFLocalNetwork`): the app's ATS exception lets every such
+    /// request through, so this is the check.
     private func exchange(
         path: String, body: XMLKit.XMLElement, signed: Bool
     ) async throws -> (Data, URLResponse) {
+        if ONVIFLocalNetwork.needsPlainHTTPAllowance(host: host, useHTTPS: useHTTPS),
+           !policy.allowsPlainHTTPOutsideLocalNetwork {
+            throw ONVIFError.plainHTTPRefused(host: host)
+        }
         guard let url = Self.serviceURL(host: host, port: port, useHTTPS: useHTTPS, path: path) else {
             throw ONVIFError.invalidURL
         }
