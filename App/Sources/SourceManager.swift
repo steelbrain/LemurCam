@@ -20,6 +20,7 @@ internal final class SourceManager {
 
     func load() {
         sources = storage.load()
+        moveEmbeddedCredentialsToKeychain()
         for source in sources {
             connectionStatuses[source.id] = .disconnected
         }
@@ -176,16 +177,53 @@ internal final class SourceManager {
         errorMessages[sourceID] = message
     }
 
-    /// Strip credentials embedded in a `.rtsp` URL so they are never written to the
-    /// persisted source JSON — they are routed to the Keychain instead. Enforced here,
-    /// at the persistence boundary, so every caller (add, edit, future) is covered, not
-    /// just the add-form's URL field. ONVIF sources are left untouched.
+    /// Strip credentials embedded in source URLs so they are never written to the
+    /// persisted source JSON. Enforced here, at the persistence boundary, so every
+    /// caller (add, edit, load, future) is covered. Credentials from an `.rtsp` URL are
+    /// returned to be routed to the Keychain. An `.onvif` stream URI comes from the
+    /// camera, and some cameras put their RTSP login in it; that userinfo is dropped,
+    /// since the URI is re-fetched from the camera on every connect and the stored
+    /// copy is only a fallback.
     private static func sanitizingCredentials(
         from sourceType: SourceType
     ) -> (SourceType, SourceCredentials?) {
-        guard case .rtsp(let info) = sourceType else { return (sourceType, nil) }
-        let (cleanedURL, credentials) = SourceCredentials.extractingFromRTSPURL(info.url)
-        return (.rtsp(RTSPSourceInfo(url: cleanedURL)), credentials)
+        switch sourceType {
+        case .rtsp(let info):
+            let (cleanedURL, credentials) = SourceCredentials.extractingFromRTSPURL(info.url)
+            return (.rtsp(RTSPSourceInfo(url: cleanedURL)), credentials)
+        case .onvif(var info):
+            info.streamURI = info.streamURI.map(SourceCredentials.strippingUserInfo(from:))
+            return (.onvif(info), nil)
+        }
+    }
+
+    /// Older versions could leave credentials inside saved URLs (an RTSP URL with an
+    /// empty user name, or an ONVIF stream URI reported by the camera). Moves them out
+    /// once on load: RTSP credentials go to the Keychain unless it already holds some
+    /// for the source. If the Keychain can't be used, the URL is left as it is rather
+    /// than losing the only copy of the credentials.
+    private func moveEmbeddedCredentialsToKeychain() {
+        var migrated = 0
+        for index in sources.indices {
+            let source = sources[index]
+            let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: source.sourceType)
+            guard cleanType != source.sourceType else { continue }
+            if let urlCredentials {
+                do {
+                    if try keychain.retrieve(for: source.id) == nil {
+                        try keychain.save(credentials: urlCredentials, for: source.id)
+                    }
+                } catch {
+                    Log.app.error("Left credentials in the saved URL of '\(source.name)': Keychain unavailable")
+                    continue
+                }
+            }
+            sources[index].sourceType = cleanType
+            migrated += 1
+        }
+        guard migrated > 0 else { return }
+        storage.save(sources)
+        Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
     }
 
     private func persist() {

@@ -111,20 +111,20 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
     // MARK: - Form decision
 
     func testFormDecision() {
-        func decide(_ enabled: Bool, _ username: String, unreadable: Bool) -> CredentialChange {
+        func decide(_ enabled: Bool, _ username: String, _ password: String, unreadable: Bool) -> CredentialChange {
             CredentialChange.fromForm(
-                authenticationEnabled: enabled, username: username, password: "pw",
+                authenticationEnabled: enabled, username: username, password: password,
                 storedCredentialsUnreadable: unreadable
             )
         }
         let entered = CredentialChange.set(SourceCredentials(username: "u", password: "pw"))
-        XCTAssertEqual(decide(true, "u", unreadable: false), entered)
-        XCTAssertEqual(decide(true, "u", unreadable: true), entered)
-        // Authentication explicitly off with readable credentials: remove them.
-        XCTAssertEqual(decide(false, "", unreadable: false), .remove)
-        XCTAssertEqual(decide(true, "", unreadable: false), .remove)
+        XCTAssertEqual(decide(true, "u", "pw", unreadable: false), entered)
+        XCTAssertEqual(decide(true, "u", "pw", unreadable: true), entered)
+        // Authentication explicitly off (or on with both fields empty), credentials readable: remove them.
+        XCTAssertEqual(decide(false, "u", "pw", unreadable: false), .remove)
+        XCTAssertEqual(decide(true, "", "", unreadable: false), .remove)
         // Never remove what the form could not read.
-        XCTAssertEqual(decide(false, "", unreadable: true), .keep)
-        XCTAssertEqual(decide(true, "", unreadable: true), .keep)
+        XCTAssertEqual(decide(false, "", "", unreadable: true), .keep)
+        XCTAssertEqual(decide(true, "", "", unreadable: true), .keep)
     }
 }

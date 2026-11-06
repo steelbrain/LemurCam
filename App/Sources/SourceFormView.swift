@@ -245,23 +245,22 @@ private extension SourceFormView {
         }
     }
 
+    /// Moves any `user:password@` in the URL into the credential fields, including a
+    /// password with an empty user name, so it is not kept in the URL.
     func handleDirectRTSP(_ url: String) {
-        if isValidRTSPURL(url) {
-            resolvedType = .rtsp
-            if var components = URLComponents(string: url) {
-                if let user = components.user, !user.isEmpty {
-                    username = user
-                    password = components.password ?? ""
-                    hasCredentials = true
-                    components.user = nil
-                    components.password = nil
-                    if let cleaned = components.string { inputText = cleaned }
-                }
-                if name.isEmpty { name = components.host ?? "Camera" }
-            }
-        } else {
+        guard isValidRTSPURL(url) else {
             probeError = "Enter a valid RTSP URL (e.g. rtsp://192.168.1.100:554/stream)"
+            return
         }
+        resolvedType = .rtsp
+        let (cleaned, credentials) = SourceCredentials.extractingFromRTSPURL(url)
+        if let credentials {
+            username = credentials.username
+            password = credentials.password
+            hasCredentials = true
+        }
+        if cleaned != url { inputText = cleaned }
+        if name.isEmpty { name = URLComponents(string: cleaned)?.host ?? "Camera" }
     }
 
     func handleDirectONVIF(_ urlString: String) {
@@ -311,7 +310,7 @@ private extension SourceFormView {
                 let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     try await client.getStreamURI(profileToken: profileToken)
                 }
-                await MainActor.run { streamURI = uri }
+                await MainActor.run { streamURI = SourceCredentials.strippingUserInfo(from: uri) }
             } catch {
                 await MainActor.run { probeError = error.localizedDescription }
             }

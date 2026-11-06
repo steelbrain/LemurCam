@@ -315,7 +315,7 @@ private extension DiscoveryView {
                 let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     try await client.getStreamURI(profileToken: profileToken)
                 }
-                await MainActor.run { streamURI = uri }
+                await MainActor.run { streamURI = SourceCredentials.strippingUserInfo(from: uri) }
             } catch {
                 await MainActor.run { fetchError = error.localizedDescription }
             }
