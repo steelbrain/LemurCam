@@ -34,6 +34,7 @@
 #include <string.h>
 #include <os/log.h>
 
+#include "LemurAudioConsumerSignal.h"
 #include "LemurAudioShared.h"
 
 // MARK: - Object IDs (static graph)
@@ -799,13 +800,15 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
         gNumberTimeStamps = 0;
         lemur_ring_pacer_reset(&gPacer);
     }
-    ++gIOCount;
-    pthread_mutex_unlock(&gStateMutex);
-
-    if (firstStart) {
+    // Posted before unlocking, so consumerStarted and consumerStopped leave in the
+    // order the count changed (see LemurAudioConsumerSignal.h). Posting takes none
+    // of our locks, and the real-time IO path never takes this one.
+    const char *notification = lemur_audio_io_started(&gIOCount);
+    if (notification != NULL) {
         os_log(gLog, "StartIO — first client, posting consumerStarted");
-        PostDarwinNotification(LEMUR_AUDIO_NOTIFY_CONSUMER_STARTED);
+        PostDarwinNotification(notification);
     }
+    pthread_mutex_unlock(&gStateMutex);
     return noErr;
 }
 
@@ -815,14 +818,13 @@ static OSStatus StopIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDevi
     if (inDeviceObjectID != kObjectID_Device) { return kAudioHardwareBadObjectError; }
 
     pthread_mutex_lock(&gStateMutex);
-    if (gIOCount > 0) { --gIOCount; }
-    Boolean lastStop = (gIOCount == 0);
-    pthread_mutex_unlock(&gStateMutex);
-
-    if (lastStop) {
+    // Posted before unlocking, as in StartIO.
+    const char *notification = lemur_audio_io_stopped(&gIOCount);
+    if (notification != NULL) {
         os_log(gLog, "StopIO — last client, posting consumerStopped");
-        PostDarwinNotification(LEMUR_AUDIO_NOTIFY_CONSUMER_STOPPED);
+        PostDarwinNotification(notification);
     }
+    pthread_mutex_unlock(&gStateMutex);
     return noErr;
 }
 
