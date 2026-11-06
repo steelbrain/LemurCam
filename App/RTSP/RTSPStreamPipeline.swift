@@ -40,7 +40,8 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
     struct VideoDecodeStallError: LocalizedError {
         var errorDescription: String? {
-            "Video stalled — no frame decoded for \(Tuning.videoDecodeStallTimeoutNs / 1_000_000_000) seconds"
+            let seconds = Tuning.videoDecodeStallTimeoutNs / 1_000_000_000
+            return "Video stalled — a keyframe arrived but nothing decoded for \(seconds) seconds"
         }
     }
 
@@ -307,7 +308,7 @@ private extension RTSPStreamPipeline {
     ) {
         switch item {
         case .video(let frame):
-            watchdog.markFrameReceived()
+            watchdog.markFrameReceived(isKeyframe: frame.isKeyframe)
             guard let processed = processor.process(frame) else { return }
             decoder.updateFormatDescription(processed.formatDescription, isKeyframe: processed.isKeyframe)
             decoder.decode(
@@ -367,18 +368,19 @@ extension RTSPStreamPipeline {
 
 // MARK: - Stall Watchdog
 
-/// Tracks a stream's progress for the stall check: when the last video frame arrived
-/// and when the decoder last produced a picture. Frames are marked on the frame loop
-/// and decodes on VideoToolbox's output thread, hence the lock. Times are uptime
-/// nanoseconds, passed in by tests.
+/// Tracks a stream's progress for the stall check: when the last video frame arrived,
+/// and since when a keyframe has been waiting for the decoder to produce a picture.
+/// Frames are marked on the frame loop and decodes on VideoToolbox's output thread,
+/// hence the lock. Times are uptime nanoseconds, passed in by tests.
 internal final class StreamWatchdog: Sendable {
     enum Stall: Equatable, Sendable {
         /// No video frame arrived within `Tuning.streamStallTimeoutNs`.
         case noData
-        /// Video frames kept arriving, but none decoded within
-        /// `Tuning.videoDecodeStallTimeoutNs`: the decoder or its format description
-        /// failed, or the stream never delivers a keyframe. Packets alone would keep
-        /// the status at "streaming" with the picture frozen.
+        /// A keyframe arrived, but no frame decoded within
+        /// `Tuning.videoDecodeStallTimeoutNs` of it: the decoder session or the format
+        /// description failed. Packets alone would keep the status at "streaming"
+        /// with the picture frozen. Waiting for a keyframe (at stream start, or after
+        /// packet loss) never counts: with long keyframe intervals that is normal.
         case noDecodedVideo
 
         var error: any Error {
@@ -391,15 +393,17 @@ internal final class StreamWatchdog: Sendable {
 
     private struct State: Sendable {
         var lastFrame: UInt64
-        var lastDecoded: UInt64
+        /// When the oldest keyframe still waiting for a decoded picture arrived; nil
+        /// once the decoder produced a frame after it.
+        var undecodedKeyframeSince: UInt64?
         var stall: Stall?
     }
 
     private let state: OSAllocatedUnfairLock<State>
 
-    /// Both clocks start now: a stream that never decodes a frame counts from here.
+    /// The data clock starts now: a stream that never sends a frame counts from here.
     init(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
-        state = OSAllocatedUnfairLock(initialState: State(lastFrame: now, lastDecoded: now))
+        state = OSAllocatedUnfairLock(initialState: State(lastFrame: now))
     }
 
     /// The stall the last `checkForStall` found, if any. Once found it stays.
@@ -407,12 +411,20 @@ internal final class StreamWatchdog: Sendable {
         state.withLock { $0.stall }
     }
 
-    func markFrameReceived(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
-        state.withLock { $0.lastFrame = max($0.lastFrame, now) }
+    /// A video frame arrived. A keyframe starts the decode clock unless an earlier
+    /// keyframe is already waiting for a decoded picture.
+    func markFrameReceived(isKeyframe: Bool = false, now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        state.withLock { state in
+            state.lastFrame = max(state.lastFrame, now)
+            if isKeyframe, state.undecodedKeyframeSince == nil {
+                state.undecodedKeyframeSince = now
+            }
+        }
     }
 
-    func markFrameDecoded(now: UInt64 = DispatchTime.now().uptimeNanoseconds) {
-        state.withLock { $0.lastDecoded = max($0.lastDecoded, now) }
+    /// The decoder produced a picture, so it is working: stop the decode clock.
+    func markFrameDecoded() {
+        state.withLock { $0.undecodedKeyframeSince = nil }
     }
 
     /// Record and return a stall, or nil while the stream is progressing. A missing
@@ -429,7 +441,7 @@ internal final class StreamWatchdog: Sendable {
             func elapsed(since time: UInt64) -> UInt64 { now > time ? now - time : 0 }
             if elapsed(since: state.lastFrame) >= dataTimeout {
                 state.stall = .noData
-            } else if elapsed(since: state.lastDecoded) >= decodeTimeout {
+            } else if let keyframeAt = state.undecodedKeyframeSince, elapsed(since: keyframeAt) >= decodeTimeout {
                 state.stall = .noDecodedVideo
             }
             return state.stall
