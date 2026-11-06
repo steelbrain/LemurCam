@@ -106,18 +106,80 @@ internal final class LemurCamStreamStateTests: XCTestCase {
     }
 
     /// The old device is still listed beside its replacement, so CMIO may still be
-    /// dequeuing: its buffers are left alone.
-    func testAReplacedDeviceThatIsStillListedKeepsItsQueuedBuffers() throws {
+    /// dequeuing: its buffers are left alone until a readable list no longer shows
+    /// it. They used to be dropped with the queue and leak.
+    func testAReplacedDeviceThatIsStillListedKeepsItsQueuedBuffersUntilUnlisted() throws {
         let state = LemurCamStreamState()
         let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
         try connect(state, queue: queue)
-        XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
+        let freed = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+        freed.initialize(to: 0)
+        defer { freed.deallocate() }
+        try autoreleasepool {
+            XCTAssertTrue(state.enqueue(try makeSampleBuffer(countingFreesIn: freed)))
+        }
 
         let list = CMIODeviceList.read(deviceIDs: [deviceID, replacementID], lemurDeviceID: replacementID)
         XCTAssertEqual(state.deviceListChanged(list), .deviceReplaced)
+        XCTAssertEqual(rediscover(state, as: replacementID), .ready(deviceID: replacementID))
+        XCTAssertEqual(state.deviceListChanged(.unreadable), .recheck)
         XCTAssertEqual(CMSimpleQueueGetCount(queue), 1)
 
-        XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
+        XCTAssertEqual(state.deviceListChanged(.lemur(replacementID)), .unchanged)
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 0, "the old device is no longer listed")
+        XCTAssertEqual(freed.pointee, 1)
+    }
+
+    /// A discovery pass runs on the same serial queue as the device-list listener,
+    /// so it can see the replacement device before the listener's change is applied.
+    /// Discovery dropped the old queue with its buffers in it, and the change, which
+    /// then found the new device cached, had nothing to drain: up to a queue's worth
+    /// of frames leaked with every replacement.
+    func testADeviceReplacedByDiscoveryReleasesItsBuffersOnceUnlisted() throws {
+        let state = LemurCamStreamState()
+        let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try connect(state, queue: queue)
+        let freed = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+        freed.initialize(to: 0)
+        defer { freed.deallocate() }
+        try autoreleasepool {
+            let buffer = try makeSampleBuffer(countingFreesIn: freed)
+            XCTAssertTrue(state.enqueue(buffer))
+            XCTAssertTrue(state.enqueue(buffer))
+        }
+
+        XCTAssertEqual(rediscover(state, as: replacementID), .ready(deviceID: replacementID))
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 2, "the old device may still be listed")
+        XCTAssertEqual(freed.pointee, 0)
+
+        XCTAssertEqual(state.deviceListChanged(.lemur(replacementID)), .unchanged)
+        XCTAssertEqual(CMSimpleQueueGetCount(queue), 0, "the old device's queue must be drained")
+        XCTAssertEqual(freed.pointee, 1, "drained buffers must be released")
+    }
+
+    /// While a list may still show the device discovery replaced, its queue is left
+    /// to CMIO; draining it later leaves the new device's live queue alone.
+    func testADeviceReplacedByDiscoveryKeepsItsBuffersWhileItMayBeListed() throws {
+        let state = LemurCamStreamState()
+        let oldQueue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try connect(state, queue: oldQueue)
+        XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
+        XCTAssertEqual(rediscover(state, as: replacementID), .ready(deviceID: replacementID))
+        let newQueue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
+        try startSinkStream(state, queue: newQueue)
+        XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
+
+        let bothListed = CMIODeviceList.read(deviceIDs: [deviceID, replacementID], lemurDeviceID: replacementID)
+        XCTAssertEqual(state.deviceListChanged(bothListed), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.unreadable), .recheck)
+        XCTAssertEqual(CMSimpleQueueGetCount(oldQueue), 1)
+
+        let oldUnlisted = CMIODeviceList.read(deviceIDs: [replacementID, 30], lemurDeviceID: replacementID)
+        XCTAssertEqual(state.deviceListChanged(oldUnlisted), .unchanged)
+        XCTAssertEqual(CMSimpleQueueGetCount(oldQueue), 0)
+        XCTAssertEqual(CMSimpleQueueGetCount(newQueue), 1, "the live queue is CMIO's to consume")
+
+        XCTAssertEqual(SendableSimpleQueue(newQueue).releaseRetainedElements(), 1)
     }
 
     /// A device list that can't be read says nothing about whether the device is
@@ -134,13 +196,26 @@ internal final class LemurCamStreamStateTests: XCTestCase {
 
         XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
     }
+}
 
-    // MARK: - Helpers
+// MARK: - Helpers
 
-    private func connect(_ state: LemurCamStreamState, queue: CMSimpleQueue) throws {
+private extension LemurCamStreamStateTests {
+    func connect(_ state: LemurCamStreamState, queue: CMSimpleQueue) throws {
+        XCTAssertEqual(rediscover(state, as: deviceID), .ready(deviceID: deviceID))
+        try startSinkStream(state, queue: queue)
+    }
+
+    /// Run a discovery pass that finds the device `newDeviceID`.
+    func rediscover(
+        _ state: LemurCamStreamState, as newDeviceID: CMIODeviceID
+    ) -> LemurCamStreamState.DiscoveryResultAction {
         state.requestDiscovery()
         XCTAssertEqual(state.prepareRetry(maxRetries: 1), .discover(attempt: 1))
-        XCTAssertEqual(state.applyDiscoveryResult((deviceID: deviceID, streamID: 11)), .ready(deviceID: deviceID))
+        return state.applyDiscoveryResult((deviceID: newDeviceID, streamID: newDeviceID + 1))
+    }
+
+    func startSinkStream(_ state: LemurCamStreamState, queue: CMSimpleQueue) throws {
         _ = try XCTUnwrap(state.beginStarting())
         state.markStreamConnected(
             resources: CMIOStreamQueueResources(
@@ -150,7 +225,7 @@ internal final class LemurCamStreamStateTests: XCTestCase {
         )
     }
 
-    private func makeSampleBuffer() throws -> CMSampleBuffer {
+    func makeSampleBuffer() throws -> CMSampleBuffer {
         var buffer: CMSampleBuffer?
         let status = CMSampleBufferCreate(
             allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: true,
@@ -164,7 +239,7 @@ internal final class LemurCamStreamStateTests: XCTestCase {
 
     /// A one-sample buffer whose data block, owned only by the buffer, adds one to
     /// `counter` when it is freed: when the last retain on the buffer goes away.
-    private func makeSampleBuffer(countingFreesIn counter: UnsafeMutablePointer<Int>) throws -> CMSampleBuffer {
+    func makeSampleBuffer(countingFreesIn counter: UnsafeMutablePointer<Int>) throws -> CMSampleBuffer {
         let length = 16
         var source = CMBlockBufferCustomBlockSource(
             version: kCMBlockBufferCustomBlockSourceVersion,
@@ -193,7 +268,7 @@ internal final class LemurCamStreamStateTests: XCTestCase {
         return try XCTUnwrap(buffer)
     }
 
-    private func makeQueue(capacity: Int32 = 1) throws -> CMSimpleQueue {
+    func makeQueue(capacity: Int32 = 1) throws -> CMSimpleQueue {
         var queue: CMSimpleQueue?
         let status = CMSimpleQueueCreate(
             allocator: kCFAllocatorDefault,

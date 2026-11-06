@@ -87,7 +87,9 @@ internal final class LemurCamStreamState: Sendable {
         /// device is still cached: keep the current sink stream as it is.
         case alreadyReady
         case retry
-        /// A new or replaced device is cached; state tied to an older one is gone.
+        /// A new or replaced device is cached; state tied to an older one is gone,
+        /// except its sink queue, which waits to be drained until a device list no
+        /// longer shows the older device (see `deviceListChanged`).
         case ready(deviceID: CMIODeviceID)
     }
 
@@ -99,14 +101,21 @@ internal final class LemurCamStreamState: Sendable {
         /// Nothing shows the device went away, so its IDs and sink stream are kept;
         /// read the list again.
         case recheck
-        /// The cached device went away. Its IDs and sink stream are dropped; wait
-        /// for the device to come back.
+        /// The cached device went away. Its IDs and sink stream are dropped, and its
+        /// sink queue drained; wait for the device to come back.
         case deviceLost
         /// Another device replaced the cached one. The old IDs and sink stream are
-        /// dropped; run discovery for the new one.
+        /// dropped, and the old sink queue drained once no list shows the old
+        /// device; run discovery for the new one.
         case deviceReplaced
         /// The device appeared while none was cached: run discovery.
         case rediscover
+    }
+
+    /// The sink queue of a dropped device, kept until it can be drained.
+    private struct RetiredQueue: Sendable {
+        let deviceID: CMIODeviceID
+        let resources: CMIOStreamQueueResources
     }
 
     private struct State: Sendable {
@@ -128,16 +137,21 @@ internal final class LemurCamStreamState: Sendable {
         /// Rechecks asked for since the cached device was last identified in the
         /// device list (`DeviceListChangeAction.recheck`); bounds them.
         var rechecks = 0
+        /// Sink queues of dropped devices that may still be listed, so CMIO may still
+        /// be dequeuing from them. Each leaves once a readable device list no longer
+        /// shows its device (`takeRetiredQueues(unlistedIn:)`).
+        var retiredQueues: [RetiredQueue] = []
 
         var isReady: Bool { deviceID != nil && streamID != nil }
 
         /// Forget the cached device and everything tied to it, including a sink
         /// stream that is stuck "streaming" because the extension died without
-        /// posting `consumerStopped`. Returns the sink queue resources it dropped,
-        /// whose queue may still hold retained buffers.
-        @discardableResult
-        mutating func dropDevice() -> CMIOStreamQueueResources? {
-            let dropped = streamResources
+        /// posting `consumerStopped`. Its sink queue, which may still hold retained
+        /// buffers, goes to `retiredQueues`.
+        mutating func dropDevice() {
+            if let deviceID, let streamResources {
+                retiredQueues.append(RetiredQueue(deviceID: deviceID, resources: streamResources))
+            }
             streamResources = nil
             isStreaming = false
             isStarting = false
@@ -145,7 +159,6 @@ internal final class LemurCamStreamState: Sendable {
             streamID = nil
             hasConnectedOnce = false
             rechecks = 0
-            return dropped
         }
 
         mutating func armDiscovery() {
@@ -154,32 +167,37 @@ internal final class LemurCamStreamState: Sendable {
         }
 
         /// What the device list `list` means for the cached device `cachedDeviceID`.
-        /// Also returns the sink queue resources it dropped when `list` shows the
-        /// device is no longer listed (see `deviceListChanged`).
         mutating func applyDeviceList(
             _ list: CMIODeviceList, cachedDeviceID: CMIODeviceID, maxRechecks: Int
-        ) -> (DeviceListChangeAction, CMIOStreamQueueResources?) {
+        ) -> DeviceListChangeAction {
             let lemurDeviceID = list.lemurDeviceID
             if cachedDeviceID == lemurDeviceID {
                 rechecks = 0
-                return (.unchanged, nil)
+                return .unchanged
             }
             // The list may still hold the cached device and names no other as
             // LemurCam's: a failed read, not a lost device. Dropping it here would
             // leave a consumer's sink stream fed by nothing.
             if lemurDeviceID == nil, list.mayList(cachedDeviceID) {
-                guard rechecks < maxRechecks else { return (.unchanged, nil) }
+                guard rechecks < maxRechecks else { return .unchanged }
                 rechecks += 1
-                return (.recheck, nil)
+                return .recheck
             }
-            let dropped = dropDevice()
-            let drainable = list.mayList(cachedDeviceID) ? nil : dropped
+            dropDevice()
             guard lemurDeviceID != nil else {
                 discoveryPending = false
-                return (.deviceLost, drainable)
+                return .deviceLost
             }
             armDiscovery()
-            return (.deviceReplaced, drainable)
+            return .deviceReplaced
+        }
+
+        /// Remove and return the retired sink queues whose device `list` no longer
+        /// shows. None when the list couldn't be read.
+        mutating func takeRetiredQueues(unlistedIn list: CMIODeviceList) -> [CMIOStreamQueueResources] {
+            let unlisted = retiredQueues.filter { !list.mayList($0.deviceID) }
+            retiredQueues.removeAll { !list.mayList($0.deviceID) }
+            return unlisted.map(\.resources)
         }
     }
 
@@ -328,6 +346,10 @@ extension LemurCamStreamState {
             if state.deviceID == result.deviceID, state.streamID == result.streamID {
                 return .alreadyReady
             }
+            // A pass can see the replacement device before the device-list change
+            // that removes the old one is applied; that change then finds the new
+            // device cached. The old sink queue is retired here, and that change,
+            // or a later one, drains it once the old device is no longer listed.
             state.dropDevice()
             state.deviceID = result.deviceID
             state.streamID = result.streamID
@@ -346,27 +368,30 @@ extension LemurCamStreamState {
     func deviceListChanged(
         _ list: CMIODeviceList, maxRechecks: Int = Tuning.maxSetupRetries
     ) -> DeviceListChangeAction {
-        let (action, unlistedResources) = state.withLock { state -> (
-            DeviceListChangeAction, CMIOStreamQueueResources?
-        ) in
+        let (action, unlistedQueues) = state.withLock { state in
+            let action: DeviceListChangeAction
             if let cachedDeviceID = state.deviceID {
-                return state.applyDeviceList(list, cachedDeviceID: cachedDeviceID, maxRechecks: maxRechecks)
+                action = state.applyDeviceList(list, cachedDeviceID: cachedDeviceID, maxRechecks: maxRechecks)
+            } else if state.discoveryRequested, list.lemurDeviceID != nil, !state.isDiscovering {
+                state.armDiscovery()
+                action = .rediscover
+            } else {
+                action = .unchanged
             }
-            guard state.discoveryRequested, list.lemurDeviceID != nil, !state.isDiscovering else {
-                return (.unchanged, nil)
-            }
-            state.armDiscovery()
-            return (.rediscover, nil)
+            return (action, state.takeRetiredQueues(unlistedIn: list))
         }
-        // The buffers still queued were enqueued retained and would leak with the
-        // queue. Draining is safe only once the dropped device is not in the device
-        // list at all, whether it went away or another device replaced it: CMIO has
-        // then torn down its streams and no longer dequeues from this queue, and
-        // `enqueue` can't reach it since it left the state above. While the old
+        // The buffers still in a dropped device's sink queue were enqueued retained
+        // and would leak with the queue. Draining is safe only once the device is not
+        // in the device list at all, however it was dropped (it went away, another
+        // device replaced it in one change, or discovery found its replacement
+        // first): CMIO has then torn down its streams and no longer dequeues from
+        // the queue, and `enqueue` can't reach it since it left the state. While the
         // device is still listed, or the list couldn't be read, CMIO may still be
         // dequeuing, and a second thread dequeuing alongside it would corrupt the
-        // queue, so its buffers are left alone.
-        unlistedResources?.queue.releaseRetainedElements()
+        // queue, so it waits in `retiredQueues` for a later list.
+        for resources in unlistedQueues {
+            resources.queue.releaseRetainedElements()
+        }
         return action
     }
 }
