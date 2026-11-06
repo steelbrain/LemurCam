@@ -2,6 +2,7 @@ import Image from "next/image";
 import type { ReactNode } from "react";
 import AppWindow from "./components/AppWindow";
 import { BridgeProvider } from "./components/Bridge";
+import OtherAppsDemo from "./components/OtherAppsDemo";
 import PopoverDemo from "./components/PopoverDemo";
 import SetupWindow from "./components/SetupWindow";
 
@@ -147,6 +148,30 @@ export default function Home() {
             <PopoverDemo />
           </div>
         </section>
+
+        <Section id="other-apps" title="What other apps see">
+          <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,560px)] lg:gap-16">
+            <Prose>
+              <p>
+                LemurCam adds one camera to your Mac, named LemurCam. If you set up the optional
+                microphone, it also adds an audio input named LemurCam Microphone, which carries the
+                camera’s sound.
+              </p>
+              <p>
+                LemurCam connects to your IP camera only while something is using it: an app using the
+                LemurCam camera or microphone, or the live preview in the menu bar popover or in
+                Settings. When nothing is, it disconnects and leaves the camera alone.
+              </p>
+              <p>
+                When there is no video to send, the camera shows a message such as “Connecting in
+                LemurCam” instead. The message is drawn twice, the second copy mirrored.
+              </p>
+            </Prose>
+            <div className="mt-2 lg:mt-4">
+              <OtherAppsDemo />
+            </div>
+          </div>
+        </Section>
 
         <Section id="setup" title="Guided setup">
           <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_560px] lg:gap-16">
