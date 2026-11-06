@@ -121,15 +121,16 @@ internal final class LemurCamStreamStateTests: XCTestCase {
     }
 
     /// A device list that can't be read says nothing about whether the device is
-    /// gone, so its buffers are left alone.
+    /// gone, so the device keeps its queue and the buffers in it.
     func testAnUnreadableDeviceListKeepsTheQueuedBuffers() throws {
         let state = LemurCamStreamState()
         let queue = try makeQueue(capacity: Int32(Tuning.sinkBufferQueueSize))
         try connect(state, queue: queue)
         XCTAssertTrue(state.enqueue(try makeSampleBuffer()))
 
-        XCTAssertEqual(state.deviceListChanged(.unreadable), .deviceLost)
+        XCTAssertEqual(state.deviceListChanged(.unreadable), .recheck)
         XCTAssertEqual(CMSimpleQueueGetCount(queue), 1)
+        XCTAssertTrue(state.hasStreamResources)
 
         XCTAssertEqual(SendableSimpleQueue(queue).releaseRetainedElements(), 1)
     }

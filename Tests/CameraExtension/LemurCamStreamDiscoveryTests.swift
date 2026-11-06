@@ -140,6 +140,56 @@ internal final class LemurCamStreamDiscoveryTests: XCTestCase {
         XCTAssertEqual(state.prepareRetry(maxRetries: maxRetries), .idle, "wait for the device to come back")
     }
 
+    /// A USB or Continuity camera appearing while an app uses LemurCam changes the
+    /// device list. When that read fails, or LemurCam's UID can't be read in it,
+    /// nothing in it is identified as LemurCam's. That used to count as the device
+    /// going away: its IDs and sink queue were dropped without stopping the sink
+    /// stream, and the app was told the consumer was gone, pausing the camera stream
+    /// under an app still showing it.
+    func testAListThatDoesNotIdentifyTheCachedDeviceKeepsItsStream() throws {
+        let state = LemurCamStreamState()
+        discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
+        try connect(state)
+
+        let unidentified = CMIODeviceList.read(deviceIDs: [oldDevice.deviceID, 30], lemurDeviceID: nil)
+        XCTAssertEqual(state.deviceListChanged(unidentified), .recheck)
+        XCTAssertEqual(state.deviceListChanged(.unreadable), .recheck)
+
+        XCTAssertTrue(state.isReady)
+        XCTAssertTrue(state.isStreaming)
+        XCTAssertTrue(state.hasStreamResources)
+        let stop = try XCTUnwrap(state.stopStreaming(), "the sink stream must still be stoppable")
+        XCTAssertEqual(stop.deviceID, oldDevice.deviceID)
+        XCTAssertEqual(stop.streamID, oldDevice.streamID)
+    }
+
+    /// Unidentified reads ask for a bounded number of rechecks; identifying the
+    /// cached device again gives a fresh budget.
+    func testRechecksStopAtTheLimitUntilTheDeviceIsIdentifiedAgain() {
+        let state = LemurCamStreamState()
+        discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
+
+        XCTAssertEqual(state.deviceListChanged(.unreadable, maxRechecks: 2), .recheck)
+        XCTAssertEqual(state.deviceListChanged(.unreadable, maxRechecks: 2), .recheck)
+        XCTAssertEqual(state.deviceListChanged(.unreadable, maxRechecks: 2), .unchanged, "no more rechecks")
+        XCTAssertTrue(state.isReady)
+
+        XCTAssertEqual(state.deviceListChanged(.lemur(oldDevice.deviceID), maxRechecks: 2), .unchanged)
+        XCTAssertEqual(state.deviceListChanged(.unreadable, maxRechecks: 2), .recheck, "a fresh budget")
+    }
+
+    /// A readable list that no longer holds the cached device still means it went
+    /// away, even when no device in it could be identified.
+    func testAReadableListWithoutTheCachedDeviceLosesIt() throws {
+        let state = LemurCamStreamState()
+        discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))
+        try connect(state)
+
+        XCTAssertEqual(state.deviceListChanged(.read(deviceIDs: [30], lemurDeviceID: nil)), .deviceLost)
+        XCTAssertFalse(state.isReady)
+        XCTAssertFalse(state.isStreaming)
+    }
+
     func testReturningDeviceIsRediscoveredAndStartsFresh() throws {
         let state = LemurCamStreamState()
         discover(oldDevice, in: state, expecting: .ready(deviceID: oldDevice.deviceID))

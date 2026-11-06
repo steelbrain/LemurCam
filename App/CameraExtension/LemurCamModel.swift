@@ -17,6 +17,10 @@ internal final class LemurCamModel: Sendable {
     /// succeeds, before this app starts its own sink stream. Injected for testability.
     private let consumerProbe: @Sendable (CMIODeviceID) -> Bool
 
+    /// Reads the CMIO device list after a change, on `discoveryQueue`. Injected for
+    /// testability.
+    private let deviceListReader: @Sendable () -> CMIODeviceList
+
     /// CMIO device-list listener, installed by the first `beginDiscovery()`. Its
     /// callbacks run on `discoveryQueue`, serialized with discovery itself.
     private let deviceListObserver = OSAllocatedUnfairLock<CMIODeviceListObserver?>(uncheckedState: nil)
@@ -40,9 +44,11 @@ internal final class LemurCamModel: Sendable {
     init(
         consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
-        }
+        },
+        deviceListReader: @escaping @Sendable () -> CMIODeviceList = { CoreMediaIOUtil.deviceList() }
     ) {
         self.consumerProbe = consumerProbe
+        self.deviceListReader = deviceListReader
         observeConsumerChanges()
     }
 
@@ -176,7 +182,7 @@ internal final class LemurCamModel: Sendable {
     /// Runs on `discoveryQueue`, so the lookup is ordered with discovery passes:
     /// a discovery result applied after this change is never older than it.
     private func deviceListChanged() {
-        let list = CoreMediaIOUtil.deviceList()
+        let list = deviceListReader()
         DispatchQueue.main.async { [weak self] in
             self?.applyDeviceListChange(list)
         }
@@ -185,12 +191,20 @@ internal final class LemurCamModel: Sendable {
     /// The extension was disabled, re-enabled, repaired, replaced or crashed: the
     /// cached device/stream IDs (and a sink stream stuck "streaming" because no
     /// `consumerStopped` arrived) belong to a device that no longer exists. Its
-    /// consumers went with it. Internal so tests can apply changes without CMIO.
+    /// consumers went with it. A list that couldn't be read or didn't identify the
+    /// device keeps them, and is read again. Internal so tests can apply changes
+    /// without CMIO.
     @MainActor
     func applyDeviceListChange(_ list: CMIODeviceList) {
         switch streamState.deviceListChanged(list) {
         case .unchanged:
             return
+        case .recheck:
+            Log.ipc.info("Couldn't identify the virtual camera in the CMIO device list; keeping its IDs, reading again")
+            // Ordered with discovery passes and listener callbacks, like a change.
+            discoveryQueue.asyncAfter(deadline: .now() + Tuning.setupRetryDelay) { [weak self] in
+                self?.deviceListChanged()
+            }
         case .deviceLost:
             Log.ipc.info("Virtual camera device went away; dropped its cached CMIO IDs and sink stream")
             onExternalConsumerChange?(false)

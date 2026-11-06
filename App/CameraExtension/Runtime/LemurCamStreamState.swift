@@ -61,7 +61,9 @@ internal final class CMIOStreamQueueResources: Sendable {
 /// device: when the extension is disabled, re-enabled, repaired, replaced or
 /// crashes, the device goes away and comes back as a new CMIO object. So the
 /// cache is dropped whenever the device list no longer shows the cached device
-/// (`deviceListChanged`) and whenever a re-run discovery finds different IDs.
+/// (`deviceListChanged`) and whenever a re-run discovery finds different IDs. A
+/// list that can't be read, or that doesn't say which device is LemurCam's, drops
+/// nothing: it is read again instead.
 internal final class LemurCamStreamState: Sendable {
     internal struct StartSnapshot: Sendable {
         let deviceID: CMIODeviceID
@@ -92,6 +94,11 @@ internal final class LemurCamStreamState: Sendable {
     internal enum DeviceListChangeAction: Equatable {
         /// The cached device is still there, or discovery isn't wanted yet.
         case unchanged
+        /// The list couldn't be read, or none of its devices could be identified as
+        /// LemurCam's (a UID read failed) while it may still hold the cached device.
+        /// Nothing shows the device went away, so its IDs and sink stream are kept;
+        /// read the list again.
+        case recheck
         /// The cached device went away. Its IDs and sink stream are dropped; wait
         /// for the device to come back.
         case deviceLost
@@ -118,6 +125,9 @@ internal final class LemurCamStreamState: Sendable {
         var discoveryRequested = false
         /// A retry timer is armed; keeps duplicate timers from stacking up.
         var retryScheduled = false
+        /// Rechecks asked for since the cached device was last identified in the
+        /// device list (`DeviceListChangeAction.recheck`); bounds them.
+        var rechecks = 0
 
         var isReady: Bool { deviceID != nil && streamID != nil }
 
@@ -134,12 +144,42 @@ internal final class LemurCamStreamState: Sendable {
             deviceID = nil
             streamID = nil
             hasConnectedOnce = false
+            rechecks = 0
             return dropped
         }
 
         mutating func armDiscovery() {
             discoveryPending = true
             setupRetries = 0
+        }
+
+        /// What the device list `list` means for the cached device `cachedDeviceID`.
+        /// Also returns the sink queue resources it dropped when `list` shows the
+        /// device is no longer listed (see `deviceListChanged`).
+        mutating func applyDeviceList(
+            _ list: CMIODeviceList, cachedDeviceID: CMIODeviceID, maxRechecks: Int
+        ) -> (DeviceListChangeAction, CMIOStreamQueueResources?) {
+            let lemurDeviceID = list.lemurDeviceID
+            if cachedDeviceID == lemurDeviceID {
+                rechecks = 0
+                return (.unchanged, nil)
+            }
+            // The list may still hold the cached device and names no other as
+            // LemurCam's: a failed read, not a lost device. Dropping it here would
+            // leave a consumer's sink stream fed by nothing.
+            if lemurDeviceID == nil, list.mayList(cachedDeviceID) {
+                guard rechecks < maxRechecks else { return (.unchanged, nil) }
+                rechecks += 1
+                return (.recheck, nil)
+            }
+            let dropped = dropDevice()
+            let drainable = list.mayList(cachedDeviceID) ? nil : dropped
+            guard lemurDeviceID != nil else {
+                discoveryPending = false
+                return (.deviceLost, drainable)
+            }
+            armDiscovery()
+            return (.deviceReplaced, drainable)
         }
     }
 
@@ -276,7 +316,8 @@ extension LemurCamStreamState {
             state.isDiscovering = false
             guard let result else {
                 // A re-run that missed while a device is cached: had the device gone,
-                // `deviceListChanged` would have dropped it, so keep it and stop.
+                // `deviceListChanged` (or a recheck it asked for) would have dropped
+                // it, so keep it and stop.
                 guard !state.isReady else {
                     state.discoveryPending = false
                     return .alreadyReady
@@ -296,27 +337,22 @@ extension LemurCamStreamState {
 
     /// The CMIO device list changed to `list`. Drops the cache when the cached
     /// device is gone or was replaced, and arms discovery when a device is there to
-    /// find. Device-list changes start discovery only after setup has asked for it
+    /// find. A list that can't tell whether the cached device is still there asks
+    /// for a recheck, at most `maxRechecks` times until the device is identified
+    /// again. Device-list changes start discovery only after setup has asked for it
     /// once (`requestDiscovery`), and not while a pass is already in flight: that
     /// pass starts after this lookup (both run on the same serial queue), so its
     /// result is at least as fresh.
-    func deviceListChanged(_ list: CMIODeviceList) -> DeviceListChangeAction {
-        let lemurDeviceID = list.lemurDeviceID
+    func deviceListChanged(
+        _ list: CMIODeviceList, maxRechecks: Int = Tuning.maxSetupRetries
+    ) -> DeviceListChangeAction {
         let (action, unlistedResources) = state.withLock { state -> (
             DeviceListChangeAction, CMIOStreamQueueResources?
         ) in
             if let cachedDeviceID = state.deviceID {
-                guard cachedDeviceID != lemurDeviceID else { return (.unchanged, nil) }
-                let dropped = state.dropDevice()
-                let drainable = list.mayList(cachedDeviceID) ? nil : dropped
-                guard lemurDeviceID != nil else {
-                    state.discoveryPending = false
-                    return (.deviceLost, drainable)
-                }
-                state.armDiscovery()
-                return (.deviceReplaced, drainable)
+                return state.applyDeviceList(list, cachedDeviceID: cachedDeviceID, maxRechecks: maxRechecks)
             }
-            guard state.discoveryRequested, lemurDeviceID != nil, !state.isDiscovering else {
+            guard state.discoveryRequested, list.lemurDeviceID != nil, !state.isDiscovering else {
                 return (.unchanged, nil)
             }
             state.armDiscovery()

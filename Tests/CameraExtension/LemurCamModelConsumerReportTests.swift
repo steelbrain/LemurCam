@@ -14,21 +14,31 @@ internal final class LemurCamModelConsumerReportTests: XCTestCase {
     private let device: (deviceID: CMIODeviceID, streamID: CMIOStreamID) = (deviceID: 10, streamID: 11)
 
     /// A model whose probe sees no consumer (so it never starts a sink stream on a
-    /// real CMIO device), recording the devices it probed and what it reported.
+    /// real CMIO device) and whose device-list reads return `deviceList`, recording
+    /// the devices it probed, how often it read the list, and what it reported.
     private struct Fixture {
         let model: LemurCamModel
         let probedDevices = OSAllocatedUnfairLock<[CMIODeviceID]>(initialState: [])
+        let deviceListReads = OSAllocatedUnfairLock(initialState: 0)
         let reportedConsumers = OSAllocatedUnfairLock<[Bool]>(initialState: [])
 
         var probed: [CMIODeviceID] { probedDevices.withLock { $0 } }
+        var listReads: Int { deviceListReads.withLock { $0 } }
         var reports: [Bool] { reportedConsumers.withLock { $0 } }
 
-        init() {
+        init(deviceList: CMIODeviceList = .empty) {
             let probes = probedDevices
-            model = LemurCamModel { deviceID in
-                probes.withLock { $0.append(deviceID) }
-                return false
-            }
+            let reads = deviceListReads
+            model = LemurCamModel(
+                consumerProbe: { deviceID in
+                    probes.withLock { $0.append(deviceID) }
+                    return false
+                },
+                deviceListReader: {
+                    reads.withLock { $0 += 1 }
+                    return deviceList
+                }
+            )
             let recorded = reportedConsumers
             model.onExternalConsumerChange = { hasConsumer in
                 recorded.withLock { $0.append(hasConsumer) }
@@ -75,5 +85,35 @@ internal final class LemurCamModelConsumerReportTests: XCTestCase {
         fixture.model.applyDeviceListChange(.empty)
 
         XCTAssertEqual(fixture.reports, [])
+    }
+
+    /// A device-list change that couldn't be read, or that didn't identify the
+    /// device, used to report no consumer: the camera stream paused under an app
+    /// still showing it. It reports nothing, and the list is read again.
+    func testAnUnidentifiedDeviceListReportsNothingAndIsReadAgain() async {
+        let fixture = Fixture(deviceList: .lemur(device.deviceID))
+        fixture.model.applyDiscoveryResult(device)
+
+        fixture.model.applyDeviceListChange(.unreadable)
+        XCTAssertEqual(fixture.reports, [false], "only discovery's report")
+
+        let readAgain = await waitUntil(timeout: 5) { fixture.listReads == 1 }
+        XCTAssertTrue(readAgain, "the list must be read again")
+        XCTAssertEqual(fixture.reports, [false])
+    }
+
+    /// The device did go away during the unidentified change: the second read
+    /// finds it gone and reports that its consumers went with it.
+    func testARecheckThatFindsTheDeviceGoneReportsNoConsumer() async {
+        let fixture = Fixture(deviceList: .empty)
+        fixture.model.applyDiscoveryResult(device)
+
+        fixture.model.applyDeviceListChange(.read(deviceIDs: [device.deviceID], lemurDeviceID: nil))
+        XCTAssertEqual(fixture.reports, [false], "only discovery's report")
+
+        let reported = await waitUntil(timeout: 5) { fixture.reports.count == 2 }
+        XCTAssertTrue(reported, "the recheck must report the lost device")
+        XCTAssertEqual(fixture.reports, [false, false])
+        XCTAssertEqual(fixture.listReads, 1)
     }
 }
