@@ -102,6 +102,25 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertEqual(try scratch.pluginsEntries(), [bundleName])
     }
 
+    func testUnsealedInstalledCopyIsReplacedWhateverVersionItClaims() throws {
+        // Copies installed before the helper sealed them were user-owned, so anything
+        // running as the user could rewrite their version. A version read from such a
+        // copy must not block the install (or keep that copy in place).
+        let loosen: [(String, mode_t)] = [("Contents/Info.plist", 0o666), ("Contents/MacOS", 0o777)]
+        for (entry, mode) in loosen {
+            let scratch = try Scratch()
+            try Support.makeDriver(in: scratch.plugins, version: "999")
+            try Support.check(chmod("\(scratch.installedPath)/\(entry)", mode))
+
+            XCTAssertNoThrow(try scratch.installer().install(from: scratch.source(version: "6")), entry)
+            XCTAssertEqual(scratch.installer().installedVersion(), "6", entry)
+            let audit = try Support.withDirectory(scratch.plugins) {
+                DriverBundleFiles.audit($0, name: bundleName, owner: Support.owner)
+            }
+            XCTAssertEqual(audit, [], entry)
+        }
+    }
+
     func testSameVersionReinstallAndUninstallThenOlderInstallAreAllowed() throws {
         let scratch = try Scratch()
         try scratch.installer().install(from: scratch.source(version: "7"))

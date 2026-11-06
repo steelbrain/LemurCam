@@ -149,6 +149,27 @@ internal final class DriverBundleFilesTests: XCTestCase {
         }
     }
 
+    func testIsSealedStopsAtTheFirstProblem() throws {
+        try withScratch { root in
+            let tree = try Support.makeDriver(in: root, version: "5")
+            XCTAssertTrue(try Support.withDirectory(root) {
+                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner)
+            })
+            XCTAssertFalse(try Support.withDirectory(root) { Files.isSealed($0, name: "Absent.driver", owner: owner) })
+
+            try Support.check(chmod("\(tree)/Contents/Info.plist", 0o666))
+            try Support.check(chmod("\(tree)/Contents/MacOS/LemurCamAudio", 0o777))
+            XCTAssertEqual(try audit(root, LemurAudioHelper.driverBundleName).count, 2)
+            let first = try Support.withDirectory(root) {
+                Files.audit($0, name: LemurAudioHelper.driverBundleName, owner: owner, limit: 1)
+            }
+            XCTAssertEqual(first.count, 1)
+            XCTAssertFalse(try Support.withDirectory(root) {
+                Files.isSealed($0, name: LemurAudioHelper.driverBundleName, owner: owner)
+            })
+        }
+    }
+
     // MARK: - Remove
 
     func testRemoveTreeDeletesTheTreeButNothingItLinksTo() throws {

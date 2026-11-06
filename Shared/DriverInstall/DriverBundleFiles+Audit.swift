@@ -7,18 +7,43 @@ extension DriverBundleFiles {
     /// Every reason the tree at `name` inside `parent` could be modified by anyone
     /// but `owner`: entries owned by someone else, writable by group or others,
     /// setuid/setgid/sticky bits, an ACL, a hard-linked file, a symlink, or a special
-    /// file. Empty means the tree is sealed to `owner`.
-    static func audit(_ parent: Int32, name: String, owner: Owner) -> [String] {
-        var problems: [String] = []
+    /// file. Empty means the tree is sealed to `owner`. With `limit`, stops after
+    /// that many problems.
+    static func audit(_ parent: Int32, name: String, owner: Owner, limit: Int = .max) -> [String] {
+        var problems = Problems(limit: limit)
         auditEntry(Entry(name), in: parent, path: name, depth: 0, owner: owner, problems: &problems)
-        return problems
+        return problems.found
+    }
+
+    /// Whether the tree at `name` inside `parent` exists and is sealed to `owner`:
+    /// `audit` reports nothing. Stops at the first problem, so a large tree someone
+    /// else can write to is not walked in full.
+    static func isSealed(_ parent: Int32, name: String, owner: Owner) -> Bool {
+        audit(parent, name: name, owner: owner, limit: 1).isEmpty
+    }
+
+    /// Problems found so far, up to `limit`.
+    private struct Problems {
+        let limit: Int
+        var found: [String] = []
+
+        var isFull: Bool { found.count >= limit }
+
+        mutating func append(_ problem: String) {
+            if !isFull { found.append(problem) }
+        }
+
+        static func += (problems: inout Self, more: [String]) {
+            more.forEach { problems.append($0) }
+        }
     }
 
     // Parameters mirror the recursion state; grouping them would only hide it.
     // swiftlint:disable:next function_parameter_count
     private static func auditEntry(
-        _ entry: Entry, in parent: Int32, path: String, depth: Int, owner: Owner, problems: inout [String]
+        _ entry: Entry, in parent: Int32, path: String, depth: Int, owner: Owner, problems: inout Problems
     ) {
+        guard !problems.isFull else { return }
         guard let info = try? status(at: parent, entry) else {
             problems.append("\(path): missing or unreadable")
             return

@@ -8,8 +8,9 @@ import Foundation
 /// Install: copy the source into a fresh private staging directory (0700, owned by
 /// `owner`, unique per request) so no other user can touch the copy; give every
 /// entry to `owner` with no group/other write; audit that; validate the code
-/// signature of exactly those bytes; refuse a downgrade; then swap it into place with
-/// one atomic rename. Removal of the previous copy and of staging never follows
+/// signature of exactly those bytes; refuse a downgrade of a sealed installed copy
+/// (an unsealed one is always replaced); then swap it into place with one atomic
+/// rename. Removal of the previous copy and of staging never follows
 /// symlinks. Callers must serialise operations (the helper runs them on one queue).
 internal struct DriverInstaller {
     typealias Files = DriverBundleFiles
@@ -53,7 +54,12 @@ internal struct DriverInstaller {
         if let failure = validateSignature(stagedPath) {
             throw Files.Failure(description: "Driver signature validation failed: \(failure)")
         }
-        if let installed = Files.bundleVersion(at: plugins, bundle: bundleName),
+        // Only a copy sealed to `owner` has a version worth defending. One that
+        // anyone else can write to (every copy installed before the helper sealed
+        // them was user-owned) could carry any CFBundleVersion, and must be
+        // replaced, not allowed to block every later install.
+        if Files.isSealed(plugins, name: bundleName, owner: owner),
+           let installed = Files.bundleVersion(at: plugins, bundle: bundleName),
            let staged = Files.bundleVersion(at: staging.descriptor, bundle: bundleName),
            Self.isDowngrade(from: installed, to: staged) {
             throw Files.Failure(description:
