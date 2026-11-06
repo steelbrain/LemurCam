@@ -61,7 +61,7 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
         // Replies are delivered synchronously in startLoading; nothing to cancel.
     }
 
-    private static func body(of request: URLRequest) -> Data {
+    static func body(of request: URLRequest) -> Data {
         if let body = request.httpBody { return body }
         guard let stream = request.httpBodyStream else { return Data() }
         stream.open()
@@ -74,5 +74,16 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
             data.append(buffer, count: count)
         }
         return data
+    }
+}
+
+/// Collects request bodies seen by a stub handler (handlers run off the test thread).
+internal final class CapturedBodies: Sendable {
+    private let bodies = OSAllocatedUnfairLock<[Data]>(initialState: [])
+
+    var all: [Data] { bodies.withLock { $0 } }
+
+    func append(_ body: Data) {
+        bodies.withLock { $0.append(body) }
     }
 }

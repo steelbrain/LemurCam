@@ -1,9 +1,6 @@
-import CryptoKit
 import Foundation
+import Security
 import XMLKit
-
-private typealias XElement = XMLKit.XMLElement
-private typealias XNode = XMLKit.XMLNode
 
 /// Sendable: every stored property is immutable and Sendable (`URLSession` is
 /// itself Sendable), so instances are safe to pass into tasks.
@@ -39,122 +36,42 @@ internal final class ONVIFClient: Sendable {
     // MARK: - Public
 
     func getProfiles() async throws -> [ONVIFProfile] {
-        var body = XElement.build("GetProfiles")
-        body.namespace = "http://www.onvif.org/ver10/media/wsdl"
-        let data = try await post(path: "/onvif/media", body: buildSOAPRequest(body: body))
+        let data = try await post(path: "/onvif/media", body: ONVIFSOAP.getProfiles())
         return try parseProfiles(data)
     }
 
     func getDeviceInformation() async throws -> ONVIFDeviceInfo {
-        var body = XElement.build("GetDeviceInformation")
-        body.namespace = "http://www.onvif.org/ver10/device/wsdl"
-        let data = try await post(path: "/onvif/device_service", body: buildSOAPRequest(body: body))
+        let data = try await post(path: "/onvif/device_service", body: ONVIFSOAP.getDeviceInformation())
         return try parseDeviceInformation(data)
     }
 
     func getStreamURI(profileToken: String) async throws -> String {
-        var stream = XElement.build("Stream") { "RTP-Unicast" }
-        stream.namespace = "http://www.onvif.org/ver10/schema"
-        var transport = XElement.build("Transport") {
-            XElement.build("Protocol") { "RTSP" }
-        }
-        transport.namespace = "http://www.onvif.org/ver10/schema"
-
-        let body = XElement.build("GetStreamUri") {
-            XElement.build("StreamSetup") {
-                stream
-                transport
-            }
-            XElement.build("ProfileToken") { profileToken }
-        }
-        let data = try await post(
-            path: "/onvif/media",
-            body: buildSOAPRequest(body: body, bodyNamespace: "http://www.onvif.org/ver10/media/wsdl")
-        )
+        let data = try await post(path: "/onvif/media", body: ONVIFSOAP.getStreamURI(profileToken: profileToken))
         return try parseStreamURI(data)
     }
 
     // MARK: - SOAP
 
-    private func buildSOAPRequest(body: XElement, bodyNamespace: String? = nil) -> String {
-        var bodyElement = body
-        if let ns = bodyNamespace {
-            bodyElement.namespace = ns
-        }
-
-        var envelope = soapElement("Envelope") {
-            soapElement("Header") {
-                if let securityElement = buildSecurityHeader() {
-                    securityElement
-                }
-            }
-            soapElement("Body") {
-                bodyElement
-            }
-        }
-        envelope.namespaces = XMLNamespaceMap(["s": "http://www.w3.org/2003/05/soap-envelope"])
-        return envelope.write()
+    /// The full SOAP envelope for `body`, signed with a fresh WS-Security
+    /// UsernameToken when the client has credentials.
+    func requestEnvelope(body: XMLKit.XMLElement) -> String {
+        ONVIFSOAP.envelope(body: body, security: usernameToken())
     }
 
-    private func soapElement(
-        _ name: String,
-        @XMLBuilder content: () -> [XNode]
-    ) -> XElement {
-        var el = XElement.build(name, content: content)
-        el.prefix = "s"
-        return el
-    }
-
-    private func buildSecurityHeader() -> XElement? {
+    private func usernameToken() -> ONVIFSOAP.UsernameToken? {
         guard let username, let password, !username.isEmpty else { return nil }
-
         var nonceBytes = [UInt8](repeating: 0, count: 16)
         if SecRandomCopyBytes(kSecRandomDefault, nonceBytes.count, &nonceBytes) != errSecSuccess {
             for idx in nonceBytes.indices { nonceBytes[idx] = UInt8.random(in: 0...255) }
         }
-        let nonceData = Data(nonceBytes)
-        let nonceBase64 = nonceData.base64EncodedString()
-
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        let created = formatter.string(from: Date())
-
-        // Digest = Base64(SHA1(nonce + created + password))
-        var digestInput = Data()
-        digestInput.append(nonceData)
-        digestInput.append(Data(created.utf8))
-        digestInput.append(Data(password.utf8))
-        let digest = Insecure.SHA1.hash(data: digestInput)
-        let digestBase64 = Data(digest).base64EncodedString()
-
-        let wsse = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
-        let wsu = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
-
-        var createdEl = XElement.build("Created") { created }
-        createdEl.namespace = wsu
-
-        var security = XElement.build("Security") {
-            XElement.build("UsernameToken") {
-                XElement.build("Username") { username }
-                XElement.build("Password", attributes: [
-                    "Type": "http://docs.oasis-open.org/wss/2004/01/"
-                        + "oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
-                ]) { digestBase64 }
-                XElement.build("Nonce", attributes: [
-                    "EncodingType": "http://docs.oasis-open.org/wss/2004/01/"
-                        + "oasis-200401-wss-soap-message-security-1.0#Base64Binary"
-                ]) { nonceBase64 }
-                createdEl
-            }
-        }
-        security.namespace = wsse
-        security.attributes["s:mustUnderstand"] = "true"
-        return security
+        return ONVIFSOAP.UsernameToken(
+            username: username, password: password, nonce: Data(nonceBytes), created: Date()
+        )
     }
 
     // MARK: - HTTP
 
-    private func post(path: String, body: String) async throws -> Data {
+    private func post(path: String, body: XMLKit.XMLElement) async throws -> Data {
         let scheme = useHTTPS ? "https" : "http"
         guard let url = URL(string: "\(scheme)://\(host):\(port)\(path)") else {
             throw ONVIFError.invalidURL
@@ -163,7 +80,7 @@ internal final class ONVIFClient: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/soap+xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data(body.utf8)
+        request.httpBody = Data(requestEnvelope(body: body).utf8)
 
         let (data, response) = try await send(request)
 
