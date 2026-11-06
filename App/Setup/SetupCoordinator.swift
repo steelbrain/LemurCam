@@ -150,6 +150,14 @@ internal final class SetupCoordinator {
         refreshMicrophoneStatus()
     }
 
+    /// "Re-check Now": `refreshAll`, but the user asked to look again, so the
+    /// microphone shows what its check finds even over a failure held up for them
+    /// (see `recheckMicrophone`).
+    func recheckAll() {
+        cameraController.refreshStatus()
+        recheckMicrophone()
+    }
+
     // MARK: - Camera Actions
 
     /// Trigger (or re-trigger) camera-extension activation. Re-prompts approval if
@@ -259,6 +267,19 @@ extension SetupCoordinator {
     func acknowledgeMicrophoneFailure() {
         guard micOperationFailure != nil else { return }
         micOperationFailure = nil
+        refreshMicrophoneStatus()
+    }
+
+    /// The microphone half of "Re-check Now". Routine refreshes leave a failed
+    /// install's or removal's reason up; this explicit check lets it go and shows
+    /// "Working…" until the check lands, so its result replaces the reason even when
+    /// the helper does not answer. Nothing is redone: that is Try Again
+    /// (`retryMicrophone`).
+    func recheckMicrophone() {
+        if micOperationFailure != nil, !isInstallingDriver {
+            micOperationFailure = nil
+            micStatus = .unknown
+        }
         refreshMicrophoneStatus()
     }
 

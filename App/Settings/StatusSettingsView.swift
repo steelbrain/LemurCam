@@ -54,7 +54,7 @@ internal struct StatusSettingsView: View {
         HStack {
             Button("Open Guided Setup\u{2026}") { openSetup?() }
             Spacer()
-            Button("Re-check Now") { setup.refreshAll() }
+            Button("Re-check Now") { setup.recheckAll() }
         }
         .padding(.horizontal, 4)
     }
