@@ -387,7 +387,8 @@ private extension SourceManager {
     /// message saying how to write the `@`, and the edit form asks for the same fix. An
     /// ONVIF stream URI goes by the rule it is saved and connected to by
     /// (`SourceCredentials.strippingUserInfo(fromReportedURI:onvifHost:)`), which splits
-    /// it only where its last `@` ends a login, and drops the login it takes out.
+    /// it only where its last `@` ends a login, drops the login it takes out, and
+    /// writes `%40` for an `@` after the camera's host that IPCamKit would refuse.
     func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {
@@ -417,7 +418,7 @@ private extension SourceManager {
         }
         guard migrated > 0 else { return }
         saveSources()
-        Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
+        Log.app.info("Rewrote \(migrated) saved camera URL(s) to take out credentials or let IPCamKit read them")
     }
 
     /// Whether the credentials are gone. A failed delete is logged; after a removal, or

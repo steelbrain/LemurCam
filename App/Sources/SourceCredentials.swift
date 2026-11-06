@@ -101,9 +101,11 @@ internal extension SourceCredentials {
     /// it is. That userinfo can hold what IPCamKit refuses in a URL to connect to (a
     /// space: `rtsp://admin:pa ss@cam/s`), or stand before an `@` in the query that
     /// makes the URL ambiguous to it (`rtsp://admin:pw@cam/s?a=b@c`), so it is taken
-    /// out for connecting too. The URL is nil for a URI `URLComponents` can't read
-    /// that is not split: a login in it could not be taken out, and nothing could
-    /// connect to it anyway.
+    /// out for connecting too. An `@` after the host that still makes the URL
+    /// ambiguous to IPCamKit is written `%40` when the host is the camera's
+    /// (`escapingAtSignsAfterTheHost(of:reportedBy:)`). The URL is nil for a URI
+    /// `URLComponents` can't read that is not split: a login in it could not be taken
+    /// out, and nothing could connect to it anyway.
     static func extractingLogin(
         fromReportedURI uri: String, onvifHost: String
     ) -> (url: String?, credentials: SourceCredentials?) {
@@ -113,7 +115,7 @@ internal extension SourceCredentials {
         }
         if hasAmbiguousUserInfo(uri), URLComponents(cameraURL: uri) == nil { return (nil, nil) }
         let readable = extractingReadableLogin(from: uri)
-        return (readable.url, readable.login?.credentials)
+        return (escapingAtSignsAfterTheHost(of: readable.url, reportedBy: onvifHost), readable.login?.credentials)
     }
 
     /// Whether `urlString` has an `@` after its host that may end a user name or
@@ -138,6 +140,26 @@ private extension SourceCredentials {
         components.user = nil
         components.password = nil
         return (components.string ?? urlString, login)
+    }
+
+    /// `url`, a stream URI the camera at `onvifHost` reported, its login taken out, with
+    /// each `@` after its host written `%40` when IPCamKit would refuse it as ambiguous
+    /// (`hasAmbiguousUserInfo`) and the host `URLComponents` reads in it is the camera's.
+    /// Such an `@` is in the path, query or fragment, but with a port in the URL
+    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`) IPCamKit can't tell it from the
+    /// end of a login, so the camera never streamed, and an ONVIF camera has no URL
+    /// field where it could be written `%40`. The host has to be the camera's: where
+    /// `URLComponents` reads a login as the address (`rtsp://viewer:12/34@192.0.2.9/s`
+    /// as host `viewer`, port 12), the saved login would go there. The URL is written as
+    /// `URLComponents(cameraURL:)` reads it. Otherwise `url` as it is.
+    static func escapingAtSignsAfterTheHost(of url: String, reportedBy onvifHost: String) -> String {
+        guard hasAmbiguousUserInfo(url), var components = URLComponents(cameraURL: url),
+              let host = components.host, comparableHost(host) == comparableHost(onvifHost) else { return url }
+        let escaped = { (part: String) in part.replacingOccurrences(of: "@", with: "%40") }
+        components.percentEncodedPath = escaped(components.percentEncodedPath)
+        components.percentEncodedQuery = components.percentEncodedQuery.map(escaped)
+        components.percentEncodedFragment = components.percentEncodedFragment.map(escaped)
+        return components.string ?? url
     }
 
     /// The host at the start of `url`'s authority, read by hand: a bracketed IPv6

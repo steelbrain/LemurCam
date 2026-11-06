@@ -153,12 +153,14 @@ internal final class ReportedStreamURITests: XCTestCase {
     }
 
     func testStrippingAReportedURI() {
+        // An `@` after the host of a URI with a port is written `%40`
+        // (`ONVIFUnsplitURILoginTests`).
         let cases = [
             "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024":
-                "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024",
+                "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n%402024",
             "rtsp://192.0.2.5:554/user=admin_password=Adm1n@2024_channel=1":
-                "rtsp://192.0.2.5:554/user=admin_password=Adm1n@2024_channel=1",
-            "rtsp://admin:pw@192.0.2.5:554/live?password=Adm1n@2024": "rtsp://192.0.2.5:554/live?password=Adm1n@2024",
+                "rtsp://192.0.2.5:554/user=admin_password=Adm1n%402024_channel=1",
+            "rtsp://admin:pw@192.0.2.5:554/live?password=Adm1n@2024": "rtsp://192.0.2.5:554/live?password=Adm1n%402024",
             "rtsp://admin:1234/5@192.0.2.5/s": "rtsp://192.0.2.5/s",
             "rtsp://user:p#ss@192.0.2.5/s": "rtsp://192.0.2.5/s",
             "rtsp://user:p#ss@192.0.2.9/s": "rtsp://192.0.2.9/s",
@@ -200,14 +202,31 @@ internal final class ReportedStreamURITests: XCTestCase {
         return (info.streamURI, try String(contentsOf: fileURL, encoding: .utf8))
     }
 
+    /// With its `@` written `%40`, which IPCamKit requires with a port in the URI.
     func testALoginInTheQueryIsSavedWithTheAddress() throws {
         let reported = "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024"
-        XCTAssertEqual(try save(reported: reported).uri, reported)
+        XCTAssertEqual(try save(reported: reported).uri, "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n%402024")
+    }
+
+    /// A URI saved as reported, which IPCamKit refused as the fallback too, is
+    /// written so on load.
+    func testAStoredURIWithAnAtSignAfterThePortIsEscapedOnLoad() throws {
+        let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
+        let source = CameraSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
+            host: "192.0.2.5", port: 80, selectedProfileToken: "main",
+            streamURI: "rtsp://192.0.2.5:554/live?password=Adm1n@2024"
+        )))
+        SourceStorage(fileURL: fileURL).save([source])
+        let manager = SourceManager(storage: SourceStorage(fileURL: fileURL), keychain: InMemoryCredentialStore())
+
+        manager.load()
+
+        XCTAssertEqual(manager.storedONVIFStreamURI(for: source.id), "rtsp://192.0.2.5:554/live?password=Adm1n%402024")
     }
 
     func testALoginInTheUserInfoIsDroppedBeforeSaving() throws {
         let readable = try save(reported: "rtsp://admin:s3cret@192.0.2.5:554/live?password=Adm1n@2024")
-        XCTAssertEqual(readable.uri, "rtsp://192.0.2.5:554/live?password=Adm1n@2024")
+        XCTAssertEqual(readable.uri, "rtsp://192.0.2.5:554/live?password=Adm1n%402024")
         XCTAssertFalse(readable.file.contains("s3cret"))
 
         let rawSlash = try save(reported: "rtsp://admin:12/34@192.0.2.5/main")

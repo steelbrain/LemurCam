@@ -94,17 +94,18 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         assertConnectsWhereSaved("rtsp://viewer:p?ss@192.0.2.5:554/stream", reportedBy: "frontdoor.local")
 
         // Whether `URLComponents` reads a space or a raw `%` depends on the macOS
-        // version; the outcome must not. The last one it can't read on any.
-        let queries = [
-            "rtsp://192.0.2.5:554/stream?password=p@ss word",
-            "rtsp://192.0.2.5/stream?user=viewer&password=p@ss word/x",
-            "rtsp://192.0.2.5/stream?password=p@ss%zz",
-            "rtsp://192.0.2.5:554:1/stream?password=p@ss word"
+        // version; the outcome must not. The last one it can't read on any. In the
+        // first, with a port, the `@` is written `%40` (`ONVIFUnsplitURILoginTests`).
+        let queries: [(uri: String, url: String?)] = [
+            ("rtsp://192.0.2.5:554/stream?password=p@ss word", "rtsp://192.0.2.5:554/stream?password=p%40ss%20word"),
+            ("rtsp://192.0.2.5/stream?user=viewer&password=p@ss word/x", nil),
+            ("rtsp://192.0.2.5/stream?password=p@ss%zz", nil),
+            ("rtsp://192.0.2.5:554:1/stream?password=p@ss word", nil)
         ]
-        XCTAssertNil(URLComponents(string: queries[3]))
-        for uri in queries {
+        XCTAssertNil(URLComponents(string: queries[3].uri))
+        for (uri, url) in queries {
             let target = Self.target(uri, saved: Self.savedLogin)
-            XCTAssertEqual(target.url, uri)
+            XCTAssertEqual(target.url, url ?? uri)
             XCTAssertEqual(target.credentials, Self.savedLogin)
             XCTAssertNil(Self.target(uri).credentials, "no login is taken from the query")
             assertConnectsWhereSaved(uri)
@@ -170,8 +171,9 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         let uris = [
             Self.addressOnly,
             // Ambiguous to IPCamKit too, but the `@` may well belong to the query:
-            // split there, the saved login would go to host `ss`.
-            "rtsp://192.0.2.5:554/stream?user=viewer&password=p@ss",
+            // split there, the saved login would go to host `ss`. With the camera's
+            // own host, it is written `%40` instead (`ONVIFUnsplitURILoginTests`).
+            "rtsp://192.0.2.9:554/stream?user=viewer&password=p@ss",
             // Misread like the logins above, with a `/` before the `@`, and what
             // follows it is not the camera that reported it.
             "rtsp://viewer:12/34@192.0.2.99:554/stream"
