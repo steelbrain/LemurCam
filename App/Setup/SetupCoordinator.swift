@@ -15,6 +15,10 @@ internal final class SetupCoordinator {
     private(set) var installedDriverVersion: String?
     /// Whether the installed driver is sealed to root (only meaningful with a version).
     private(set) var installedDriverSealed = true
+    /// An install the helper reported as failed was let go without a redo (see
+    /// `releaseHeldFailure`): Update stays offered (`.unfinishedInstall`) until an
+    /// operation succeeds or a check finds no driver.
+    private var micInstallUnfinished = false
 
     /// Fires on the main thread when the camera transitions into `.ready`, so the
     /// streaming model can (re)run CMIO device discovery.
@@ -76,10 +80,14 @@ internal final class SetupCoordinator {
 
     var isMicrophoneReady: Bool { micStatus == .ready }
     /// Why the working mic should be reinstalled from this app (a newer bundled
-    /// driver, or an installed copy not sealed to root), or nil.
+    /// driver, an installed copy not sealed to root, or an install that did not
+    /// finish), or nil.
     var microphoneUpdateReason: MicrophoneUpdateReason? {
         guard micStatus == .ready else { return nil }
-        return .reason(installed: installedDriverVersion, bundled: bundledDriverVersion, sealed: installedDriverSealed)
+        return .reason(
+            installed: installedDriverVersion, bundled: bundledDriverVersion, sealed: installedDriverSealed,
+            installUnfinished: micInstallUnfinished
+        )
     }
     /// The mic is installed and working, but should be updated (see the reason).
     var microphoneNeedsUpdate: Bool { microphoneUpdateReason != nil }
@@ -248,7 +256,7 @@ extension SetupCoordinator {
     /// guided setup): stop holding its reason, and show the microphone's state.
     func acknowledgeMicrophoneFailure() {
         guard micOperationFailure != nil else { return }
-        micOperationFailure = nil
+        releaseHeldFailure()
         refreshMicrophoneStatus()
     }
 
@@ -259,10 +267,16 @@ extension SetupCoordinator {
     /// (`retryMicrophone`).
     func recheckMicrophone() {
         if micOperationFailure != nil, !isInstallingDriver {
-            micOperationFailure = nil
+            releaseHeldFailure()
             micStatus = .checking
         }
         refreshMicrophoneStatus()
+    }
+
+    /// Stop holding the failure shown, without redoing it (`leavesInstallUnfinished`).
+    private func releaseHeldFailure() {
+        if micOperationFailure?.leavesInstallUnfinished == true { micInstallUnfinished = true }
+        micOperationFailure = nil
     }
 
     /// Open the Login Items pane where the audio helper is approved.
@@ -342,6 +356,7 @@ extension SetupCoordinator {
                 case .succeeded:
                     // Also replaces a "didn't respond" failure this reply came too late for.
                     self.micOperationFailure = nil
+                    self.micInstallUnfinished = false
                     if kind == .install { self.verifyingDriverInstall = true }
                     self.refreshMicrophoneStatus()
                 case .failed(let message):
@@ -435,7 +450,7 @@ extension SetupCoordinator {
         if check.reachable {
             installedDriverVersion = check.version
             installedDriverSealed = check.sealed
-            if check.version != nil { autoInstallDriver = false }
+            if check.version != nil { autoInstallDriver = false } else { micInstallUnfinished = false }
             // The check shows how the last operation ended.
             verifyingDriverInstall = false
             micLastOperation = nil

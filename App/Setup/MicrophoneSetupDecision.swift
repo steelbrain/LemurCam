@@ -70,6 +70,11 @@ internal struct MicrophoneOperationFailure: Equatable {
     /// never restarted. False when the helper never answered (unreachable, or no
     /// reply in time): it may have finished.
     var reportedByHelper: Bool
+
+    /// Whether letting this failure go without a redo (Skip, Re-check Now) leaves an
+    /// install unfinished: the helper said it failed, so the copy can be in place with
+    /// coreaudiod never restarted, which a check would show as Ready.
+    var leavesInstallUnfinished: Bool { reportedByHelper && operation == .install }
 }
 
 /// What "Try Again" on a failed microphone status does. Pure, so it is testable
@@ -227,9 +232,14 @@ internal enum MicrophoneUpdateReason: Equatable {
     /// change the driver that coreaudiod loads (every copy installed before the
     /// helper sealed them).
     case unsealed
+    /// The last install did not finish: the helper reported it failed (the copy in
+    /// place, coreaudiod not restarted, say), and the user moved past the failure
+    /// without redoing it. Apps may not be using the copy a check finds.
+    case unfinishedInstall
 
-    static func reason(installed: String?, bundled: String?, sealed: Bool) -> Self? {
+    static func reason(installed: String?, bundled: String?, sealed: Bool, installUnfinished: Bool = false) -> Self? {
         guard let installed else { return nil }
+        if installUnfinished { return .unfinishedInstall }
         if !sealed { return .unsealed }
         guard let bundled, ExtensionUpgradeDecision.isUpdateAvailable(installed: installed, bundled: bundled) else {
             return nil
@@ -246,12 +256,15 @@ internal enum MicrophoneStatusCopy {
     static let unsealed = "The installed copy can be modified without administrator rights. "
         + "Updating reinstalls it protected and briefly restarts audio."
     static let newerVersion = "A newer version is available — updating briefly restarts audio."
+    static let unfinishedInstall = "The last install didn’t finish, so apps may not be using this copy yet. "
+        + "Updating installs it again and briefly restarts audio."
 
     /// Why "Update Microphone" is offered.
     static func update(_ reason: MicrophoneUpdateReason) -> String {
         switch reason {
         case .newerVersion: return newerVersion
         case .unsealed: return unsealed
+        case .unfinishedInstall: return unfinishedInstall
         }
     }
 }
