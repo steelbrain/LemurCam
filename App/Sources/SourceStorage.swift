@@ -22,6 +22,10 @@ internal final class SourceStorage {
         }
     }
 
+    /// Shown where the user manages cameras while `lastSaveFailed` is set.
+    static let saveFailureMessage = "LemurCam couldn’t save your cameras, so your latest changes will be "
+        + "lost when you quit. It tries again the next time you change a camera."
+
     private let fileURL: URL
 
     /// Set when the sources file could not be read, or was damaged and could not be
@@ -31,6 +35,11 @@ internal final class SourceStorage {
     /// file's cameras, and after a failed copy the damaged entries exist nowhere else,
     /// so any save would lose cameras.
     private(set) var saveRefusal: SaveRefusal?
+
+    /// Whether the last save could not write the file (the disk is full, the folder
+    /// can't be written to). Unlike `saveRefusal` it refuses nothing: the file still
+    /// holds what was saved before, every save tries again, and one that works clears it.
+    private(set) var lastSaveFailed = false
 
     init(fileURL: URL? = nil) {
         if let fileURL {
@@ -48,17 +57,17 @@ internal final class SourceStorage {
     /// Loads the saved cameras. Each camera is decoded on its own, so one damaged
     /// entry costs only that entry, and a copy of the file is kept next to it before
     /// the next save drops the entry. A file that can't be decoded as a list at all is
-    /// moved aside instead of being overwritten by the next save. A file that can't be
-    /// read (no permission, an I/O error) may well be intact, so it stays where it is
-    /// and nothing is saved over it this session. Logs name the failing field, never
-    /// its value, since entries hold URLs and hosts.
+    /// moved aside instead of being overwritten by the next save. Only a file that isn't
+    /// there counts as no cameras. One that can't be read (no permission on it or on a
+    /// folder above it, an I/O error) may well be intact, so it stays where it is and
+    /// nothing is saved over it this session. Logs name the failing field, never its
+    /// value, since entries hold URLs and hosts.
     func load() -> [CameraSource] {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return []
-        }
         let data: Data
         do {
             data = try Data(contentsOf: fileURL)
+        } catch where Self.isNoSuchFile(error) {
+            return []
         } catch {
             Log.app.error("Saved cameras could not be read (\(Self.describe(error))); leaving the file as it is")
             saveRefusal = .unreadable
@@ -104,8 +113,21 @@ internal final class SourceStorage {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(sources)
             try data.write(to: fileURL, options: .atomic)
+            lastSaveFailed = false
         } catch {
-            Log.app.error("Failed to save sources: \(error)")
+            Log.app.error("Failed to save sources (\(Self.describe(error)))")
+            lastSaveFailed = true
+        }
+    }
+
+    /// Whether reading failed because there is no file (or no folder) at the path. A
+    /// folder that can't be searched hides the file instead, and reads as no permission.
+    private static func isNoSuchFile(_ error: any Error) -> Bool {
+        let nsError = error as NSError
+        switch nsError.domain {
+        case NSCocoaErrorDomain: return nsError.code == NSFileReadNoSuchFileError
+        case NSPOSIXErrorDomain: return nsError.code == Int(ENOENT)
+        default: return false
         }
     }
 

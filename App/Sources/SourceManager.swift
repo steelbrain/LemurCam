@@ -18,6 +18,14 @@ internal final class SourceManager {
     /// Why camera changes are not being saved this session, or nil while saving
     /// works. Set by `load()`; shown in Settings → Cameras.
     private(set) var saveRefusal: SourceStorage.SaveRefusal?
+    /// Whether the last save of the cameras failed (`SourceStorage.lastSaveFailed`).
+    /// Cleared by the next save that works.
+    private(set) var lastSaveFailed = false
+
+    /// What Settings → Cameras shows above the list while cameras aren't being saved.
+    var saveProblemMessage: String? {
+        saveRefusal?.message ?? (lastSaveFailed ? SourceStorage.saveFailureMessage : nil)
+    }
 
     var onSourceConfigChanged: (() -> Void)?
 
@@ -32,6 +40,7 @@ internal final class SourceManager {
     func load() {
         sources = storage.load()
         saveRefusal = storage.saveRefusal
+        lastSaveFailed = storage.lastSaveFailed
         moveEmbeddedCredentialsToKeychain()
         for source in sources {
             connectionStatuses[source.id] = .disconnected
@@ -244,13 +253,18 @@ internal final class SourceManager {
             migrated += 1
         }
         guard migrated > 0 else { return }
-        storage.save(sources)
+        saveSources()
         Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
     }
 
     private func persist() {
-        storage.save(sources)
+        saveSources()
         persistActiveSource()
+    }
+
+    private func saveSources() {
+        storage.save(sources)
+        lastSaveFailed = storage.lastSaveFailed
     }
 
     private func persistActiveSource() {

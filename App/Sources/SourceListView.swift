@@ -9,8 +9,8 @@ internal struct SourceListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let saveRefusal = sourceManager.saveRefusal {
-                SaveRefusalBanner(message: saveRefusal.message)
+            if let message = sourceManager.saveProblemMessage {
+                SaveRefusalBanner(message: message)
                 Divider()
             }
             if sourceManager.sources.isEmpty {
@@ -203,8 +203,8 @@ internal struct SourceListView: View {
 
 }
 
-/// Shown above the camera list for the whole session when saved cameras couldn't
-/// be read, so the user knows that changes made now won't be kept.
+/// Shown above the camera list while cameras aren't being saved: for the whole
+/// session when saved cameras couldn't be read, or until a save works after one failed.
 private struct SaveRefusalBanner: View {
     let message: String
 
