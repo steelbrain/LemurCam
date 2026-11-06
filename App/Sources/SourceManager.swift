@@ -388,7 +388,8 @@ private extension SourceManager {
     /// ONVIF stream URI goes by the rule it is saved and connected to by
     /// (`SourceCredentials.strippingUserInfo(fromReportedURI:onvifHost:)`), which splits
     /// it only where its last `@` ends a login, drops the login it takes out, and
-    /// writes `%40` for an `@` after the camera's host that IPCamKit would refuse.
+    /// writes `%40` for an `@` that IPCamKit would refuse after the camera's host or
+    /// an IP address.
     func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {

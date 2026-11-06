@@ -179,8 +179,8 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
     /// A login in the query with an `@` in its password still parses as an address.
     /// Splitting it at the last `@` would leave `rtsp://ss&channel=1`, so the saved
     /// URL is kept for the user to correct, whatever the Keychain holds. An ONVIF
-    /// stream URI on the camera's own host has the `@` written `%40` instead
-    /// (`ONVIFUnsplitURILoginTests`): there is no URL field to correct it in.
+    /// stream URI on the camera's own host or an IP address has the `@` written `%40`
+    /// instead (`ONVIFUnsplitURILoginTests`): there is no URL field to correct it in.
     func testLoadLeavesAmbiguousURLThatParsesAsAnAddress() throws {
         let url = "rtsp://192.168.1.5:554/user=admin&password=p@ss&channel=1"
         let rtsp = CameraSource(name: "DVR", sourceType: .rtsp(RTSPSourceInfo(url: url)))

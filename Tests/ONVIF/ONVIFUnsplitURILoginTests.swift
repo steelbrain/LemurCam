@@ -9,8 +9,9 @@ import XCTest
 /// resolve worked. That login is now taken out for connecting too, and used only when
 /// the camera has no saved credentials. With a port in the URI, IPCamKit refused any
 /// `@` after the host (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), login or not,
-/// and an ONVIF camera has no URL field where the user could write it `%40`. On the
-/// camera's own host it is now written `%40` in what is saved and connected to.
+/// and an ONVIF camera has no URL field where the user could write it `%40`. After the
+/// camera's own host or an IP address it is now written `%40` in what is saved and
+/// connected to.
 /// Cameras are stubbed; nothing goes on the network.
 @MainActor
 internal final class ONVIFUnsplitURILoginTests: XCTestCase {

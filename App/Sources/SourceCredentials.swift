@@ -16,8 +16,10 @@ internal extension SourceCredentials {
     /// on `rtsp://admin:Admin#123@cam/s` and reads `rtsp://admin:1234/5@cam/s` as host
     /// `admin`, port 1234. Such a URL is split at its last `@` instead (see
     /// `ambiguousUserInfo`). Any other URL that can't be parsed is returned unchanged.
-    /// What is left without a login is kept as written, unless IPCamKit would encode
-    /// its escapes a second time (`writtenForIPCamKit`).
+    /// A URL without a login, or what is left of one split at its last `@`, is kept as
+    /// written, unless IPCamKit would encode its escapes a second time
+    /// (`writtenForIPCamKit`); one whose login `URLComponents` reads is written as
+    /// `URLComponents(cameraURL:)` reads it once the login is taken out.
     static func extractingFromRTSPURL(
         _ urlString: String
     ) -> (url: String, credentials: SourceCredentials?) {
@@ -104,8 +106,8 @@ internal extension SourceCredentials {
     /// space: `rtsp://admin:pa ss@cam/s`), or stand before an `@` in the query that
     /// makes the URL ambiguous to it (`rtsp://admin:pw@cam/s?a=b@c`), so it is taken
     /// out for connecting too. An `@` after the host that still makes the URL
-    /// ambiguous to IPCamKit is written `%40` when the host is the camera's
-    /// (`escapingAtSignsAfterTheHost(of:reportedBy:)`). The URL is nil for a URI
+    /// ambiguous to IPCamKit is written `%40` when the host is the camera's or an IP
+    /// address (`escapingAtSignsAfterTheHost(of:reportedBy:)`). The URL is nil for a URI
     /// `URLComponents` can't read that is not split: a login in it could not be taken
     /// out, and nothing could connect to it anyway.
     static func extractingLogin(
