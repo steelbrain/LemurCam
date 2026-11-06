@@ -30,10 +30,15 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SYSEXT_ROOT="/Library/SystemExtensions"
 ARCHIVES_ROOT="${HOME}/Library/Developer/Xcode/Archives"
 
-# Audio HAL driver install + staging paths. Must match LemurAudioHelper /
-# HelperService in the app; the driver is root-owned, so removal needs sudo.
+# Audio HAL driver install path. Must match LemurAudioHelper.halPluginsDirectory
+# and driverBundleName; the driver is root-owned, so removal needs sudo.
 INSTALLED_DRIVER_PATH="${HAL_PLUGINS_DIR}/${DRIVER_BUNDLE_NAME}"
-DRIVER_STAGING_PATH="${HAL_PLUGINS_DIR}/.${DRIVER_BUNDLE_NAME}.staging"
+# Staging directories the helper leaves in HAL_PLUGINS_DIR when an install or
+# uninstall is interrupted. Must match DriverInstaller.stagingPrefix (one per
+# request, plus a random suffix) and DriverInstaller.legacyStagingName (older
+# helpers) in Shared/DriverInstall/DriverInstaller.swift.
+DRIVER_STAGING_PREFIX=".LemurCamAudio.staging."
+DRIVER_LEGACY_STAGING_NAME=".LemurCamAudio.driver.staging"
 
 EXECUTE=0
 ASSUME_YES=0
@@ -61,8 +66,9 @@ By default --execute will:
   - delete EVERY LemurCam.app bundle it can find (the main cause of reboot
     re-staging), plus any staged ${EXT_BUNDLE_ID} under ${SYSEXT_ROOT}.
     Copies inside Xcode archives are kept unless you pass --include-archives.
-  - remove the installed audio driver (${DRIVER_BUNDLE_NAME}) from
-    ${HAL_PLUGINS_DIR} and restart coreaudiod so it drops the plug-in
+  - remove the installed audio driver (${DRIVER_BUNDLE_NAME}) and any staging
+    copies the helper left in ${HAL_PLUGINS_DIR}, and restart coreaudiod so it
+    drops the plug-in
   - reset Camera (TCC) authorization for the app and extension
   - remove app-group / container / defaults user state, including the saved
     camera list (~/Library/Application Support/${APP_NAME}/sources.json)
@@ -290,6 +296,18 @@ sudo_find_staged_extensions() {
   fi
 }
 
+# Print the helper's leftover driver staging directories, one per line. Only
+# real directories directly in HAL_PLUGINS_DIR match: find does not follow
+# symlinks, so -type d skips a symlink with a staging name, and -maxdepth 1
+# keeps it out of installed bundles. The directory is world-readable, so no
+# sudo is needed to list it.
+find_driver_staging() {
+  [[ -d "$HAL_PLUGINS_DIR" ]] || return 0
+  find "$HAL_PLUGINS_DIR" -mindepth 1 -maxdepth 1 -type d \
+    \( -name "${DRIVER_STAGING_PREFIX}*" -o -name "$DRIVER_LEGACY_STAGING_NAME" \) \
+    -print 2>/dev/null || true
+}
+
 # Emit every LemurCam.app bundle path we can find, de-duplicated.
 collect_app_bundles() {
   local candidates=()
@@ -459,25 +477,35 @@ remove_audio_driver() {
   log "Removing audio driver ${DRIVER_BUNDLE_NAME} from ${HAL_PLUGINS_DIR}"
 
   local found=0
-  local path
-  for path in "$INSTALLED_DRIVER_PATH" "$DRIVER_STAGING_PATH"; do
-    if [[ -e "$path" ]]; then
-      found=1
-      printf '  found: %s\n' "$path"
-    fi
-  done
+  if [[ -e "$INSTALLED_DRIVER_PATH" ]]; then
+    found=1
+    printf '  found: %s\n' "$INSTALLED_DRIVER_PATH"
+  fi
+
+  local staging=""
+  staging=$(find_driver_staging)
+  if [[ -n "$staging" ]]; then
+    found=1
+    printf '%s\n' "$staging" | sed 's/^/  found staging: /'
+  else
+    echo "  no staging copies (${DRIVER_STAGING_PREFIX}*, ${DRIVER_LEGACY_STAGING_NAME})"
+  fi
 
   # In execute mode, skip (and do not kick coreaudiod) when there is nothing to
   # remove. Dry-run always prints the commands it would run.
   if [[ "$found" -eq 0 && "$EXECUTE" -eq 1 ]]; then
-    echo "No installed ${DRIVER_BUNDLE_NAME} found."
+    echo "No installed ${DRIVER_BUNDLE_NAME} or staging copies found."
     return 0
   fi
 
-  confirm "Remove ${DRIVER_BUNDLE_NAME} (and any staging copy) and restart coreaudiod? (sudo)"
+  confirm "Remove ${DRIVER_BUNDLE_NAME} (and any staging copies) and restart coreaudiod? (sudo)"
 
   sudo_delete_path "$INSTALLED_DRIVER_PATH"
-  sudo_delete_path "$DRIVER_STAGING_PATH"
+  local match
+  while IFS= read -r match; do
+    [[ -n "$match" ]] || continue
+    sudo_delete_path "$match"
+  done <<<"$staging"
 
   # coreaudiod keeps a removed HAL plug-in loaded until it is restarted; this
   # mirrors the privileged helper's own uninstall path.
