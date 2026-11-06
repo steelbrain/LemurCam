@@ -311,10 +311,23 @@ collect_app_bundles() {
   printf '%s\n' "${candidates[@]}" | awk 'NF && !seen[$0]++'
 }
 
+# Anchored pkill -f pattern for the extension executable, e.g.
+# /Library/SystemExtensions/<UUID>/cam.lemur.app.extension.systemextension/Contents/MacOS/cam.lemur.app.extension
+# Anchoring keeps it from matching unrelated commands that merely mention the
+# bundle id (such as 'log stream --predicate ...'). -x is not usable here:
+# process names are truncated to 16 characters.
+ext_process_pattern() {
+  local escaped_root="${SYSEXT_ROOT//./\\.}"
+  local escaped_id="${EXT_BUNDLE_ID//./\\.}"
+  printf '^%s/.*/%s$' "$escaped_root" "$escaped_id"
+}
+
 stop_processes() {
   log "Stopping running LemurCam processes"
   run_allow_fail pkill -x "$APP_NAME"
-  run_allow_fail pkill -f "$EXT_BUNDLE_ID"
+  # The extension runs as _cmiodalassistants, so killing it (and even reading
+  # its command line for -f matching) needs sudo.
+  sudo_run_allow_fail pkill -f "$(ext_process_pattern)"
 }
 
 uninstall_extension() {
