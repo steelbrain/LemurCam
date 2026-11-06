@@ -75,6 +75,27 @@ internal final class SourceStorageRecoveryTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: try XCTUnwrap(copies.first), encoding: .utf8), original)
     }
 
+    /// A file that can't be read (here: no read permission) took the decode-failure
+    /// path and was moved aside as damaged, and the next save wrote a file without the
+    /// user's cameras. It is now left in place, and nothing is saved over it.
+    func testUnreadableFileIsLeftInPlaceAndNotOverwritten() throws {
+        let original = "[\(goodEntry)]"
+        let url = try write(original)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
+        let storage = SourceStorage(fileURL: url)
+
+        XCTAssertTrue(storage.load().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertTrue(try preservedCopies().isEmpty, "an unreadable file is not damaged")
+
+        storage.save([CameraSource(name: "New", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.3/s")))])
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), original)
+        XCTAssertEqual(SourceStorage(fileURL: url).load().map(\.name), ["Good"])
+    }
+
     func testIntactFileLeavesNoCopy() throws {
         let url = try write("[\(goodEntry)]")
         XCTAssertEqual(SourceStorage(fileURL: url).load().count, 1)

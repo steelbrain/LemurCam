@@ -4,8 +4,9 @@ import os
 internal final class SourceStorage {
     private let fileURL: URL
 
-    /// Set when a damaged sources file could not be moved aside. Saving is refused
-    /// for the rest of the session so the only copy of the user's cameras is kept.
+    /// Set when the sources file could not be read, or was damaged and could not be
+    /// moved aside. Saving is refused for the rest of the session so the only copy of
+    /// the user's cameras is kept.
     private var mustNotOverwrite = false
 
     init(fileURL: URL? = nil) {
@@ -23,21 +24,30 @@ internal final class SourceStorage {
 
     /// Loads the saved cameras. Each camera is decoded on its own, so one damaged
     /// entry costs only that entry, and a copy of the file is kept next to it before
-    /// the next save drops the entry. A file that can't be read as a list at all is
-    /// moved aside instead of being overwritten by the next save. Logs name the
-    /// failing field, never its value, since entries hold URLs and hosts.
+    /// the next save drops the entry. A file that can't be decoded as a list at all is
+    /// moved aside instead of being overwritten by the next save. A file that can't be
+    /// read (no permission, an I/O error) may well be intact, so it stays where it is
+    /// and nothing is saved over it this session. Logs name the failing field, never
+    /// its value, since entries hold URLs and hosts.
     func load() -> [CameraSource] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return []
         }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            Log.app.error("Saved cameras could not be read (\(Self.describe(error))); leaving the file as it is")
+            mustNotOverwrite = true
+            return []
+        }
         let entries: [LossyEntry]
         do {
-            let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             entries = try decoder.decode([LossyEntry].self, from: data)
         } catch {
-            Log.app.error("Saved cameras could not be read (\(Self.describe(error)))")
+            Log.app.error("Saved cameras could not be decoded (\(Self.describe(error)))")
             preserveDamagedFile(move: true)
             return []
         }
@@ -59,7 +69,7 @@ internal final class SourceStorage {
 
     func save(_ sources: [CameraSource]) {
         guard !mustNotOverwrite else {
-            Log.app.error("Not saving cameras: the damaged sources file could not be moved aside")
+            Log.app.error("Not saving cameras: the sources file could not be read or moved aside")
             return
         }
         do {
@@ -122,7 +132,9 @@ internal final class SourceStorage {
     /// (URLs, hosts) never appear, since they can carry credentials.
     static func describe(_ error: any Error) -> String {
         guard let decodingError = error as? DecodingError else {
-            return String(describing: type(of: error))
+            // Domain and code only: an NSError's description includes the file path.
+            let nsError = error as NSError
+            return "\(nsError.domain) \(nsError.code)"
         }
         switch decodingError {
         case .keyNotFound(let key, let context):
