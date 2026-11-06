@@ -258,7 +258,18 @@ private extension StreamCoordinator {
             cancelAllTasks()
             pipeline.cancelSilently()
             fallbackGenerator.stop()
+            showActiveSourceIdle()
         }
+    }
+
+    /// Nothing needs the stream, so it is down on purpose rather than failed: show
+    /// the active source as disconnected with no error, as a stream that ended is.
+    /// A silent cancel fires no state change, so the status would otherwise keep
+    /// saying "Connected", or "Reconnecting…" for a retry that was just cancelled.
+    func showActiveSourceIdle() {
+        guard let sourceID = currentSourceID else { return }
+        sourceManager.updateErrorMessage(for: sourceID, message: nil)
+        sourceManager.updateConnectionStatus(for: sourceID, status: .disconnected)
     }
 
     func cancelAllTasks() {
@@ -288,6 +299,7 @@ private extension StreamCoordinator {
 
         guard hasDemand else {
             Log.rtsp.info("No demand — skipping RTSP connection")
+            showActiveSourceIdle()
             return
         }
 
@@ -370,6 +382,10 @@ private extension StreamCoordinator {
     }
 
     func handlePipelineStateChanged(_ state: RTSPStreamPipeline.State) {
+        // State changes hop to the main actor, so one can arrive after a pause
+        // cancelled its stream. It is stale: it must not mark the paused source
+        // connected or failed, nor schedule a reconnect nothing needs.
+        guard lastDemand else { return }
         if state != .streaming {
             frameDispatcher.reset()
         }
@@ -399,9 +415,7 @@ private extension StreamCoordinator {
         }
 
         sourceManager.updateConnectionStatus(for: sourceID, status: connectionStatus)
-        if case .error = state {
-            scheduleRetry()
-        } else if case .disconnected = state {
+        if connectionStatus == .error || state == .disconnected {
             scheduleRetry()
         }
     }
