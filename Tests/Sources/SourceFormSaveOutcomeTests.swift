@@ -27,11 +27,22 @@ internal final class SourceFormSaveOutcomeTests: XCTestCase {
         }
     }
 
+    /// An edit that turned the login off is saved too when the Keychain couldn't
+    /// remove the login and the file couldn't be put back.
+    func testAnEditSavedWithItsOldLoginClosesTheFormAndSaysWhy() {
+        let error = EditSavedWithOldLoginError()
+
+        let outcome = SourceFormSaveOutcome(error: error)
+
+        XCTAssertEqual(outcome, .savedWithProblem(error.localizedDescription))
+        XCTAssertTrue(outcome.closesForm)
+    }
+
     /// Nothing was saved: the form stays open, with what was entered, and says why.
     func testAFailureThatSavedNothingKeepsTheFormOpen() {
         let errors: [any Error] = [
-            CredentialSaveError(), SourceFileSaveError(), SaveRefusedError(refusal: .unreadable),
-            URLError(.cannotWriteToFile)
+            CredentialSaveError(), CredentialRemoveError(), SourceFileSaveError(),
+            SaveRefusedError(refusal: .unreadable), URLError(.cannotWriteToFile)
         ]
         for error in errors {
             let outcome = SourceFormSaveOutcome(error: error)

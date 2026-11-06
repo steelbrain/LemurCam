@@ -23,8 +23,8 @@ internal enum SourceFormSaveOutcome: Equatable {
             self = .saved
             return
         }
-        if let saved = error as? EditSavedWithoutLoginError {
-            self = .savedWithProblem(saved.localizedDescription)
+        if error is EditSavedWithoutLoginError || error is EditSavedWithOldLoginError {
+            self = .savedWithProblem(error.localizedDescription)
         } else {
             self = .notSaved(error.localizedDescription)
         }

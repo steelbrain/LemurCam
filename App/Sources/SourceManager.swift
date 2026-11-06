@@ -158,12 +158,12 @@ internal final class SourceManager {
     /// the URL holds (see `CredentialChange.merging`). Throws, changing nothing,
     /// `SaveRefusedError` while saving is refused, `CredentialSaveError` when new
     /// credentials can't be stored, or when the URL holds only part of a login and the
-    /// stored part it needs can't be read, and `SourceFileSaveError` when the file
-    /// can't be written. The file is written before the Keychain changes, so a failed
-    /// write leaves the stored credentials with the camera as saved; credentials that
-    /// then can't be stored put the file back as it was. When the file can't be put
-    /// back either, the edit stays, without a login, and `EditSavedWithoutLoginError`
-    /// is thrown (see `undoEdit`).
+    /// stored part it needs can't be read, `CredentialRemoveError` when the login it
+    /// turns off can't be removed, and `SourceFileSaveError` when the file can't be
+    /// written. The file is written before the Keychain changes, so a failed write
+    /// leaves the stored credentials with the camera as saved; credentials that then
+    /// can't be stored or removed put the file back, or when it can't be, leave the
+    /// edit with `EditSavedWithoutLoginError` or `EditSavedWithOldLoginError` (`undoEdit`).
     ///
     /// `loaded` is the type the edit form loaded. An ONVIF address it left as it was
     /// gives way to one WS-Discovery saved since (`SourceType.keepingMove`); without
@@ -240,8 +240,8 @@ internal final class SourceManager {
         Log.app.info("Camera '\(sources[index].name)' now answers at \(moved.host):\(moved.port)")
     }
 
-    /// Only a failed save throws: a failed delete leaves the old credentials stored,
-    /// which loses nothing.
+    /// A failed save or delete throws, a delete whatever else the edit changed: the
+    /// user turned the login off, and kept, it went with the camera to any new address.
     private func apply(_ change: CredentialChange, for id: UUID, sourceName: String) throws {
         switch change {
         case .keep:
@@ -249,7 +249,7 @@ internal final class SourceManager {
         case .set(let credentials):
             try storeCredentials(credentials, for: id, sourceName: sourceName)
         case .remove:
-            deleteCredentials(for: id)
+            guard deleteCredentials(for: id) else { throw CredentialRemoveError() }
         }
     }
 
@@ -356,13 +356,14 @@ private extension SourceManager {
         persistActiveSource()
     }
 
-    /// An edit is in the file and its new credentials couldn't be stored. Puts the
-    /// cameras back to `previous`, in the app and in the file, and returns `error`. When
-    /// the file can't be written, it keeps the edited camera, and with it the old
-    /// credentials, which belong to the camera as it was: kept, they went to the edited
-    /// address after a restart. They are removed instead, so the camera has no login
-    /// rather than the wrong one; the app keeps the camera as the file has it, signals
-    /// the change, and returns `EditSavedWithoutLoginError`.
+    /// An edit is in the file and its new credentials couldn't be stored, or its old
+    /// ones removed. Puts the cameras back to `previous`, in the app and in the file,
+    /// and returns `error`. When the file can't be written, it keeps the edited camera,
+    /// and the app keeps it too and signals the change. The old credentials belong to
+    /// the camera as it was, and kept, went to the edited address after a restart: they
+    /// are removed, so the camera has no login rather than the wrong one, and
+    /// `EditSavedWithoutLoginError` is returned; `EditSavedWithOldLoginError` when
+    /// removing them is what failed.
     func undoEdit(of id: UUID, to previous: [CameraSource], sourceName: String, after error: any Error) -> any Error {
         let edited = sources
         sources = previous
@@ -373,16 +374,12 @@ private extension SourceManager {
         sources = edited
         // The file holds what the app holds: nothing is left unsaved.
         lastSaveFailed = false
-        var oldLoginRemoved = true
-        do {
-            try keychain.delete(for: id)
-        } catch {
-            oldLoginRemoved = false
-            Log.app.error("Failed to delete credentials for source \(id): \(error)")
-        }
-        Log.app.error("Saved '\(sourceName)' without its login: the edit could not be undone")
+        let failure: any Error = error is CredentialRemoveError
+            ? EditSavedWithOldLoginError()
+            : EditSavedWithoutLoginError(oldLoginRemoved: deleteCredentials(for: id))
+        Log.app.error("Saved '\(sourceName)' as edited: the edit could not be undone")
         onSourceConfigChanged?()
-        return EditSavedWithoutLoginError(oldLoginRemoved: oldLoginRemoved)
+        return failure
     }
 
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an
@@ -433,13 +430,16 @@ private extension SourceManager {
         Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
     }
 
-    /// A failed delete leaves credentials that no saved camera uses, or a camera's old
-    /// ones, which loses nothing.
-    func deleteCredentials(for id: UUID) {
+    /// Whether the credentials are gone. A failed delete is logged; after a removal, or
+    /// an add that couldn't be saved, it leaves credentials no saved camera uses.
+    @discardableResult
+    func deleteCredentials(for id: UUID) -> Bool {
         do {
             try keychain.delete(for: id)
+            return true
         } catch {
             Log.app.error("Failed to delete credentials for source \(id): \(error)")
+            return false
         }
     }
 
