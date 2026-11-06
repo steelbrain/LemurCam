@@ -1,5 +1,4 @@
 import AppIntents
-import AppKit
 import Foundation
 
 internal struct GetCurrentCameraIntent: AppIntent {
@@ -9,12 +8,17 @@ internal struct GetCurrentCameraIntent: AppIntent {
 
     func perform() async -> some IntentResult & ReturnsValue<String> {
         let name = await MainActor.run {
-            guard let delegate = NSApp.delegate as? AppDelegate,
-                  let activeID = delegate.sourceManager.activeSourceID,
-                  let source = delegate.sourceManager.sources.first(where: { $0.id == activeID })
-            else { return "None" }
-            return source.name
+            guard let sourceManager = IntentContext.sourceManager else { return "None" }
+            return Self.currentCameraName(in: sourceManager)
         }
         return .result(value: name)
+    }
+
+    @MainActor
+    static func currentCameraName(in sourceManager: SourceManager) -> String {
+        guard let activeID = sourceManager.activeSourceID,
+              let source = sourceManager.sources.first(where: { $0.id == activeID })
+        else { return "None" }
+        return source.name
     }
 }

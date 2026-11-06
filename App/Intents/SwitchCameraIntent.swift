@@ -1,5 +1,4 @@
 import AppIntents
-import AppKit
 import Foundation
 
 internal struct SwitchCameraIntent: AppIntent {
@@ -11,9 +10,9 @@ internal struct SwitchCameraIntent: AppIntent {
     var camera: CameraEntity
 
     func perform() async -> some IntentResult {
+        let cameraID = camera.id
         await MainActor.run {
-            guard let delegate = NSApp.delegate as? AppDelegate else { return }
-            delegate.sourceManager.setActiveSource(id: camera.id)
+            IntentContext.sourceManager?.setActiveSource(id: cameraID)
         }
         return .result()
     }

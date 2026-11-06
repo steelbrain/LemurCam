@@ -1,5 +1,4 @@
 import AppIntents
-import AppKit
 import Foundation
 
 internal struct GetConnectionStatusIntent: AppIntent {
@@ -11,17 +10,20 @@ internal struct GetConnectionStatusIntent: AppIntent {
     var camera: CameraEntity
 
     func perform() async -> some IntentResult & ReturnsValue<String> {
+        let cameraID = camera.id
         let status = await MainActor.run {
-            guard let delegate = NSApp.delegate as? AppDelegate else {
-                return "Unknown"
-            }
-            let sm = delegate.sourceManager
-            let label = sm.connectionStatuses[camera.id]?.rawValue ?? "Unknown"
-            if let error = sm.errorMessages[camera.id] {
-                return "\(label): \(error)"
-            }
-            return label
+            guard let sourceManager = IntentContext.sourceManager else { return "Unknown" }
+            return Self.statusText(for: cameraID, in: sourceManager)
         }
         return .result(value: status)
+    }
+
+    @MainActor
+    static func statusText(for cameraID: UUID, in sourceManager: SourceManager) -> String {
+        let label = sourceManager.connectionStatuses[cameraID]?.rawValue ?? "Unknown"
+        if let error = sourceManager.errorMessages[cameraID] {
+            return "\(label): \(error)"
+        }
+        return label
     }
 }

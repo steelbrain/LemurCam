@@ -1,5 +1,4 @@
 import AppIntents
-import AppKit
 import Foundation
 
 internal struct CameraEntity: AppEntity {
@@ -27,14 +26,19 @@ internal struct CameraEntityQuery: EntityQuery, EnumerableEntityQuery {
 
     func allEntities() async -> [CameraEntity] {
         await MainActor.run {
-            guard let delegate = NSApp.delegate as? AppDelegate else { return [] }
-            return delegate.sourceManager.sources.map { source in
-                CameraEntity(
-                    id: source.id,
-                    name: source.name,
-                    sourceTypeName: source.sourceType.displayName
-                )
-            }
+            guard let sourceManager = IntentContext.sourceManager else { return [] }
+            return Self.entities(in: sourceManager)
+        }
+    }
+
+    @MainActor
+    static func entities(in sourceManager: SourceManager) -> [CameraEntity] {
+        sourceManager.sources.map { source in
+            CameraEntity(
+                id: source.id,
+                name: source.name,
+                sourceTypeName: source.sourceType.displayName
+            )
         }
     }
 
