@@ -181,7 +181,10 @@ paths:
 EOF
 
 echo "Starting mediamtx (RTSP on :${RTSP_PORT})..."
-mediamtx "$MTX_CONFIG" > "$WORKDIR/mediamtx.log" 2>&1 &
+# Run from the temp workdir: mediamtx writes self-signed auto.crt/auto.key into
+# its working directory, and cleanup removes the workdir. exec keeps $! the
+# mediamtx PID.
+(cd "$WORKDIR" && exec mediamtx "$MTX_CONFIG") > "$WORKDIR/mediamtx.log" 2>&1 &
 MTX_PID=$!
 PIDS+=("$MTX_PID")
 
