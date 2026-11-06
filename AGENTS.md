@@ -173,12 +173,25 @@ Toggling microphone demand must not reconnect a live video stream.
 
 The camera extension runs sandboxed. Be conservative with IPC.
 
+The extension process runs as the system user `_cmiodalassistants`, not as the
+logged-in user (`ps` shows it). App-group `UserDefaults(suiteName:)` is a
+per-user domain, so the extension and the app each get their own copy of the
+app-group defaults: nothing one writes there is visible to the other. Running
+`defaults read <app group ID>` as the user reports "Domain not found" even
+though the extension writes to it on every start.
+
 Extension-to-app signaling:
 
 - Use Darwin notifications via `CFNotificationCenterGetDarwinNotifyCenter()` for
-  lightweight start/stop signals.
-- Use app-group `UserDefaults(suiteName:)` for shared state.
-- Do not rely on app-group defaults for instant cross-process signaling.
+  lightweight start/stop signals. They are system-wide and do reach the app.
+- Read state from CMIO properties of the LemurCam device. For example,
+  `kCMIODevicePropertyDeviceIsRunningSomewhere` tells whether any process is
+  using the camera (see `CameraConsumerProbe`). It also counts the app's own
+  sink stream, so it means "an external consumer" only before the app starts
+  that stream.
+- Do not use app-group `UserDefaults(suiteName:)` to share state between the
+  extension and the app. The resolution, frame rate and
+  `runningExtensionVersion` still go through it, so they do not cross today.
 - Do not use `DistributedNotificationCenter` from the extension to the app; it is
   blocked by the extension sandbox in practice.
 
@@ -190,6 +203,14 @@ Sink stream lifecycle:
   queue survives.
 - The app discovers the CMIO device and caches device/stream IDs. Deferred
   `startStream` is expected.
+- Cached IDs are only valid while the device stays registered. Do not assume
+  they survive the extension being disabled, re-enabled, repaired, replaced or
+  restarted. The app drops the IDs and all sink-stream state when the CMIO
+  device list no longer shows the cached device, rediscovers when it returns,
+  and re-runs discovery on every `onCameraReady`.
+- In the extension, every sink consume completion is checked against the
+  session (generation) it was issued under; completions from a stopped or
+  replaced session are dropped (`SinkStreamSession`).
 - The sink stream is selected by stream index 1 because the extension creates
   the source stream first and sink stream second, and the CMIO C API does not
   expose stream direction reliably for this lookup.
