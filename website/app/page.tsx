@@ -184,19 +184,30 @@ export default function Home() {
         <p className="mb-5 text-center font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-muted/80">
           Shows up everywhere you already are
         </p>
-        <div className="relative overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_15%,#000_85%,transparent)]">
-          <div className="animate-marquee flex w-max items-center">
-            {[...WORKS_WITH, ...WORKS_WITH].map((name, i) => (
-              <span
-                key={`${name}-${i}`}
-                className="flex items-center whitespace-nowrap text-[15px] font-medium text-foreground/55"
+        {/* The list is rendered twice so the scroll loops seamlessly; only the
+            first copy is exposed to assistive tech. Under reduced motion the
+            CSS hides the copy and wraps the first list in place. */}
+        <div className="marquee relative overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_15%,#000_85%,transparent)]">
+          <div className="marquee-track animate-marquee flex w-max items-center">
+            {[0, 1].map((copy) => (
+              <ul
+                key={copy}
+                aria-hidden={copy === 1 ? true : undefined}
+                className={`marquee-list flex items-center ${copy === 1 ? "marquee-copy" : ""}`}
               >
-                {name}
-                <span
-                  aria-hidden
-                  className="mx-6 inline-block h-1 w-1 rounded-full bg-foreground/20"
-                />
-              </span>
+                {WORKS_WITH.map((name) => (
+                  <li
+                    key={name}
+                    className="flex items-center whitespace-nowrap text-[15px] font-medium text-foreground/55"
+                  >
+                    {name}
+                    <span
+                      aria-hidden
+                      className="marquee-dot mx-6 inline-block h-1 w-1 rounded-full bg-foreground/20"
+                    />
+                  </li>
+                ))}
+              </ul>
             ))}
           </div>
         </div>

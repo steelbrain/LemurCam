@@ -272,4 +272,30 @@ body {
     opacity: 1;
     transform: none;
   }
+
+  /* "Works with" marquee: show one static, wrapped list instead of a stopped
+     scroller that clips most names. */
+  .marquee {
+    mask-image: none;
+    -webkit-mask-image: none;
+    padding-inline: 1.25rem;
+  }
+  .marquee-track {
+    display: block;
+    width: auto;
+  }
+  .marquee-copy {
+    display: none;
+  }
+  .marquee-list {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 0.5rem;
+  }
+  .marquee-dot {
+    margin-inline: 1rem;
+  }
+  .marquee-list li:last-child .marquee-dot {
+    display: none;
+  }
 }
