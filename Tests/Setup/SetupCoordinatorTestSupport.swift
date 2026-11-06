@@ -36,9 +36,10 @@ internal final class FakeAudioHelper: AudioHelperClient {
         checks.append(completion)
     }
 
-    /// Answer the latest installed-driver check.
-    func answerCheck(_ version: String?, sealed: Bool = true) {
-        checks.last?(InstalledDriverCheck(reachable: true, version: version, sealed: sealed))
+    /// Answer the latest installed-driver check, by default without telling which
+    /// helper answered.
+    func answerCheck(_ version: String?, sealed: Bool = true, helper: AudioHelperIdentity = .notIdentified) {
+        checks.last?(InstalledDriverCheck(reachable: true, version: version, sealed: sealed, helper: helper))
     }
 }
 

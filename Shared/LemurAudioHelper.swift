@@ -21,6 +21,14 @@ import Security
 
     /// CFBundleVersion of the currently installed driver, or nil if not installed.
     func installedVersion(withReply reply: @escaping (String?) -> Void)
+
+    /// `LemurAudioHelper.helperBuild`, answered at once (not queued behind installs
+    /// and removals). Helpers from v1.5 and before don't implement it, and NSXPC ends
+    /// the connection that sends it to one; so the app asks it only after
+    /// `installedVersion` answered, and takes a helper that answers that but not this
+    /// for one of them (`AudioHelperIdentity`). The selectors above stay as they are,
+    /// so such a helper still serves this app.
+    func helperBuild(withReply reply: @escaping (String) -> Void)
 }
 
 /// Identifiers, install locations, and code-signing requirements shared by the
@@ -37,6 +45,12 @@ internal enum LemurAudioHelper {
 
     /// File name of the installed driver bundle.
     static let driverBundleName = "LemurCamAudio.driver"
+
+    /// What a helper built from this source answers to `helperBuild`: the revision of
+    /// this XPC contract (1 was every helper up to v1.5, which has no `helperBuild`).
+    /// The app uses only whether a helper answers; bump it with a change the app must
+    /// tell apart.
+    static let helperBuild = "2"
 
     /// System HAL plug-ins directory (root-owned, scanned by coreaudiod).
     static let halPluginsDirectory = "/Library/Audio/Plug-Ins/HAL"

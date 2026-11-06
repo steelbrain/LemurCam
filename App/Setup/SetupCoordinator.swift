@@ -67,9 +67,9 @@ internal final class SetupCoordinator {
     @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
     @ObservationIgnored private var verifyingDriverInstall = false
-    /// An install through the helper left an unsealed copy since the Mac last
-    /// started, in this app session or an earlier one, so the helper is a stale one:
-    /// never install through it again (no reinstall loop).
+    /// A stale helper serves the app (an install through it left an unsealed copy, or
+    /// it identified itself as one), seen in this app session or an earlier one of this
+    /// boot: never install through it again (no reinstall loop). Each check updates it.
     @ObservationIgnored private lazy var staleHelperSeen = staleHelperMarker.isSet
     @ObservationIgnored private let staleHelperMarker: StaleHelperMarker
 
@@ -457,6 +457,7 @@ extension SetupCoordinator {
     private func applyDriverCheck(_ check: InstalledDriverCheck, token: Int) {
         // Apply only the latest query, and never during an install.
         guard token == micRefreshToken, !isInstallingDriver else { return }
+        staleHelperMarker.update(from: check.helper, seen: &staleHelperSeen)
         let reply = MicrophoneVersionReply.decide(check, context: MicrophoneCheckContext(
             currentStatus: micStatus,
             autoInstallPending: autoInstallDriver,
@@ -487,10 +488,7 @@ extension SetupCoordinator {
         case .uninstallDriver:
             disableMicrophone()
         case .setStatus(let status):
-            if status == .needsReboot {
-                staleHelperSeen = true
-                staleHelperMarker.record()
-            }
+            if status == .needsReboot { staleHelperMarker.update(from: .stale, seen: &staleHelperSeen) }
             micStatus = status
         }
     }

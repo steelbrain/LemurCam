@@ -15,25 +15,48 @@ internal enum MicrophoneStatus: Equatable {
     case installing
     /// Helper enabled and driver installed — the microphone is available.
     case ready
-    /// The helper reported an install, but the installed copy is still not sealed
-    /// to root: the helper serving the app is one from before an app update that
-    /// has not exited. Only a restart replaces it.
+    /// The helper serving the app is one from before an app update that has not
+    /// exited (an install through it left a copy not sealed to root, or it identified
+    /// itself as one), so it can install no sealed copy. Only a restart replaces it.
     case needsReboot
     /// A setup step failed; the associated string is a user-facing reason.
     case failed(String)
 }
 
 /// What the installed-driver check found: whether the privileged helper answered,
-/// the installed driver's `CFBundleVersion` (nil when none is installed), and
-/// whether the installed copy is sealed to root (`sealed` means nothing but root
-/// can change it; checked by the app itself, see `AudioDeviceInstaller`).
+/// the installed driver's `CFBundleVersion` (nil when none is installed), whether
+/// the installed copy is sealed to root (`sealed` means nothing but root can change
+/// it; checked by the app itself, see `AudioDeviceInstaller`), and which helper
+/// answered.
 internal struct InstalledDriverCheck: Equatable {
     var reachable: Bool
     var version: String?
     var sealed: Bool
+    var helper = AudioHelperIdentity.notIdentified
 
     /// The helper could not be reached, or did not answer in time.
     static let unreachable = Self(reachable: false, version: nil, sealed: false)
+}
+
+/// Which privileged helper answered an installed-driver check, told by whether it
+/// answers `helperBuild` (see `AudioDeviceInstaller.installedDriver`).
+internal enum AudioHelperIdentity: Equatable {
+    /// Not reached, or not asked.
+    case notIdentified
+    /// It answered `helperBuild`: a helper newer than v1.5, which seals the driver it
+    /// installs.
+    case current
+    /// It answered `installedVersion`, but not `helperBuild` (its connection ended, or
+    /// no reply in time): a helper from v1.5 or before, which doesn't implement it,
+    /// still serving the app after an update. It installs copies not sealed to root,
+    /// and only a restart replaces it.
+    case stale
+
+    /// From a helper that answered `installedVersion`: its `helperBuild` answer, nil
+    /// when it gave none.
+    init(helperBuild: String?) {
+        self = helperBuild == nil ? .stale : .current
+    }
 }
 
 /// A driver operation run through the privileged helper.
@@ -113,8 +136,8 @@ internal struct MicrophoneCheckContext: Equatable {
     var lastOperation: MicrophoneDriverOperation?
     /// The check follows an install the helper reported as done.
     var verifyingInstall = false
-    /// An install through the helper already left an unsealed copy since the Mac
-    /// last started (`StaleHelperMarker`).
+    /// A stale helper serves the app (`StaleHelperMarker`): an install through it left
+    /// an unsealed copy since the Mac last started, or it identified itself as one.
     var staleHelperSeen = false
     /// `CFBundleVersion` of the driver bundled in this app.
     var bundledVersion: String?
@@ -199,8 +222,11 @@ internal enum MicrophoneVersionReply: Equatable {
             // Still unsealed right after the helper installed a copy: the helper
             // serving us predates sealing (one from before an app update that has
             // not exited). Installing again would only repeat that, so ask for the
-            // restart that replaces it.
-            if context.verifyingInstall || context.staleHelperSeen { return .setStatus(.needsReboot) }
+            // restart that replaces it. A helper that identified itself as current
+            // seals what it installs: Update (or the redo) goes through it.
+            let stale = check.helper == .stale
+                || (check.helper != .current && (context.verifyingInstall || context.staleHelperSeen))
+            if stale { return .setStatus(.needsReboot) }
             return redo == .install ? .installDriver : .setStatus(.ready)
         }
         if redo == .install,

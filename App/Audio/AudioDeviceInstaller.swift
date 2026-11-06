@@ -28,8 +28,12 @@ internal final class AudioDeviceInstaller: AudioHelperClient {
         case notFound
     }
 
-    private let log = Logger(subsystem: "cam.lemur.app", category: "audio-installer")
+    private static let log = Logger(subsystem: "cam.lemur.app", category: "audio-installer")
     private let service = SMAppService.daemon(plistName: LemurAudioHelper.daemonPlistName)
+
+    /// Longest a check waits for `helperBuild` once `installedVersion` answered. A
+    /// current helper answers at once; one from v1.5 or before never does.
+    static let helperBuildTimeLimit: TimeInterval = 2
 
     var state: State {
         switch service.status {
@@ -94,13 +98,36 @@ internal final class AudioDeviceInstaller: AudioHelperClient {
     /// The seal is checked by the app, not asked of the helper: a helper from an
     /// older version can still be the one serving requests (see `HelperIdleExit`),
     /// and the copies those helpers installed are user-owned. The HAL plug-ins
-    /// directory is readable by every user, so this needs no privileges.
+    /// directory is readable by every user, so this needs no privileges. Which helper
+    /// answered is told by `helperBuild` (see `checkInstalledDriver`).
     func installedDriver(completion: @escaping (InstalledDriverCheck) -> Void) {
-        withHelper(onUnavailable: { _ in completion(.unreachable) }, body: { helper, connection in
+        Self.checkInstalledDriver(
+            on: makeConnection(), identifyWithin: Self.helperBuildTimeLimit,
+            sealed: { Self.installedCopy.installedCopyIsSealed() }, completion: completion
+        )
+    }
+
+    /// The installed-driver check over `connection`, which it resumes and invalidates
+    /// once done: `installedVersion`, then `helperBuild`. That is sent only once the
+    /// version came back, since NSXPC in a helper from v1.5 or before, whose exported
+    /// interface lacks the selector, drops the message and ends the connection, and
+    /// would take an `installedVersion` still waiting with it. `completion` runs once:
+    /// unreachable when the connection ends before the version came back; otherwise
+    /// with the helper current when it answered `helperBuild`, and stale when the
+    /// connection ended or `limit` passed first. Internal so the tests can run it
+    /// against an in-process listener.
+    static func checkInstalledDriver(
+        on connection: NSXPCConnection, identifyWithin limit: TimeInterval,
+        sealed: @escaping @Sendable () -> Bool, completion: @escaping (InstalledDriverCheck) -> Void
+    ) {
+        let request = DriverCheckRequest(connection: connection, completion: completion)
+        withHelper(on: connection, onUnavailable: { _ in request.connectionEnded() }, body: { helper, _ in
             helper.installedVersion { version in
-                let sealed = version != nil && Self.installedCopy.installedCopyIsSealed()
-                completion(InstalledDriverCheck(reachable: true, version: version, sealed: sealed))
-                connection.invalidate()
+                request.versionAnswered(
+                    InstalledDriverCheck(reachable: true, version: version, sealed: version != nil && sealed())
+                )
+                helper.helperBuild { build in request.identified(byBuild: build) }
+                DispatchQueue.global().asyncAfter(deadline: .now() + limit) { request.identified(byBuild: nil) }
             }
         })
     }
@@ -129,11 +156,23 @@ internal final class AudioDeviceInstaller: AudioHelperClient {
     /// connection and must `invalidate()` it once its reply fires.
     private func withHelper(onUnavailable: @escaping (String) -> Void,
                             body: (LemurAudioHelperProtocol, NSXPCConnection) -> Void) {
+        Self.withHelper(on: makeConnection(), onUnavailable: onUnavailable, body: body)
+    }
+
+    /// A connection to the privileged helper, pinned to its code signature.
+    private func makeConnection() -> NSXPCConnection {
         let connection = NSXPCConnection(machServiceName: LemurAudioHelper.machServiceName, options: .privileged)
-        connection.remoteObjectInterface = NSXPCInterface(with: LemurAudioHelperProtocol.self)
         connection.setCodeSigningRequirement(LemurAudioHelper.helperRequirement)
-        connection.invalidationHandler = { [weak self] in
-            self?.log.debug("helper connection invalidated")
+        return connection
+    }
+
+    /// Resumes `connection` and vends the helper proxy. `body` owns the connection
+    /// and must `invalidate()` it once its reply fires.
+    private static func withHelper(on connection: NSXPCConnection, onUnavailable: @escaping (String) -> Void,
+                                   body: (LemurAudioHelperProtocol, NSXPCConnection) -> Void) {
+        connection.remoteObjectInterface = NSXPCInterface(with: LemurAudioHelperProtocol.self)
+        connection.invalidationHandler = {
+            log.debug("helper connection invalidated")
         }
         connection.resume()
         let proxy = connection.remoteObjectProxyWithErrorHandler { error in
@@ -146,5 +185,64 @@ internal final class AudioDeviceInstaller: AudioHelperClient {
             return
         }
         body(helper, connection)
+    }
+}
+
+/// One installed-driver check in flight. XPC replies, the connection's end and the
+/// `helperBuild` time limit report to it from any thread; it completes exactly once,
+/// then invalidates the check's connection.
+private final class DriverCheckRequest: Sendable {
+    private struct State {
+        var connection: NSXPCConnection?
+        var completion: ((InstalledDriverCheck) -> Void)?
+        /// What `installedVersion` answered, before the helper is identified.
+        var answered: InstalledDriverCheck?
+    }
+
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(connection: NSXPCConnection, completion: @escaping (InstalledDriverCheck) -> Void) {
+        state = OSAllocatedUnfairLock(uncheckedState: State(connection: connection, completion: completion))
+    }
+
+    func versionAnswered(_ check: InstalledDriverCheck) {
+        state.withLockUnchecked { $0.answered = check }
+    }
+
+    /// `helperBuild` answered `build`, or nil: its time limit passed first.
+    func identified(byBuild build: String?) {
+        finish { answered in
+            guard var check = answered else { return nil }
+            check.helper = AudioHelperIdentity(helperBuild: build)
+            return check
+        }
+    }
+
+    /// The connection failed or ended: before `installedVersion` answered, the helper
+    /// could not be reached; after it, it did not answer `helperBuild`.
+    func connectionEnded() {
+        finish { answered in
+            guard var check = answered else { return .unreachable }
+            check.helper = AudioHelperIdentity(helperBuild: nil)
+            return check
+        }
+    }
+
+    /// Completes with what `result` makes of the version answered, unless it already
+    /// completed or `result` gives nothing yet.
+    private func finish(_ result: (InstalledDriverCheck?) -> InstalledDriverCheck?) {
+        typealias Ending = (completion: (InstalledDriverCheck) -> Void, check: InstalledDriverCheck,
+                            connection: NSXPCConnection?)
+        let ending = state.withLockUnchecked { state -> Ending? in
+            guard let completion = state.completion, let check = result(state.answered) else { return nil }
+            defer {
+                state.completion = nil
+                state.connection = nil
+            }
+            return (completion, check, state.connection)
+        }
+        guard let ending else { return }
+        ending.completion(ending.check)
+        ending.connection?.invalidate()
     }
 }

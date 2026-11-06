@@ -64,6 +64,12 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
         reply(version)
     }
 
+    /// Answered here, not on the operations queue: it reads nothing, and the app asks
+    /// it with every check, which must not wait behind an install.
+    func helperBuild(withReply reply: (String) -> Void) {
+        reply(LemurAudioHelper.helperBuild)
+    }
+
     // MARK: - Private
 
     /// Run `work` on the operations queue, holding the helper up while it runs.

@@ -1,10 +1,12 @@
 import Foundation
 
 /// Remembers, until the Mac restarts, that the audio helper serving the app is a
-/// stale one: an install through it left a copy not sealed to root, and only a
-/// restart replaces it (`MicrophoneStatus.needsReboot`). Kept for the app's session
-/// alone, the mark was gone after relaunching the app, which then offered Update
-/// again, and that install through the same helper cut audio again for nothing.
+/// stale one: an install through it left a copy not sealed to root, or it
+/// identified itself as one (`AudioHelperIdentity.stale`), and only a restart
+/// replaces it (`MicrophoneStatus.needsReboot`). Kept for the app's session alone,
+/// the mark was gone after relaunching the app, which then offered Update again, and
+/// that install through the same helper cut audio again for nothing. A check
+/// answered by a current helper clears it, as the stale one can stop before then.
 ///
 /// Stored in the app's own defaults (not the app group) with the boot time it was
 /// seen in, and counted only while the Mac's boot time is still that one. Injected
@@ -37,6 +39,25 @@ internal struct StaleHelperMarker {
     func record() {
         guard let current = bootTime() else { return }
         defaults.set(current, forKey: Self.key)
+    }
+
+    /// A current helper serves the app now: the stale one stopped without a restart
+    /// (turned off in Login Items, crashed, or killed), and launchd started the
+    /// current one. The mark kept every check of that boot asking for a restart.
+    func clear() {
+        defaults.removeObject(forKey: Self.key)
+    }
+
+    /// Records or clears the mark from which helper answered a check, and sets `seen`
+    /// to whether a stale one serves the app. A check that did not tell
+    /// (`AudioHelperIdentity.notIdentified`) changes neither.
+    func update(from identity: AudioHelperIdentity, seen: inout Bool) {
+        switch identity {
+        case .notIdentified: return
+        case .current: clear()
+        case .stale: record()
+        }
+        seen = identity == .stale
     }
 }
 
