@@ -26,9 +26,9 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPopoverOpen = false
     var helpWindow: NSWindow?
     var aboutWindow: NSWindow?
-    /// Set when the user clicks "Later" on the launch banner, so it doesn't reappear
-    /// on every reactivation this session; it returns at the next launch if the
-    /// upgrade-pending state persists.
+    /// Set when the user puts the launch banner away ("Later", its close button,
+    /// Cmd-W), so it doesn't reappear on every reactivation this session; it returns
+    /// at the next launch if the upgrade-pending state persists.
     private var launchNudgeDismissed = false
     private var globalClickMonitor: Any?
     /// True once `applicationDidFinishLaunching` got past the launch guards and set
@@ -463,6 +463,15 @@ extension AppDelegate: NSPopoverDelegate {
 // MARK: - NSWindowDelegate
 
 extension AppDelegate: NSWindowDelegate {
+    /// Asked only when the user closes a window (its close button, Cmd-W, or a
+    /// `performClose` such as the banner's "Later"); the app's own `close()` calls
+    /// (`retireLaunchNudge`, the banner's state clearing) skip it. A user closing the
+    /// launch banner has put it off, as "Later" does.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender === nudgeWindow { launchNudgeDismissed = true }
+        return true
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === settingsWindow {
