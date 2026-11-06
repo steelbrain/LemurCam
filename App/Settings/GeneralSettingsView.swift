@@ -12,6 +12,8 @@ internal struct GeneralSettingsView: View {
             virtualCameraSection
         }
         .formStyle(.grouped)
+        // Login Items can change in System Settings while Settings is closed.
+        .onAppear { launchAtLoginManager.refresh() }
     }
 
     private var aboutSection: some View {

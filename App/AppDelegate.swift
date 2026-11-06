@@ -110,9 +110,10 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_: Notification) {
-        // Approval happens out-of-process in System Settings; re-poll on
-        // reactivation to notice when the user finishes a step.
+        // Approval happens out-of-process in System Settings, where Login Items can
+        // change too; re-poll on reactivation to notice when the user finishes a step.
         setupCoordinator.refreshAll()
+        launchAtLoginManager.refresh()
         presentLaunchNudgeIfNeeded()
     }
 
@@ -175,6 +176,7 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         let launchItem = menuItem("Launch at Login", #selector(toggleLaunchAtLogin))
+        launchAtLoginManager.refresh()
         launchItem.state = launchAtLoginManager.isEnabled ? .on : .off
         menu.addItem(launchItem)
         menu.addItem(menuItem("Set Up LemurCam\u{2026}", #selector(openSetupWindow as () -> Void)))
