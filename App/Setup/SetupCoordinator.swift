@@ -263,20 +263,59 @@ internal final class SetupCoordinator {
         let token = micRefreshToken
         audioInstaller.installedVersion { [weak self] reachable, version in
             Task { @MainActor in
-                // Apply only the latest query, never during an install, and never
-                // when the helper was unreachable (a hiccup, not "not installed").
+                // Apply only the latest query, and never during an install.
                 guard let self, token == self.micRefreshToken, !self.isInstallingDriver else { return }
-                guard reachable else { return }
-                self.installedDriverVersion = version
-                // Helper just got approved mid-setup with no driver yet: finish now.
-                if version == nil, self.autoInstallDriver {
+                let reply = MicrophoneVersionReply.decide(
+                    reachable: reachable,
+                    version: version,
+                    currentStatus: self.micStatus,
+                    autoInstallPending: self.autoInstallDriver
+                )
+                if reachable {
+                    self.installedDriverVersion = version
+                    if version != nil { self.autoInstallDriver = false }
+                }
+                switch reply {
+                case .keepStatus:
+                    return
+                case .installDriver:
                     self.autoInstallDriver = false
                     self.installMicDriver()
-                    return
+                case .setStatus(let status):
+                    self.micStatus = status
                 }
-                if version != nil { self.autoInstallDriver = false }
-                self.micStatus = version == nil ? .notSetUp : .ready
             }
         }
+    }
+}
+
+/// What to do with the helper's installed-driver-version reply. Pure, so the
+/// reply handling (including an unreachable helper) is unit testable without XPC.
+internal enum MicrophoneVersionReply: Equatable {
+    /// Leave `micStatus` as it is.
+    case keepStatus
+    /// Show this status.
+    case setStatus(MicrophoneStatus)
+    /// The helper was just approved mid-setup and no driver is installed yet:
+    /// install it now instead of making the user click again.
+    case installDriver
+
+    static let unreachableMessage = "Couldn’t reach the microphone helper. Please try again."
+
+    static func decide(
+        reachable: Bool,
+        version: String?,
+        currentStatus: MicrophoneStatus,
+        autoInstallPending: Bool
+    ) -> Self {
+        guard reachable else {
+            // Once the status is known, an unreachable helper is a hiccup, not "not
+            // installed", so keep it. Before that, waiting would leave a spinner
+            // with no action forever; fail so "Try Again" is offered. A later
+            // successful query (poll or reactivation) replaces the failure.
+            return currentStatus == .unknown ? .setStatus(.failed(unreachableMessage)) : .keepStatus
+        }
+        if version == nil, autoInstallPending { return .installDriver }
+        return .setStatus(version == nil ? .notSetUp : .ready)
     }
 }
