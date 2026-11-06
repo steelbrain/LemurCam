@@ -60,6 +60,10 @@ internal final class SetupCoordinator {
     /// (app reactivation + page onAppear) into a single install and to avoid a
     /// stale version query clobbering the in-progress state.
     @ObservationIgnored private var isInstallingDriver = false
+    /// Names the install or removal started last. A reply or time-out carries the
+    /// one it belongs to and applies only to that one: the reply to an operation
+    /// that timed out can land while a newer one runs.
+    @ObservationIgnored private var micOperationToken = 0
     /// Monotonic token so only the latest installed-version reply applies; drops
     /// stale async replies that would otherwise clobber freshly-changed state.
     @ObservationIgnored private var micRefreshToken = 0
@@ -307,6 +311,8 @@ extension SetupCoordinator {
     ) {
         guard !isInstallingDriver else { return }
         isInstallingDriver = true
+        micOperationToken += 1
+        let token = micOperationToken
         micLastOperation = kind
         micOperationFailure = nil
         micStatus = .installing
@@ -315,7 +321,7 @@ extension SetupCoordinator {
         let timeLimit = micOperationTimeLimit
         micInstallTimeout = Task { [weak self] in
             try? await Task.sleep(for: timeLimit)
-            guard let self, !Task.isCancelled, self.isInstallingDriver else { return }
+            guard let self, !Task.isCancelled, self.micOperationToken == token, self.isInstallingDriver else { return }
             self.isInstallingDriver = false
             self.failMicOperation(
                 kind, reportedByHelper: false, message: "The microphone helper didn’t respond. Please try again.",
@@ -324,7 +330,9 @@ extension SetupCoordinator {
         }
         operation { [weak self] result in
             Task { @MainActor in
-                guard let self else { return }
+                // A reply to an earlier operation, which timed out, must not end
+                // this one or stop its time limit.
+                guard let self, self.micOperationToken == token else { return }
                 self.micInstallTimeout?.cancel()
                 self.isInstallingDriver = false
                 switch result {
