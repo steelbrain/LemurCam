@@ -55,10 +55,11 @@ internal final class SetupCoordinatorFixture {
         defaults.removePersistentDomain(forName: suite)
     }
 
-    /// Bring the microphone to `.ready` with the bundled driver installed and sealed.
-    func makeReady() async -> Bool {
+    /// Bring the microphone to `.ready` with `version` installed (by default the
+    /// bundled driver, sealed).
+    func makeReady(version: String = "6", sealed: Bool = true) async -> Bool {
         coordinator.refreshMicrophoneStatus()
-        helper.answerCheck("6")
+        helper.answerCheck(version, sealed: sealed)
         return await waitUntil { self.coordinator.micStatus == .ready }
     }
 

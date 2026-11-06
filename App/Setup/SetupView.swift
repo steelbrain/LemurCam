@@ -312,7 +312,10 @@ private extension SetupView {
 private extension SetupView {
     func micDetail(_ status: MicrophoneStatus) -> String {
         switch status {
-        case .ready: return "Ready — “LemurCam Microphone” is available to other apps."
+        case .ready:
+            let ready = "Ready — “LemurCam Microphone” is available to other apps."
+            guard let reason = coordinator.microphoneUpdateReason else { return ready }
+            return ready + " " + MicrophoneStatusCopy.update(reason)
         case .needsApproval:
             return "Approve LemurCam in System Settings → General → Login Items & Extensions, then come back."
         case .installing: return "Setting up… this can take a few seconds."
@@ -326,7 +329,14 @@ private extension SetupView {
     @ViewBuilder
     func micControl(_ status: MicrophoneStatus) -> some View {
         switch status {
-        case .ready, .installing, .unknown, .needsReboot:
+        case .ready:
+            // After an app update the wizard reopens here: offer the newer or
+            // protected copy the Settings status card offers.
+            if coordinator.microphoneNeedsUpdate {
+                Button("Update Microphone") { coordinator.updateMicrophone() }
+                    .buttonStyle(.borderedProminent)
+            }
+        case .installing, .unknown, .needsReboot:
             EmptyView()
         case .needsApproval:
             Button("Open System Settings") { coordinator.openMicrophoneSystemSettings() }

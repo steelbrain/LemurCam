@@ -206,4 +206,13 @@ internal enum MicrophoneStatusCopy {
         + "Restart your Mac to finish installing the microphone."
     static let unsealed = "The installed copy can be modified without administrator rights. "
         + "Updating reinstalls it protected and briefly restarts audio."
+    static let newerVersion = "A newer version is available — updating briefly restarts audio."
+
+    /// Why "Update Microphone" is offered.
+    static func update(_ reason: MicrophoneUpdateReason) -> String {
+        switch reason {
+        case .newerVersion: return newerVersion
+        case .unsealed: return unsealed
+        }
+    }
 }

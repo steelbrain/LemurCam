@@ -116,11 +116,8 @@ internal struct StatusSettingsView: View {
         default: break
         }
         let base = "Optional — exposes your camera’s audio as a “LemurCam Microphone”."
-        switch setup.microphoneUpdateReason {
-        case .newerVersion: return base + " A newer version is available — updating briefly restarts audio."
-        case .unsealed: return base + " " + MicrophoneStatusCopy.unsealed
-        case nil: return base
-        }
+        guard let reason = setup.microphoneUpdateReason else { return base }
+        return base + " " + MicrophoneStatusCopy.update(reason)
     }
 
     private var micCardState: SetupStepState {
