@@ -1105,6 +1105,9 @@ export default function AppWindow() {
     if (id === activeId) return;
     setActiveId(id);
     log("rtsp", "No demand — skipping RTSP connection");
+    // showActiveSourceIdle: the newly active camera shows as disconnected until
+    // the Preview pane brings demand back.
+    if (id) setStatuses((prev) => ({ ...prev, [id]: "disconnected" }));
   };
 
   const changeMic = (to: MicStatus) => {
