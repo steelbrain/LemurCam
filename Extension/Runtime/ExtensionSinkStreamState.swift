@@ -5,17 +5,14 @@ import os
 
 internal typealias SinkSampleBufferHandler = @Sendable (CMSampleBuffer) -> Void
 
+/// Lock-protected sink-stream state. The session/generation decisions live in the
+/// pure `SinkStreamSession` (Shared/, unit-tested); this type only adds the CMIO
+/// client and the frame handler, and makes each check-and-act step atomic.
 internal final class ExtensionSinkStreamState: Sendable {
-    internal struct SubscriptionSnapshot: Sendable {
-        let client: SendableRetainedReference<CMIOExtensionClient>
-        let generation: UInt64
-    }
-
     private struct State: Sendable {
         var consumeSampleBuffer: SinkSampleBufferHandler?
         var client: SendableRetainedReference<CMIOExtensionClient>?
-        var streaming = false
-        var generation: UInt64 = 0
+        var session = SinkStreamSession()
         var activeFormatIndex = 0
     }
 
@@ -54,36 +51,42 @@ internal final class ExtensionSinkStreamState: Sendable {
         }
     }
 
-    func start() {
-        state.withLock {
-            $0.streaming = true
-            $0.generation &+= 1
-        }
+    /// Begin a new session; returns the generation its consume requests carry.
+    func start() -> UInt64 {
+        state.withLock { $0.session.start() }
     }
 
     func stop() {
-        state.withLock {
-            $0.streaming = false
-            $0.generation &+= 1
-        }
+        state.withLock { $0.session.stop() }
     }
 
-    func markDisconnected() {
-        stop()
+    /// Stop the session after its consume loop reported a disconnect, only if
+    /// `generation` is still live. Returns whether it stopped anything.
+    func markDisconnected(ifCurrent generation: UInt64) -> Bool {
+        state.withLock { $0.session.disconnect(ifCurrent: generation) }
     }
 
-    func subscriptionSnapshot() -> SubscriptionSnapshot? {
+    /// The client to pull from for a consume request under `generation`, or nil
+    /// when that session is no longer live. Checking the generation in the same
+    /// lock as reading the client means a loop from an ended session can never
+    /// re-arm itself under a newer session's generation.
+    func client(forGeneration generation: UInt64) -> SendableRetainedReference<CMIOExtensionClient>? {
         state.withLock { state in
-            guard state.streaming, let client = state.client else {
-                return nil
-            }
-            return SubscriptionSnapshot(client: client, generation: state.generation)
+            guard state.session.isCurrent(generation) else { return nil }
+            return state.client
         }
     }
 
-    func isCurrent(generation: UInt64) -> Bool {
+    func completionAction(
+        generation: UInt64,
+        hasBuffer: Bool,
+        hasError: Bool,
+        frameRate: Int
+    ) -> SinkCompletionAction {
         state.withLock {
-            $0.streaming && $0.generation == generation
+            $0.session.completionAction(
+                generation: generation, hasBuffer: hasBuffer, hasError: hasError, frameRate: frameRate
+            )
         }
     }
 

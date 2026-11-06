@@ -111,9 +111,9 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
             Log.ext.error("startStream: unexpected device source type")
             throw NSError(domain: "cam.lemur.app.extension", code: -1)
         }
-        state.start()
+        let generation = state.start()
         deviceSource.startSinkStreaming()
-        subscribe(deviceSource: deviceSource)
+        subscribe(deviceSource: deviceSource, generation: generation)
     }
 
     func stopStream() throws {
@@ -125,33 +125,26 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
         deviceSource.stopSinkStreaming()
     }
 
-    private func subscribe(deviceSource: ExtensionDeviceSource) {
+    private func subscribe(deviceSource: ExtensionDeviceSource, generation: UInt64) {
         guard let stream else { return }
         Self.subscribe(
-            state: state,
-            stream: SendableRetainedReference(stream),
-            deviceSource: SendableRetainedReference(deviceSource),
-            consumeQueue: consumeQueue
+            context: ConsumeContext(
+                state: state,
+                stream: SendableRetainedReference(stream),
+                deviceSource: SendableRetainedReference(deviceSource),
+                consumeQueue: consumeQueue,
+                generation: generation
+            )
         )
     }
 
-    private static func subscribe(
-        state: ExtensionSinkStreamState,
-        stream: SendableRetainedReference<CMIOExtensionStream>,
-        deviceSource: SendableRetainedReference<ExtensionDeviceSource>,
-        consumeQueue: DispatchQueue
-    ) {
-        guard let snapshot = state.subscriptionSnapshot() else { return }
-        let context = ConsumeContext(
-            state: state,
-            stream: stream,
-            deviceSource: deviceSource,
-            consumeQueue: consumeQueue,
-            generation: snapshot.generation
-        )
+    /// Issue one consume request for `context.generation`. A no-op once that
+    /// session has ended, so a loop never outlives (or doubles up on) its session.
+    private static func subscribe(context: ConsumeContext) {
+        guard let client = context.state.client(forGeneration: context.generation) else { return }
 
-        stream.withValue { streamValue in
-            snapshot.client.withValue { client in
+        context.stream.withValue { streamValue in
+            client.withValue { client in
                 streamValue.consumeSampleBuffer(
                     from: client
                 ) { sampleBuffer, sampleBufferSequenceNumber, _, _, error in
@@ -172,45 +165,49 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
         context: ConsumeContext,
         completion: ConsumeCompletion
     ) {
-        if completion.error == nil, let sampleBuffer = completion.sampleBuffer {
-            context.state.deliver(sampleBuffer)
-            context.stream.withValue { stream in
-                let presentationNanoSec = UInt64(sampleBuffer.presentationTimeStamp.seconds * Double(NSEC_PER_SEC))
-                let output = CMIOExtensionScheduledOutput(sequenceNumber: completion.sampleBufferSequenceNumber,
-                                                          hostTimeInNanoseconds: presentationNanoSec)
-                stream.notifyScheduledOutputChanged(output)
-            }
-        }
+        // Every branch is gated on the completion's generation (see
+        // SinkCompletionAction.discardStale): after a quick stop/start, a completion
+        // from the old session must neither stop the new one nor start a second loop.
+        //
         // Empty completions (the producer has no frame ready) must not re-arm
         // immediately: that turns the pull into a busy XPC poll that pegs CPU in
         // both this extension and the app. Throttle empty polls to one frame
         // interval; real frames still re-arm immediately so bursts drain fast.
-        switch SinkConsumeScheduler.action(hasBuffer: completion.sampleBuffer != nil,
-                                           hasError: completion.error != nil,
-                                           frameRate: LemurCamConfig.frameRate) {
-        case .stop:
+        switch context.state.completionAction(
+            generation: context.generation,
+            hasBuffer: completion.sampleBuffer != nil,
+            hasError: completion.error != nil,
+            frameRate: LemurCamConfig.frameRate
+        ) {
+        case .discardStale:
+            return
+        case .proceed(.stop):
+            guard context.state.markDisconnected(ifCurrent: context.generation) else { return }
             Log.ext.info("Sink client disconnected: \(completion.error?.localizedDescription ?? "unknown error")")
-            context.state.markDisconnected()
             context.deviceSource.withValue {
                 $0.stopSinkStreaming()
             }
-        case .resubscribeImmediately:
-            subscribe(
-                state: context.state,
-                stream: context.stream,
-                deviceSource: context.deviceSource,
-                consumeQueue: context.consumeQueue
-            )
-        case .resubscribeAfter(let nanoseconds):
-            context.consumeQueue.asyncAfter(deadline: .now() + .nanoseconds(Int(nanoseconds))) {
-                guard context.state.isCurrent(generation: context.generation) else { return }
-                subscribe(
-                    state: context.state,
-                    stream: context.stream,
-                    deviceSource: context.deviceSource,
-                    consumeQueue: context.consumeQueue
-                )
+        case .proceed(.resubscribeImmediately):
+            if let sampleBuffer = completion.sampleBuffer {
+                forward(sampleBuffer, sequenceNumber: completion.sampleBufferSequenceNumber, context: context)
             }
+            subscribe(context: context)
+        case .proceed(.resubscribeAfter(let nanoseconds)):
+            context.consumeQueue.asyncAfter(deadline: .now() + .nanoseconds(Int(nanoseconds))) {
+                subscribe(context: context)
+            }
+        }
+    }
+
+    /// Hand a live buffer to the device (which forwards it to the source stream)
+    /// and report it to the client as output.
+    private static func forward(_ sampleBuffer: CMSampleBuffer, sequenceNumber: UInt64, context: ConsumeContext) {
+        context.state.deliver(sampleBuffer)
+        context.stream.withValue { stream in
+            let presentationNanoSec = UInt64(sampleBuffer.presentationTimeStamp.seconds * Double(NSEC_PER_SEC))
+            let output = CMIOExtensionScheduledOutput(sequenceNumber: sequenceNumber,
+                                                      hostTimeInNanoseconds: presentationNanoSec)
+            stream.notifyScheduledOutputChanged(output)
         }
     }
 }
