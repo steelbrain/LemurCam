@@ -7,6 +7,28 @@ internal struct ProcessedFrame {
     let isKeyframe: Bool
 }
 
+/// The fields of an IPCamKit `PublicVideoFrame` that `NALProcessor` reads. A plain
+/// struct so tests can build frames: IPCamKit's memberwise initializer is internal.
+internal struct VideoFrameInput {
+    let nalus: [Data]
+    let isKeyframe: Bool
+    /// RTP packets lost before this frame. Non-zero means the frames that follow
+    /// can reference pictures this client never received.
+    var loss: UInt16 = 0
+    var sps: Data?
+    var pps: Data?
+    var vps: Data?
+}
+
+internal extension VideoFrameInput {
+    init(_ frame: PublicVideoFrame) {
+        self.init(
+            nalus: frame.nalus, isKeyframe: frame.isKeyframe, loss: frame.loss,
+            sps: frame.sps, pps: frame.pps, vps: frame.vps
+        )
+    }
+}
+
 internal final class NALProcessor {
     private let codec: VideoCodec
     private var sps: Data
@@ -14,6 +36,10 @@ internal final class NALProcessor {
     private var vps: Data?
     private var formatDescription: CMVideoFormatDescription?
     private var receivedKeyframe = false
+    /// Set once "no format description" has been logged, so a stream without usable
+    /// parameter sets logs it once instead of once per frame. Cleared when a format
+    /// description is built, so losing it again logs again.
+    private var loggedMissingFormatDescription = false
 
     init(codec: VideoCodec, sps: Data, pps: Data, vps: Data?) {
         self.codec = codec
@@ -39,28 +65,36 @@ internal final class NALProcessor {
     }
 
     func process(_ frame: PublicVideoFrame) -> ProcessedFrame? {
-        // Update parameter sets if they changed
-        if let newSPS = frame.sps, let newPPS = frame.pps {
-            let changed = newSPS != sps || newPPS != pps || frame.vps != vps
-            if changed {
-                sps = newSPS
-                pps = newPPS
-                vps = frame.vps ?? vps
-                formatDescription = buildFormatDescription(sps: sps, pps: pps, vps: vps)
-                Log.rtsp.info("Parameter sets updated, rebuilt format description")
-            }
+        process(VideoFrameInput(frame))
+    }
+
+    func process(_ frame: VideoFrameInput) -> ProcessedFrame? {
+        let rebuilt = updateParameterSets(from: frame)
+        if formatDescription == nil, frame.isKeyframe, !rebuilt {
+            retryFormatDescription()
         }
 
         guard let formatDescription else {
-            Log.rtsp.warning("No format description available, dropping frame")
+            if !loggedMissingFormatDescription {
+                loggedMissingFormatDescription = true
+                Log.rtsp.warning("No format description available, dropping frames until one is built")
+            }
             return nil
         }
 
-        // Wait for first keyframe before decoding
+        // After packet loss the frames that follow can reference pictures that never
+        // arrived, and decoding them smears the picture until the next keyframe.
+        // Drop them and resume at the next keyframe, which decodes on its own.
+        if frame.loss > 0, receivedKeyframe, !frame.isKeyframe {
+            receivedKeyframe = false
+            Log.rtsp.info("Lost \(frame.loss) packet(s), waiting for the next keyframe")
+        }
+
+        // Decode only from a keyframe: at stream start and after packet loss
         if !receivedKeyframe {
             guard frame.isKeyframe else { return nil }
             receivedKeyframe = true
-            Log.rtsp.info("Received first keyframe")
+            Log.rtsp.info("Received keyframe")
         }
 
         // Filter NALs — keep only VCL units (skip SEI, AUD, parameter sets)
@@ -75,6 +109,40 @@ internal final class NALProcessor {
             formatDescription: formatDescription,
             isKeyframe: frame.isKeyframe
         )
+    }
+
+    // MARK: - Parameter Sets
+
+    /// Adopt the frame's parameter sets when they changed and rebuild the format
+    /// description. Returns whether a rebuild was attempted.
+    private func updateParameterSets(from frame: VideoFrameInput) -> Bool {
+        guard let newSPS = frame.sps, let newPPS = frame.pps,
+              newSPS != sps || newPPS != pps || frame.vps != vps else { return false }
+        sps = newSPS
+        pps = newPPS
+        vps = frame.vps ?? vps
+        setFormatDescription(buildFormatDescription(sps: sps, pps: pps, vps: vps))
+        Log.rtsp.info("Parameter sets updated, rebuilt format description")
+        return true
+    }
+
+    /// Rebuild from the stored parameter sets. IPCamKit reports parameter sets only
+    /// when they change, so a build that failed would otherwise never be retried and
+    /// every later frame would be dropped. Called on keyframes, the first frames a
+    /// new format description can decode.
+    private func retryFormatDescription() {
+        guard !sps.isEmpty, !pps.isEmpty else { return }
+        setFormatDescription(buildFormatDescription(sps: sps, pps: pps, vps: vps))
+        if formatDescription != nil {
+            Log.rtsp.info("Format description created on retry")
+        }
+    }
+
+    private func setFormatDescription(_ description: CMVideoFormatDescription?) {
+        formatDescription = description
+        if description != nil {
+            loggedMissingFormatDescription = false
+        }
     }
 
     // MARK: - Private
@@ -101,76 +169,6 @@ internal final class NALProcessor {
         }
 
         return desc
-    }
-
-    private func buildH264FormatDescription(
-        sps: Data, pps: Data, out desc: inout CMVideoFormatDescription?
-    ) -> OSStatus {
-        guard !sps.isEmpty, !pps.isEmpty else {
-            Log.rtsp.error("Empty parameter set: sps=\(sps.count) pps=\(pps.count)")
-            return OSStatus(kCMFormatDescriptionError_InvalidParameter)
-        }
-        var sizes = [sps.count, pps.count]
-        return sps.withUnsafeBytes { spsPtr in
-            pps.withUnsafeBytes { ppsPtr in
-                guard let spsBase = spsPtr.baseAddress,
-                      let ppsBase = ppsPtr.baseAddress else {
-                    return OSStatus(kCMFormatDescriptionError_InvalidParameter)
-                }
-                var pointers: [UnsafePointer<UInt8>] = [
-                    spsBase.assumingMemoryBound(to: UInt8.self),
-                    ppsBase.assumingMemoryBound(to: UInt8.self)
-                ]
-                return CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                    allocator: kCFAllocatorDefault,
-                    parameterSetCount: 2,
-                    parameterSetPointers: &pointers,
-                    parameterSetSizes: &sizes,
-                    nalUnitHeaderLength: 4,
-                    formatDescriptionOut: &desc
-                )
-            }
-        }
-    }
-
-    private func buildHEVCFormatDescription(
-        sps: Data, pps: Data, vps: Data?, out desc: inout CMVideoFormatDescription?
-    ) -> OSStatus? {
-        guard let vps, !vps.isEmpty else {
-            Log.rtsp.error("H.265 requires non-empty VPS")
-            return nil
-        }
-        guard !sps.isEmpty, !pps.isEmpty else {
-            Log.rtsp.error("Empty parameter set: sps=\(sps.count) pps=\(pps.count)")
-            return nil
-        }
-
-        var sizes = [vps.count, sps.count, pps.count]
-        return vps.withUnsafeBytes { vpsPtr in
-            sps.withUnsafeBytes { spsPtr in
-                pps.withUnsafeBytes { ppsPtr in
-                    guard let vpsBase = vpsPtr.baseAddress,
-                          let spsBase = spsPtr.baseAddress,
-                          let ppsBase = ppsPtr.baseAddress else {
-                        return OSStatus(kCMFormatDescriptionError_InvalidParameter)
-                    }
-                    var pointers: [UnsafePointer<UInt8>] = [
-                        vpsBase.assumingMemoryBound(to: UInt8.self),
-                        spsBase.assumingMemoryBound(to: UInt8.self),
-                        ppsBase.assumingMemoryBound(to: UInt8.self)
-                    ]
-                    return CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                        allocator: kCFAllocatorDefault,
-                        parameterSetCount: 3,
-                        parameterSetPointers: &pointers,
-                        parameterSetSizes: &sizes,
-                        nalUnitHeaderLength: 4,
-                        extensions: nil,
-                        formatDescriptionOut: &desc
-                    )
-                }
-            }
-        }
     }
 
     func shouldKeepNAL(_ nalData: Data) -> Bool {
@@ -251,6 +249,80 @@ internal final class NALProcessor {
             if count > 0 {
                 nalu.copyBytes(to: base.advanced(by: offset), count: count)
                 offset += count
+            }
+        }
+    }
+}
+
+// MARK: - Format Description Builders
+
+private extension NALProcessor {
+    func buildH264FormatDescription(
+        sps: Data, pps: Data, out desc: inout CMVideoFormatDescription?
+    ) -> OSStatus {
+        guard !sps.isEmpty, !pps.isEmpty else {
+            Log.rtsp.error("Empty parameter set: sps=\(sps.count) pps=\(pps.count)")
+            return OSStatus(kCMFormatDescriptionError_InvalidParameter)
+        }
+        var sizes = [sps.count, pps.count]
+        return sps.withUnsafeBytes { spsPtr in
+            pps.withUnsafeBytes { ppsPtr in
+                guard let spsBase = spsPtr.baseAddress,
+                      let ppsBase = ppsPtr.baseAddress else {
+                    return OSStatus(kCMFormatDescriptionError_InvalidParameter)
+                }
+                var pointers: [UnsafePointer<UInt8>] = [
+                    spsBase.assumingMemoryBound(to: UInt8.self),
+                    ppsBase.assumingMemoryBound(to: UInt8.self)
+                ]
+                return CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                    allocator: kCFAllocatorDefault,
+                    parameterSetCount: 2,
+                    parameterSetPointers: &pointers,
+                    parameterSetSizes: &sizes,
+                    nalUnitHeaderLength: 4,
+                    formatDescriptionOut: &desc
+                )
+            }
+        }
+    }
+
+    func buildHEVCFormatDescription(
+        sps: Data, pps: Data, vps: Data?, out desc: inout CMVideoFormatDescription?
+    ) -> OSStatus? {
+        guard let vps, !vps.isEmpty else {
+            Log.rtsp.error("H.265 requires non-empty VPS")
+            return nil
+        }
+        guard !sps.isEmpty, !pps.isEmpty else {
+            Log.rtsp.error("Empty parameter set: sps=\(sps.count) pps=\(pps.count)")
+            return nil
+        }
+
+        var sizes = [vps.count, sps.count, pps.count]
+        return vps.withUnsafeBytes { vpsPtr in
+            sps.withUnsafeBytes { spsPtr in
+                pps.withUnsafeBytes { ppsPtr in
+                    guard let vpsBase = vpsPtr.baseAddress,
+                          let spsBase = spsPtr.baseAddress,
+                          let ppsBase = ppsPtr.baseAddress else {
+                        return OSStatus(kCMFormatDescriptionError_InvalidParameter)
+                    }
+                    var pointers: [UnsafePointer<UInt8>] = [
+                        vpsBase.assumingMemoryBound(to: UInt8.self),
+                        spsBase.assumingMemoryBound(to: UInt8.self),
+                        ppsBase.assumingMemoryBound(to: UInt8.self)
+                    ]
+                    return CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                        allocator: kCFAllocatorDefault,
+                        parameterSetCount: 3,
+                        parameterSetPointers: &pointers,
+                        parameterSetSizes: &sizes,
+                        nalUnitHeaderLength: 4,
+                        extensions: nil,
+                        formatDescriptionOut: &desc
+                    )
+                }
             }
         }
     }
