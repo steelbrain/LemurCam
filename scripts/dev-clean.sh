@@ -7,7 +7,9 @@ set -euo pipefail
 # macOS can re-stage the camera extension on reboot from ANY app bundle that
 # embeds it (/Applications, DerivedData, repo build/, archives, Downloads...).
 # So a real reset must (1) tell macOS to uninstall the extension and (2) delete
-# every on-disk copy of the app bundle and any staged extension.
+# every on-disk copy of the app bundle and any staged extension. Copies inside
+# Xcode archives (release builds, notarization submissions) are only deleted
+# with --include-archives.
 #
 # systemextensionsctl uninstall/reset/developer are refused while System
 # Integrity Protection is enabled. Disable SIP from Recovery ('csrutil disable')
@@ -26,6 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SYSEXT_ROOT="/Library/SystemExtensions"
+ARCHIVES_ROOT="${HOME}/Library/Developer/Xcode/Archives"
 
 # Audio HAL driver install + staging paths. Must match LemurAudioHelper /
 # HelperService in the app; the driver is root-owned, so removal needs sudo.
@@ -35,6 +38,7 @@ DRIVER_STAGING_PATH="${HAL_PLUGINS_DIR}/.${DRIVER_BUNDLE_NAME}.staging"
 EXECUTE=0
 ASSUME_YES=0
 KEEP_APPS=0
+INCLUDE_ARCHIVES=0
 KEEP_DERIVED_DATA=0
 KEEP_EXTENSION=0
 KEEP_DRIVER=0
@@ -53,7 +57,8 @@ By default --execute will:
   - stop running LemurCam app/extension processes
   - uninstall the extension via 'systemextensionsctl uninstall' (needs SIP off)
   - delete EVERY LemurCam.app bundle it can find (the main cause of reboot
-    re-staging), plus any staged ${EXT_BUNDLE_ID} under ${SYSEXT_ROOT}
+    re-staging), plus any staged ${EXT_BUNDLE_ID} under ${SYSEXT_ROOT}.
+    Copies inside Xcode archives are kept unless you pass --include-archives.
   - remove the installed audio driver (${DRIVER_BUNDLE_NAME}) from
     ${HAL_PLUGINS_DIR} and restart coreaudiod so it drops the plug-in
   - reset Camera (TCC) authorization for the app and extension
@@ -65,6 +70,10 @@ Options:
   --execute              Actually run the commands. Without this, only prints them.
   --yes                  Do not prompt before destructive operations.
   --keep-apps            Do not delete LemurCam.app bundles.
+  --include-archives     Also delete LemurCam.app copies inside Xcode archives
+                         (${ARCHIVES_ROOT}
+                         or any .xcarchive), such as release builds and
+                         notarization submissions. Off by default.
   --keep-derived-data    Do not delete DerivedData / repo build outputs.
   --keep-extension       Do not run 'systemextensionsctl uninstall'.
   --keep-driver          Do not remove the installed audio driver.
@@ -91,6 +100,7 @@ while [[ $# -gt 0 ]]; do
     --execute) EXECUTE=1 ;;
     --yes) ASSUME_YES=1 ;;
     --keep-apps) KEEP_APPS=1 ;;
+    --include-archives) INCLUDE_ARCHIVES=1 ;;
     --keep-derived-data) KEEP_DERIVED_DATA=1 ;;
     --keep-extension) KEEP_EXTENSION=1 ;;
     --keep-driver) KEEP_DRIVER=1 ;;
@@ -289,12 +299,12 @@ collect_app_bundles() {
     done < <(find "$derived_root" -path "*/Build/Products/*/${APP_NAME}.app" -type d -prune -print 2>/dev/null)
   fi
 
-  # Xcode archives.
-  local archive_root="${HOME}/Library/Developer/Xcode/Archives"
-  if [[ -d "$archive_root" ]]; then
+  # Xcode archives. Listed so delete_apps can report them; only deleted with
+  # --include-archives (see is_archived_bundle).
+  if [[ -d "$ARCHIVES_ROOT" ]]; then
     while IFS= read -r path; do
       [[ -n "$path" ]] && candidates+=("$path")
-    done < <(find "$archive_root" -type d -name "${APP_NAME}.app" -prune -print 2>/dev/null)
+    done < <(find "$ARCHIVES_ROOT" -type d -name "${APP_NAME}.app" -prune -print 2>/dev/null)
   fi
 
   # Spotlight catch-all by bundle identifier (covers Downloads, Desktop, etc.).
@@ -320,6 +330,14 @@ ext_process_pattern() {
   local escaped_root="${SYSEXT_ROOT//./\\.}"
   local escaped_id="${EXT_BUNDLE_ID//./\\.}"
   printf '^%s/.*/%s$' "$escaped_root" "$escaped_id"
+}
+
+# True for an app bundle inside an Xcode archive: anything under the default
+# Archives folder (including notarization Submissions copies) or inside any
+# .xcarchive elsewhere (Spotlight finds those too).
+is_archived_bundle() {
+  local path="$1"
+  [[ "$path" == "${ARCHIVES_ROOT}/"* || "$path" == *".xcarchive/"* ]]
 }
 
 stop_processes() {
@@ -357,12 +375,28 @@ delete_apps() {
 
   log "Deleting LemurCam app bundles (each embeds the extension)"
   local apps=()
+  local archived=()
   while IFS= read -r app; do
-    [[ -n "$app" ]] && apps+=("$app")
+    [[ -n "$app" ]] || continue
+    if [[ "$INCLUDE_ARCHIVES" -ne 1 ]] && is_archived_bundle "$app"; then
+      archived+=("$app")
+    else
+      apps+=("$app")
+    fi
   done < <(collect_app_bundles)
 
+  if [[ "${#archived[@]}" -gt 0 ]]; then
+    printf 'Keeping app bundle(s) inside Xcode archives (pass --include-archives to delete them):\n'
+    printf '  %s\n' "${archived[@]}"
+    echo "macOS can still re-stage the extension from these on reboot."
+  fi
+
   if [[ "${#apps[@]}" -eq 0 ]]; then
-    echo "No ${APP_NAME}.app bundles found."
+    if [[ "${#archived[@]}" -gt 0 ]]; then
+      echo "No ${APP_NAME}.app bundles found outside Xcode archives."
+    else
+      echo "No ${APP_NAME}.app bundles found."
+    fi
     return 0
   fi
 
