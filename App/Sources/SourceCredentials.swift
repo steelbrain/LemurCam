@@ -44,9 +44,11 @@ internal extension SourceCredentials {
     /// left that address and another device may answer there, and the stored URI is
     /// what is connected to, with the saved login, when a later resolve fails. A URI
     /// naming another host (a recorder serving the stream, say) is kept. Nil when the
-    /// URI's host can't be read or the new host can't be put in it.
+    /// URI's host can't be read or the new host can't be put in it. The URI is read as
+    /// IPCamKit reads it (`URLComponents(cameraURL:)`), so an escape next to a
+    /// non-ASCII character is not encoded again.
     static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
-        guard var components = URLComponents(string: uri), let host = components.host else { return nil }
+        guard var components = URLComponents(cameraURL: uri), let host = components.host else { return nil }
         guard comparableHost(host) == comparableHost(oldHost) else { return uri }
         let encoded = newHost.contains(":") && !newHost.hasPrefix("[") ? "[\(newHost)]" : newHost
         // Setting a host URLComponents would not read back raises an exception.
@@ -76,8 +78,8 @@ internal extension SourceCredentials {
     /// without case.
     static func splitsAtLastAt(reportedURI uri: String, onvifHost: String) -> Bool {
         guard let split = AmbiguousUserInfo(uri) else { return false }
-        let host = URLComponents(string: uri) != nil
-            ? URLComponents(string: split.urlWithout)?.host
+        let host = URLComponents(cameraURL: uri) != nil
+            ? URLComponents(cameraURL: split.urlWithout)?.host
             : leadingHost(of: split.urlWithout)
         guard let host else { return false }
         return !split.mayBeInPathOrQuery || comparableHost(host) == comparableHost(onvifHost)
@@ -109,7 +111,7 @@ internal extension SourceCredentials {
             let split = extractingFromRTSPURL(uri)
             return (split.url, split.credentials)
         }
-        if hasAmbiguousUserInfo(uri), URLComponents(string: uri) == nil { return (nil, nil) }
+        if hasAmbiguousUserInfo(uri), URLComponents(cameraURL: uri) == nil { return (nil, nil) }
         let readable = extractingReadableLogin(from: uri)
         return (readable.url, readable.login?.credentials)
     }
@@ -124,9 +126,11 @@ internal extension SourceCredentials {
 }
 
 private extension SourceCredentials {
-    /// The userinfo `URLComponents` reads, taken out of `urlString`.
+    /// The userinfo `URLComponents` reads, taken out of `urlString`, read as IPCamKit
+    /// reads it (`URLComponents(cameraURL:)`): the login is what IPCamKit would send,
+    /// and the URL is written with each non-ASCII character percent-encoded.
     static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
-        guard var components = URLComponents(string: urlString),
+        guard var components = URLComponents(cameraURL: urlString),
               components.user != nil || components.password != nil else {
             return (urlString, nil)
         }
@@ -245,7 +249,7 @@ private struct AmbiguousUserInfo {
         let rest = scalars[separator.upperBound...]
         guard let lastAt = rest.lastIndex(of: "@") else { return nil }
 
-        if URLComponents(string: urlString) != nil {
+        if URLComponents(cameraURL: urlString) != nil {
             guard let authorityEnd = rest.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }),
                   lastAt > authorityEnd else { return nil }
             let authority = rest[..<authorityEnd]

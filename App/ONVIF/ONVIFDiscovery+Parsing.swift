@@ -77,7 +77,7 @@ internal extension ONVIFDiscovery {
     /// the one whose host matches the sender is preferred.
     static func endpoint(fromXAddrs xaddrs: String, sender: String) -> (url: String, host: String, port: Int)? {
         let candidates = xaddrs.split(whereSeparator: \.isWhitespace).compactMap { entry -> URLComponents? in
-            guard let components = URLComponents(string: String(entry)),
+            guard let components = URLComponents(cameraURL: String(entry)),
                   let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
                   let host = components.host, !host.isEmpty else { return nil }
             return components

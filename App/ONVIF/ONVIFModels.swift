@@ -15,7 +15,7 @@ internal struct DiscoveredDevice: Identifiable {
 
     /// Whether the device service URL is HTTPS.
     var useHTTPS: Bool {
-        URLComponents(string: endpointURL)?.scheme?.lowercased() == "https"
+        URLComponents(cameraURL: endpointURL)?.scheme?.lowercased() == "https"
     }
 }
 

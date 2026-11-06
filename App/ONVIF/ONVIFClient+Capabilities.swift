@@ -51,7 +51,7 @@ internal extension ONVIFClient {
     /// address is an absolute URL with a path.
     static func servicePath(fromXAddr xaddr: String) -> String? {
         let trimmed = xaddr.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let components = URLComponents(string: trimmed),
+        guard let components = URLComponents(cameraURL: trimmed),
               components.scheme != nil, components.host != nil else { return nil }
         let path = components.percentEncodedPath
         guard path.hasPrefix("/") else { return nil }

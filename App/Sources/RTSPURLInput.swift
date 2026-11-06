@@ -33,7 +33,7 @@ internal enum RTSPURLInput {
     static func problem(with url: String) -> String? {
         if let problem = characterProblem(in: url) { return problem }
         if SourceCredentials.hasAmbiguousUserInfo(url) { return ambiguousUserInfoMessage }
-        guard let components = URLComponents(string: url),
+        guard let components = URLComponents(cameraURL: url),
               let scheme = components.scheme?.lowercased(), scheme == "rtsp" || scheme == "rtsps",
               let host = components.host, !host.isEmpty else { return invalidMessage }
         return nil

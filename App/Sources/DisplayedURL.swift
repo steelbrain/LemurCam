@@ -19,7 +19,7 @@ internal enum DisplayedURL {
     /// Any other URL loses its userinfo first, split at its last `@` when
     /// `URLComponents` can't read it.
     static func redacted(_ url: String) -> String {
-        guard URLComponents(string: url) != nil, SourceCredentials.hasAmbiguousUserInfo(url) else {
+        guard URLComponents(cameraURL: url) != nil, SourceCredentials.hasAmbiguousUserInfo(url) else {
             return redactingCredentialParameters(SourceCredentials.strippingUserInfo(from: url))
         }
         return SourceCredentials.strippingUserInfo(from: redactingCredentialParameters(url))

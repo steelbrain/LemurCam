@@ -491,6 +491,6 @@ private extension SourceManager {
         case .onvif(let info): url = info.streamURI
         }
         guard let url, SourceCredentials.hasAmbiguousUserInfo(url) else { return false }
-        return URLComponents(string: url) != nil
+        return URLComponents(cameraURL: url) != nil
     }
 }
