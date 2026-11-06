@@ -80,7 +80,8 @@ _Static_assert(LEMUR_AUDIO_BYTES_PER_FRAME ==
 /// Ring capacity in frames. MUST be a power of two (the index math masks with
 /// capacity-1). 16384 frames ≈ 341 ms at 48 kHz: headroom for network jitter.
 /// Latency is not set by the capacity; the consumer trims the backlog to
-/// LEMUR_AUDIO_RING_TARGET_FRAMES (see lemur_ring_read_paced).
+/// LEMUR_AUDIO_RING_TARGET_FRAMES plus what recent stalls need (see
+/// lemur_ring_read_paced).
 #define LEMUR_AUDIO_RING_CAPACITY_FRAMES 16384u
 _Static_assert((LEMUR_AUDIO_RING_CAPACITY_FRAMES &
                 (LEMUR_AUDIO_RING_CAPACITY_FRAMES - 1u)) == 0u,
@@ -104,19 +105,38 @@ _Static_assert((LEMUR_AUDIO_RING_CAPACITY_FRAMES &
 // mark for a whole window, the excess is old audio, so it skips ahead to the
 // target. A floor (not an average) is used so a producer that writes in large
 // packets (e.g. 64 ms AAC frames) is not mistaken for backlog.
+//
+// The backlog left by a network stall is not all excess: it is exactly the
+// cushion that rides out the next stall of the same length. Trimming it back to
+// 50 ms turned every later stall into an underrun plus a skip. So the consumer
+// also measures the longest gap between producer writes in each window, and keeps
+// a reserve on top of the target large enough to cover the longest gap of the
+// last 30 to 60 s. Stalls that keep coming within that time are then absorbed as
+// they are, with no trimming, while the cushion a one-off stall left behind is
+// still trimmed, in one skip, once that stall has aged out.
 
 /// Backlog the consumer trims down to: 2400 frames = 50 ms at 48 kHz, enough to
 /// ride out LAN/Wi-Fi packet jitter without audible underruns.
 #define LEMUR_AUDIO_RING_TARGET_FRAMES 2400u
 /// Trim only when the backlog floor stayed above 4800 frames (100 ms) for a whole
 /// window. The gap above the target is hysteresis: slow clock drift then costs
-/// one skip every few minutes instead of a click every window.
+/// one skip every few minutes instead of a click every window. The reserve
+/// raises the trim point by the same amount as the target.
 #define LEMUR_AUDIO_RING_HIGH_WATER_FRAMES 4800u
 /// Window over which the backlog floor is measured: 48000 frames = 1 s of reads.
 #define LEMUR_AUDIO_RING_PACER_WINDOW_FRAMES 48000u
+/// Most reserve kept on top of the target: 7200 frames (150 ms), so the backlog
+/// the pacer trims down to never exceeds 200 ms however long the stalls are.
+#define LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES 7200u
+/// Gaps are remembered per period of this many windows (30 s); the reserve
+/// covers the longest gap of the current and the previous period.
+#define LEMUR_AUDIO_RING_RESERVE_PERIOD_WINDOWS 30u
 _Static_assert(LEMUR_AUDIO_RING_TARGET_FRAMES < LEMUR_AUDIO_RING_HIGH_WATER_FRAMES &&
                    LEMUR_AUDIO_RING_HIGH_WATER_FRAMES < LEMUR_AUDIO_RING_CAPACITY_FRAMES,
                "ring latency policy must satisfy target < high water < capacity");
+_Static_assert(LEMUR_AUDIO_RING_HIGH_WATER_FRAMES + LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES <
+                   LEMUR_AUDIO_RING_CAPACITY_FRAMES,
+               "the learned reserve must leave the trim point below the ring capacity");
 
 /// Lock-free single-producer / single-consumer ring of interleaved Float32 PCM.
 ///
@@ -282,13 +302,79 @@ static inline int lemur_ring_is_producing(const LemurAudioRing *ring) {
 /// consumer's own memory, never in the shared region. Initialise it, and reset
 /// it at the start of every IO session, with lemur_ring_pacer_reset.
 typedef struct {
-    uint32_t windowFrames;  // frames requested so far in the current window
-    uint32_t minBacklog;    // smallest backlog left after a read in the window
+    uint32_t windowFrames;    // frames requested so far in the current window
+    uint32_t minBacklog;      // smallest backlog left after a read in the window
+    uint32_t lastWrite;       // writeIndex seen by the previous read
+    uint32_t sinceWrite;      // frames requested since writeIndex last moved
+    uint32_t windowGap;       // longest gap between writes that ended in the window
+    uint32_t reserve;         // reserve the current period's gaps need
+    uint32_t previousReserve; // reserve the previous period's gaps needed
+    uint32_t periodWindows;   // windows completed in the current period
 } LemurAudioRingPacer;
 
-static inline void lemur_ring_pacer_reset(LemurAudioRingPacer *pacer) {
+/// Start a new measuring window; the reserve and write tracking carry over.
+static inline void lemur_ring_pacer_new_window(LemurAudioRingPacer *pacer) {
     pacer->windowFrames = 0;
     pacer->minBacklog = UINT32_MAX;
+    pacer->windowGap = 0;
+}
+
+/// Forget everything, including the reserve (a new IO session).
+static inline void lemur_ring_pacer_reset(LemurAudioRingPacer *pacer) {
+    lemur_ring_pacer_new_window(pacer);
+    pacer->lastWrite = 0;
+    pacer->sinceWrite = 0;
+    pacer->reserve = 0;
+    pacer->previousReserve = 0;
+    pacer->periodWindows = 0;
+}
+
+/// Backlog the pacer trims down to: the target plus the reserve, clamped so the
+/// trim point always stays below the capacity.
+static inline uint32_t lemur_ring_pacer_keep(const LemurAudioRingPacer *pacer) {
+    uint32_t reserve = pacer->reserve > pacer->previousReserve
+        ? pacer->reserve : pacer->previousReserve;
+    if (reserve > LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES) {
+        reserve = LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES;
+    }
+    return LEMUR_AUDIO_RING_TARGET_FRAMES + reserve;
+}
+
+/// Note whether the producer wrote since the previous read. The frames requested
+/// in between are how long the ring had to cover on its own, i.e. the backlog a
+/// gap of that length needs. A gap as long as the ring is an outage (the producer
+/// stopped, or the session just started), not jitter: no backlog could have
+/// covered it, so it is not learned.
+static inline void lemur_ring_pacer_track_writes(LemurAudioRingPacer *pacer,
+                                                 uint32_t w,
+                                                 uint32_t frames) {
+    if (w != pacer->lastWrite) {
+        if (pacer->sinceWrite < LEMUR_AUDIO_RING_CAPACITY_FRAMES &&
+            pacer->sinceWrite > pacer->windowGap) {
+            pacer->windowGap = pacer->sinceWrite;
+        }
+        pacer->lastWrite = w;
+        pacer->sinceWrite = 0;
+    }
+    uint32_t room = UINT32_MAX - pacer->sinceWrite;
+    pacer->sinceWrite = frames < room ? pacer->sinceWrite + frames : UINT32_MAX;
+}
+
+/// End of a window: fold its longest gap into the current period's reserve, and
+/// roll the periods over once the current one is complete.
+static inline void lemur_ring_pacer_learn(LemurAudioRingPacer *pacer) {
+    if (pacer->windowGap > LEMUR_AUDIO_RING_TARGET_FRAMES) {
+        uint32_t needed = pacer->windowGap - LEMUR_AUDIO_RING_TARGET_FRAMES;
+        if (needed > pacer->reserve) {
+            pacer->reserve = needed;
+        }
+    }
+    pacer->periodWindows++;
+    if (pacer->periodWindows >= LEMUR_AUDIO_RING_RESERVE_PERIOD_WINDOWS) {
+        pacer->previousReserve = pacer->reserve;
+        pacer->reserve = 0;
+        pacer->periodWindows = 0;
+    }
 }
 
 /// Applies the latency policy to a read of `frames` frames at in-range indices
@@ -298,15 +384,14 @@ static inline uint32_t lemur_ring_pace(LemurAudioRingPacer *pacer,
                                        uint32_t r,
                                        uint32_t frames) {
     uint32_t d = w - r;
+    lemur_ring_pacer_track_writes(pacer, w, frames);
     if (d >= LEMUR_AUDIO_RING_CAPACITY_FRAMES) {
         // Full: the producer is dropping the newest audio. Drop the oldest
-        // instead, leaving the target backlog behind after this read.
-        lemur_ring_pacer_reset(pacer);
-        uint32_t keep = LEMUR_AUDIO_RING_TARGET_FRAMES;
-        if (frames < LEMUR_AUDIO_RING_CAPACITY_FRAMES - keep) {
-            keep += frames;
-        }
-        return d > keep ? w - keep : r;
+        // instead, leaving the kept backlog behind after this read (a read
+        // larger than the excess skips nothing).
+        lemur_ring_pacer_new_window(pacer);
+        uint32_t keep = lemur_ring_pacer_keep(pacer);
+        return frames < d - keep ? w - (keep + frames) : r;
     }
     uint32_t backlog = d > frames ? d - frames : 0u;
     if (backlog < pacer->minBacklog) {
@@ -319,19 +404,22 @@ static inline uint32_t lemur_ring_pace(LemurAudioRingPacer *pacer,
         return r;
     }
     uint32_t backlogFloor = pacer->minBacklog;
-    lemur_ring_pacer_reset(pacer);
+    lemur_ring_pacer_learn(pacer);
+    lemur_ring_pacer_new_window(pacer);
+    uint32_t keep = lemur_ring_pacer_keep(pacer);
     // `backlogFloor` includes this read's backlog (d - frames), so the skip always
-    // leaves at least `frames` + target frames readable.
-    return backlogFloor > LEMUR_AUDIO_RING_HIGH_WATER_FRAMES
-        ? r + (backlogFloor - LEMUR_AUDIO_RING_TARGET_FRAMES)
+    // leaves at least `frames` + `keep` frames readable.
+    return backlogFloor > keep + (LEMUR_AUDIO_RING_HIGH_WATER_FRAMES - LEMUR_AUDIO_RING_TARGET_FRAMES)
+        ? r + (backlogFloor - keep)
         : r;
 }
 
 /// CONSUMER (real-time safe): read exactly `frames` frames into `dst`, zero-
 /// filling any shortfall (underrun => silence). Returns frames actually copied
 /// from the ring (the remainder, if any, was zero-filled). With a non-NULL
-/// `pacer` the backlog is held near LEMUR_AUDIO_RING_TARGET_FRAMES (see the
-/// latency policy above); with NULL every buffered frame is played in order.
+/// `pacer` the backlog is held near LEMUR_AUDIO_RING_TARGET_FRAMES plus the
+/// reserve recent stalls need (see the latency policy above); with NULL every
+/// buffered frame is played in order.
 /// Out-of-range indices move the read position to the write head, so the read
 /// returns silence instead of replaying whatever the slots hold.
 static inline uint32_t lemur_ring_read_paced(LemurAudioRing *ring,

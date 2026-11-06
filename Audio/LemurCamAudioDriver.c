@@ -98,8 +98,9 @@ static atomic_int gMapRetryRunning = 0;
 
 // Latency control for the ring reads (see lemur_ring_read_paced). Touched only by
 // the IO thread in DoIOOperation, and reset in StartIO when the first client
-// starts, before the HAL begins calling DoIOOperation for that session.
-static LemurAudioRingPacer gPacer = { 0, UINT32_MAX };
+// starts, before the HAL begins calling DoIOOperation for that session. Every
+// field is plain integer state, so the pacer stays lock- and allocation-free.
+static LemurAudioRingPacer gPacer = { .minBacklog = UINT32_MAX };
 
 // MARK: - Helpers
 

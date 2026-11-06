@@ -5,70 +5,17 @@ import XCTest
 /// persists for a whole window is trimmed to the target, a full ring drops its oldest
 /// audio, and ordinary jitter or large producer packets are left alone. Without it the
 /// backlog after any burst or underrun stayed as permanent latency (up to ~341 ms).
+/// How stalls set the reserve is covered by `LemurAudioRingStallTests`.
 internal final class LemurAudioRingPacerTests: XCTestCase {
     private typealias Support = RingTestSupport
     private let target = Int(LEMUR_AUDIO_RING_TARGET_FRAMES)
     private let highWater = Int(LEMUR_AUDIO_RING_HIGH_WATER_FRAMES)
     private let window = Int(LEMUR_AUDIO_RING_PACER_WINDOW_FRAMES)
     private let capacity = Int(RingTestSupport.capacity)
+    private let maxReserve = Int(LEMUR_AUDIO_RING_RESERVE_MAX_FRAMES)
+    private let memoryWindows = Int(LEMUR_AUDIO_RING_RESERVE_PERIOD_WINDOWS)
 
-    /// Producer/consumer simulation in frame time. Frames carry consecutive sequence
-    /// numbers (from 1, so 0 means underrun silence); the consumer counts every jump
-    /// in the sequence it plays, which is exactly a trim.
-    private final class Simulation {
-        let ring = Support.makeRing()
-        var pacer = LemurAudioRingPacer()
-        private(set) var nextSequence = 1
-        private(set) var lastPlayed = 0
-        private(set) var skips = 0
-        private(set) var underrunFrames = 0
-
-        init() {
-            lemur_ring_init(ring)
-            lemur_ring_pacer_reset(&pacer)
-        }
-
-        deinit { Support.release(ring) }
-
-        var backlog: Int { Int(lemur_ring_filled(ring)) }
-
-        func produce(_ frames: Int) {
-            Support.writeSequence(ring, from: nextSequence, frames: frames)
-            nextSequence += frames
-        }
-
-        func consume(_ frames: Int) {
-            var dst = [Float](repeating: .nan, count: frames * Support.channels)
-            let copied = dst.withUnsafeMutableBufferPointer {
-                lemur_ring_read_paced(ring, &pacer, $0.baseAddress, UInt32(frames))
-            }
-            underrunFrames += frames - Int(copied)
-            for frame in 0..<Int(copied) {
-                let played = Int(dst[frame * Support.channels])
-                if lastPlayed != 0, played != lastPlayed + 1 { skips += 1 }
-                lastPlayed = played
-            }
-        }
-
-        /// Run `duration` frames of real time: the consumer reads `readChunk` frames
-        /// per IO cycle; the producer delivers `producerChunk` frames whenever a whole
-        /// chunk of real time has elapsed (unless `producing` says otherwise).
-        func run(
-            duration: Int, readChunk: Int = 512, producerChunk: Int = 960,
-            producing: (Int) -> Bool = { _ in true }
-        ) {
-            var produced = 0
-            var time = 0
-            while time < duration {
-                time += readChunk
-                while produced + producerChunk <= time {
-                    produced += producerChunk
-                    if producing(produced) { produce(producerChunk) }
-                }
-                consume(readChunk)
-            }
-        }
-    }
+    private typealias Simulation = RingPacerSimulation
 
     func testSteadyStreamWithSmallBacklogIsNeverTrimmed() {
         let sim = Simulation()
@@ -102,19 +49,28 @@ internal final class LemurAudioRingPacerTests: XCTestCase {
         XCTAssertEqual(sim.skips, 0)
     }
 
-    func testUnderrunFollowedByLateBurstSettlesBackNearTarget() {
+    func testUnderrunFollowedByLateBurstKeepsACushionThenSettlesNearTarget() {
         let sim = Simulation()
         sim.produce(1920)
-        // The camera stalls for 300 ms, then the queued packets all arrive at once:
-        // without trimming, that 300 ms would ride on every later frame.
+        // The camera stalls for 300 ms, then the queued packets all arrive at once.
         let stallEnd = window
         sim.run(duration: stallEnd, producing: { $0 < stallEnd - 14_400 })
         sim.produce(14_400)
         sim.run(duration: 3 * window)
 
         XCTAssertGreaterThan(sim.underrunFrames, 0, "the stall itself is heard as silence")
+        // The backlog the stall left is the cushion for the next one, so it is kept,
+        // but only up to the 200 ms cap.
         XCTAssertEqual(sim.skips, 1)
+        XCTAssertGreaterThanOrEqual(sim.backlog, target + maxReserve - 512)
+        XCTAssertLessThanOrEqual(sim.backlog, target + maxReserve + 960)
+
+        // Once no stall has been seen for a full memory period or two, the cushion
+        // goes in one more skip and the latency is back near the target.
+        sim.run(duration: 2 * memoryWindows * window)
+        XCTAssertEqual(sim.skips, 2)
         XCTAssertLessThanOrEqual(sim.backlog, target + 960)
+        XCTAssertGreaterThanOrEqual(sim.backlog, target - 512)
     }
 
     func testFullRingDropsTheOldestAudioImmediately() {
@@ -137,6 +93,8 @@ internal final class LemurAudioRingPacerTests: XCTestCase {
 
         XCTAssertEqual(sim.pacer.windowFrames, 0)
         XCTAssertEqual(sim.pacer.minBacklog, .max)
+        XCTAssertEqual(sim.pacer.reserve, 0)
+        XCTAssertEqual(sim.pacer.previousReserve, 0)
         XCTAssertEqual(sim.backlog, 0)
     }
 
