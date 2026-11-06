@@ -1,135 +1,78 @@
 "use client";
 
 import Image from "next/image";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useBridge, useWindowHandler, type SettingsPane } from "./Bridge";
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type SVGProps,
-} from "react";
+  Antenna,
+  Checklist,
+  CircleFill,
+  DocText,
+  Eye,
+  FormPopUp,
+  FormRow,
+  FormSection,
+  Gear,
+  MacButton,
+  MicFill,
+  Plus,
+  PopUpButton,
+  SidebarLeft,
+  Spinner,
+  TestPattern,
+  Toggle,
+  TrafficLights,
+  VideoFill,
+  WebCamera,
+  useTimeouts,
+} from "./mac";
 import {
-  BroadcastIcon,
-  CameraIcon,
-  DocIcon,
-  EyeIcon,
-  GearIcon,
-  ListIcon,
-} from "./icons";
-import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
+  CODEC_NAME,
+  SOURCES,
+  STATUS_COLOR,
+  STATUS_LABEL,
+  connectDelay,
+  type ConnectionStatus,
+  type Source,
+} from "./samples";
 
-/* An interactive HTML recreation of the LemurCam Settings window. Labels,
-   options, defaults and state changes mirror the SwiftUI views in App/Settings
-   (SettingsView, StatusSettingsView, StatusCard, PreviewSettingsView,
-   GeneralSettingsView, LogsSettingsView) and App/Sources/SourceListView.
+/* An interactive recreation of the LemurCam Settings window (720 x 480 points,
+   Tuning.settingsWindowWidth/Height). Labels, options, defaults and state
+   changes mirror the SwiftUI views in App/Settings (SettingsView,
+   StatusSettingsView, StatusCard, PreviewSettingsView, GeneralSettingsView,
+   LogsSettingsView) and App/Sources/SourceListView. The chrome follows the
+   macOS 26 look of the app's own screenshots: a floating sidebar, the title
+   beside the window buttons, and a sidebar toggle.
 
    Deliberate liberties:
    - The two cameras and their stream details are samples. Log messages are the
      app's real Log calls, filled in with those samples; timestamps use the
      en-US format the app shows on an English (US) Mac.
-   - No other app is using the virtual camera or microphone, and there is no
-     menu bar popover, so only the Preview pane keeps the stream connected.
+   - No other app is using the virtual camera or microphone, and this recreation
+     runs apart from the popover above it, so only the Preview pane keeps the
+     stream connected.
    - The preview shows a test pattern in place of camera video.
-   - Connecting a camera and removing/enabling the microphone run on short
+   - Connecting a camera and removing or enabling the microphone run on short
      timers instead of real network and install work.
-   - Buttons that open other windows or sheets (guided setup, add/discover
-     camera), Re-check Now, and Restart Now's relaunch are not simulated;
-     Restart Now only clears the restart notice.
+   - Open Guided Setup… scrolls to the setup window's recreation. Buttons that
+     open sheets (add or discover a camera) and Re-check Now do nothing here.
+   - Resolution and Frame Rate only change the menus here; when and how the app
+     applies them is not shown.
    - The About section leaves out the "Version …" line so the site never shows
-     a stale version. */
+     a stale version.
+   - On narrow screens the sidebar is drawn as a row above the pane. */
 
-// macOS system colors (light appearance). The app uses the system accent color.
-const ACCENT = "#007aff";
-const GREEN = "#28cd41";
-const GREEN_TEXT = "#1d9d43"; // darker than systemGreen so the text stays legible
-const ORANGE = "#ff9500";
-const RED = "#ff3b30";
-
-const BARS = [
-  "#c8c8c8",
-  "#f0e02e",
-  "#2ec8c8",
-  "#2ebe4e",
-  "#e04ee0",
-  "#e04040",
-  "#3050e0",
+const TABS: { id: SettingsPane; label: string; icon: (p: { className?: string }) => ReactNode }[] = [
+  { id: "status", label: "Setup & Status", icon: Checklist },
+  { id: "cameras", label: "Cameras", icon: WebCamera },
+  { id: "preview", label: "Preview", icon: Eye },
+  { id: "general", label: "General", icon: Gear },
+  { id: "logs", label: "Logs", icon: DocText },
 ];
-
-const TABS = [
-  { id: "status", label: "Setup & Status", icon: ListIcon },
-  { id: "cameras", label: "Cameras", icon: CameraIcon },
-  { id: "preview", label: "Preview", icon: EyeIcon },
-  { id: "general", label: "General", icon: GearIcon },
-  { id: "logs", label: "Logs", icon: DocIcon },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
-
-// ---------------------------------------------------------------------------
-// Sample data
-// ---------------------------------------------------------------------------
-
-type Source = {
-  id: string;
-  name: string;
-  kind: "rtsp" | "onvif";
-  /** SourceListView subtitle: the RTSP URL, or "host:port" for ONVIF. */
-  subtitle: string;
-  width: number;
-  height: number;
-  codec: "h264" | "h265";
-  /** `String(describing: audio.codec) @sampleRate` as RTSPStreamPipeline logs it. */
-  audio: string;
-  fps: number;
-};
-
-const SOURCES: Source[] = [
-  {
-    id: "backyard",
-    name: "Backyard Cam",
-    kind: "rtsp",
-    subtitle: "rtsp://192.168.1.115:554/stream1",
-    width: 1920,
-    height: 1080,
-    codec: "h264",
-    audio: "aac @16000Hz",
-    fps: 30,
-  },
-  {
-    id: "front",
-    name: "Front Door",
-    kind: "onvif",
-    subtitle: "192.168.1.82:80",
-    width: 2560,
-    height: 1440,
-    codec: "h265",
-    audio: "pcmu @8000Hz",
-    fps: 25,
-  },
-];
-
-// RTSPStreamPipeline.publishStreamInfo
-const CODEC_NAME = { h264: "H.264", h265: "H.265" } as const;
-
-// ConnectionStatusHelpers.swift (only the states this recreation reaches)
-type ConnectionStatus = "connecting" | "connected" | "disconnected";
-const STATUS_LABEL: Record<ConnectionStatus, string> = {
-  connecting: "Connecting",
-  connected: "Connected",
-  disconnected: "Disconnected",
-};
-const STATUS_COLOR: Record<ConnectionStatus, string> = {
-  connecting: ORANGE,
-  connected: GREEN,
-  disconnected: RED,
-};
 
 // LemurCamConfig.Resolution / FrameRate, with their defaults.
 const RESOLUTIONS = ["720p", "1080p", "1440p", "4K"] as const;
 const FRAME_RATES = [30, 60] as const;
-const DEFAULT_RESOLUTION = "1080p";
-const DEFAULT_FRAME_RATE = 60;
 
 type LogCategory = "app" | "ipc" | "rtsp";
 type LogEntry = {
@@ -179,220 +122,13 @@ function formatLogTime(msOfDay: number) {
   )}.${pad(ms % 1000, 3)} ${hours < 12 ? "AM" : "PM"}`;
 }
 
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
-
-/** setTimeout calls that are cleared together, and on unmount. */
-function useTimeouts() {
-  const ids = useRef(new Set<ReturnType<typeof setTimeout>>());
-
-  useEffect(() => {
-    const pending = ids.current;
-    return () => {
-      pending.forEach(clearTimeout);
-      pending.clear();
-    };
-  }, []);
-
-  return useMemo(
-    () => ({
-      after(ms: number, run: () => void) {
-        const id = setTimeout(() => {
-          ids.current.delete(id);
-          run();
-        }, ms);
-        ids.current.add(id);
-      },
-      cancelAll() {
-        ids.current.forEach(clearTimeout);
-        ids.current.clear();
-      },
-    }),
-    []
-  );
-}
-
-function MacButton({
-  children,
-  onClick,
-  variant = "plain",
-  size = "regular",
-  disabled = false,
-  ariaLabel,
-  title,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  variant?: "plain" | "prominent" | "destructive";
-  size?: "regular" | "small";
-  disabled?: boolean;
-  ariaLabel?: string;
-  title?: string;
-}) {
-  const look =
-    variant === "prominent"
-      ? "border-transparent bg-[#007aff] text-white"
-      : variant === "destructive"
-        ? "border-black/10 bg-white text-[#ff3b30]"
-        : "border-black/10 bg-white text-black/85";
-  const dims =
-    size === "small" ? "px-2 py-px text-[11px]" : "px-2.5 py-[3px] text-[13px]";
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      title={title}
-      className={`inline-flex cursor-pointer items-center justify-center rounded-[5px] border shadow-[0_0.5px_1px_rgba(0,0,0,0.15)] disabled:cursor-default disabled:opacity-45 ${look} ${dims}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** A grouped-Form section: optional header above a rounded group of rows. */
-function FormSection({ header, children }: { header?: string; children: ReactNode }) {
-  return (
-    <section>
-      {header && (
-        <h3 className="mb-1.5 px-1 text-[13px] font-semibold text-black/85">{header}</h3>
-      )}
-      <div className="divide-y divide-black/[0.07] rounded-[10px] border border-black/[0.06] bg-white px-3 text-[13px]">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function FormRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-h-[38px] items-center justify-between gap-3 py-1.5">
-      <span>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function Toggle({
-  on,
-  onChange,
-  label,
-}: {
-  on: boolean;
-  onChange: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={onChange}
-      className={`relative h-[22px] w-[38px] shrink-0 cursor-pointer rounded-full transition-colors duration-200 ${
-        on ? "bg-[#007aff]" : "bg-black/[0.12]"
-      }`}
-    >
-      <span
-        className={`absolute top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow transition-[left] duration-200 ${
-          on ? "left-[18px]" : "left-[2px]"
-        }`}
-      />
-    </button>
-  );
-}
-
-/** A grouped-Form menu picker: the selected value followed by up/down chevrons. */
-function PopUp<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly { value: T; label: string }[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <span className="relative inline-flex items-center">
-      <select
-        aria-label={label}
-        value={value}
-        onChange={(e) => onChange(e.target.value as T)}
-        className="cursor-pointer appearance-none bg-transparent py-0.5 pr-5 pl-1 text-right text-[13px] text-black/85 outline-offset-2"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <svg
-        aria-hidden
-        viewBox="0 0 10 14"
-        className="pointer-events-none absolute right-0.5 h-3 w-2.5 text-black/55"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M2 5.5 5 2.5l3 3M2 8.5l3 3 3-3" />
-      </svg>
-    </span>
-  );
-}
-
-function StatusDot({ color }: { color: string }) {
+function StatusDot({ status, size = 8 }: { status: ConnectionStatus; size?: number }) {
   return (
     <span
       aria-hidden
-      className="inline-block h-2 w-2 shrink-0 rounded-full"
-      style={{ background: color }}
+      className="inline-block shrink-0 rounded-full"
+      style={{ background: STATUS_COLOR[status], width: size, height: size }}
     />
-  );
-}
-
-// SF Symbols used by StatusCard, drawn as simple SVGs.
-function VideoFillIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-      <rect x="2" y="6" width="14" height="12" rx="3" />
-      <path d="M17.5 10.4 22 7.6v8.8l-4.5-2.8Z" />
-    </svg>
-  );
-}
-
-function MicFillIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
-      <rect x="8.5" y="2" width="7" height="12.5" rx="3.5" />
-      <path
-        d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function PlusIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      {...props}
-    >
-      <path d="M12 5v14M5 12h14" />
-    </svg>
   );
 }
 
@@ -403,53 +139,23 @@ function PlusIcon(props: SVGProps<SVGSVGElement>) {
 type CardState = "ready" | "working" | "inactive";
 type MicStatus = "ready" | "working" | "notSetUp";
 
-const STATE_TINT: Record<CardState, string> = {
-  ready: GREEN_TEXT,
-  working: "rgba(0,0,0,0.5)",
-  inactive: "rgba(0,0,0,0.5)",
-};
-
-function StatusGlyph({ state }: { state: CardState }) {
-  if (state === "ready") {
-    return (
-      <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5">
-        <circle cx="8" cy="8" r="7.5" fill={GREEN} />
-        <path
-          d="m4.8 8.2 2.2 2.2 4.2-4.6"
-          fill="none"
-          stroke="#fff"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  if (state === "inactive") {
-    return (
-      <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5">
-        <circle cx="8" cy="8" r="6.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
-      </svg>
-    );
-  }
-  // ProgressView().controlSize(.small)
+function StatusBadge({ state, text }: { state: CardState; text: string }) {
+  // SetupStepState.statusTint: green when ready, secondary otherwise.
   return (
-    <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5 animate-spin">
-      {Array.from({ length: 8 }, (_, i) => (
-        <line
-          key={i}
-          x1="8"
-          y1="1.8"
-          x2="8"
-          y2="4.6"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          opacity={0.25 + (i / 8) * 0.75}
-          transform={`rotate(${i * 45} 8 8)`}
-        />
-      ))}
-    </svg>
+    <span
+      className={`inline-flex items-center gap-[5px] text-[11px] font-medium ${
+        state === "ready" ? "text-mac-green-text" : "text-mac-secondary"
+      }`}
+    >
+      {state === "ready" && <CircleFill kind="check" className="h-[13px] w-[13px]" />}
+      {state === "working" && <Spinner className="h-[13px] w-[13px]" />}
+      {state === "inactive" && (
+        <svg aria-hidden viewBox="0 0 16 16" className="h-[13px] w-[13px]">
+          <circle cx="8" cy="8" r="6.8" fill="none" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      )}
+      {text}
+    </span>
   );
 }
 
@@ -469,32 +175,28 @@ function StatusCard({
   action?: ReactNode;
 }) {
   return (
-    <div className="rounded-[16px] border border-black/[0.06] bg-white p-4">
+    <div className="rounded-[16px] border border-mac-card-line bg-mac-card p-4">
       <div className="flex items-start gap-3.5">
         <span
-          className="inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[13px] text-white shadow-[0_2px_6px_rgba(0,122,255,0.25)]"
-          style={{ background: `linear-gradient(135deg, ${ACCENT}, rgba(0,122,255,0.65))` }}
+          className="inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[13px] text-white shadow-[0_2px_6px_color-mix(in_srgb,var(--mac-accent)_25%,transparent)]"
+          style={{
+            background:
+              "linear-gradient(135deg, var(--mac-accent), color-mix(in srgb, var(--mac-accent) 65%, transparent))",
+          }}
         >
           {icon}
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2">
             <span className="text-[13px] font-bold">{title}</span>
-            <span className="flex-1" />
-            <span
-              className="inline-flex items-center gap-[5px] self-center text-[11px] font-medium"
-              style={{ color: STATE_TINT[state] }}
-            >
-              <StatusGlyph state={state} />
-              {statusText}
-            </span>
+            <StatusBadge state={state} text={statusText} />
           </div>
-          <p className="text-[12px] leading-snug text-black/50">{subtitle}</p>
+          <p className="text-[12px] leading-snug text-mac-secondary">{subtitle}</p>
         </div>
       </div>
       {action && (
         <>
-          <div className="mt-3.5 border-t border-black/10" />
+          <div className="mt-3.5 border-t border-mac-sep" />
           <div className="mt-3 flex">{action}</div>
         </>
       )}
@@ -502,20 +204,15 @@ function StatusCard({
   );
 }
 
-function RemoveMicDialog({
-  onRemove,
-  onCancel,
-}: {
-  onRemove: () => void;
-  onCancel: () => void;
-}) {
+/** confirmationDialog("Remove the LemurCam microphone?") as macOS draws it: an alert. */
+function RemoveMicDialog({ onRemove, onCancel }: { onRemove: () => void; onCancel: () => void }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     cancelRef.current?.focus();
   }, []);
 
   return (
-    <div className="absolute inset-0 z-10 flex items-start justify-center bg-black/15 px-4 pt-10">
+    <div className="absolute inset-0 z-10 flex items-start justify-center bg-black/20 px-4 pt-10">
       <div
         role="alertdialog"
         aria-modal="true"
@@ -524,35 +221,25 @@ function RemoveMicDialog({
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
         }}
-        className="w-[260px] rounded-[12px] border border-black/10 bg-[#f2f2f2] p-4 text-center shadow-[0_20px_50px_-12px_rgba(0,0,0,0.45)]"
+        className="w-[260px] rounded-[16px] bg-mac-popover p-4 text-center mac-shadow"
       >
-        <Image
-          src="/icon.png"
-          alt=""
-          width={48}
-          height={48}
-          className="mx-auto rounded-[11px]"
-        />
+        <Image src="/icon.png" alt="" width={48} height={48} className="mx-auto" />
         <p id="remove-mic-title" className="mt-2.5 text-[13px] font-bold">
           Remove the LemurCam microphone?
         </p>
-        <p id="remove-mic-message" className="mt-1.5 text-[11px] leading-snug text-black/70">
-          This uninstalls the audio component and briefly restarts audio. You can
-          re-enable it anytime without approving again.
+        <p id="remove-mic-message" className="mt-1.5 text-[11px] leading-snug">
+          This uninstalls the audio component and briefly restarts audio. You can re-enable it
+          anytime without approving again.
         </p>
         <div className="mt-4 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={onRemove}
-            className="cursor-pointer rounded-[6px] border border-black/10 bg-white py-1 text-[13px] text-[#ff3b30] shadow-[0_0.5px_1px_rgba(0,0,0,0.15)]"
-          >
+          <MacButton variant="destructive" onClick={onRemove} className="w-full">
             Remove Microphone
-          </button>
+          </MacButton>
           <button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="cursor-pointer rounded-[6px] border border-black/10 bg-white py-1 text-[13px] shadow-[0_0.5px_1px_rgba(0,0,0,0.15)]"
+            className="inline-flex h-[24px] w-full cursor-pointer items-center justify-center rounded-[6px] bg-mac-control text-[13px] hover:bg-mac-control-hover"
           >
             Cancel
           </button>
@@ -566,10 +253,12 @@ function StatusPane({
   micStatus,
   onRemoveMic,
   onEnableMic,
+  onOpenSetup,
 }: {
   micStatus: MicStatus;
   onRemoveMic: () => void;
   onEnableMic: () => void;
+  onOpenSetup: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -600,22 +289,22 @@ function StatusPane({
     <div className="relative min-h-full">
       <div className="mx-auto flex max-w-[560px] flex-col gap-4 p-5">
         <StatusCard
-          icon={<VideoFillIcon className="h-6 w-6" />}
+          icon={<VideoFill className="h-8 w-8" />}
           title="Virtual Camera"
           subtitle="LemurCam appears as a camera that apps like Zoom and FaceTime can select."
           state="ready"
           statusText="Running"
         />
         <StatusCard
-          icon={<MicFillIcon className="h-6 w-6" />}
+          icon={<MicFill className="h-8 w-8" />}
           title="Virtual Microphone"
           subtitle="Optional — exposes your camera’s audio as a “LemurCam Microphone”."
           state={micCard.state}
           statusText={micCard.text}
           action={micCard.action}
         />
-        <div className="flex justify-between px-1">
-          <MacButton>Open Guided Setup…</MacButton>
+        <div className="flex justify-between gap-2 px-1">
+          <MacButton onClick={onOpenSetup}>Open Guided Setup…</MacButton>
           <MacButton>Re-check Now</MacButton>
         </div>
       </div>
@@ -647,82 +336,55 @@ function CamerasPane({
 }) {
   return (
     <div className="flex h-full min-h-[380px] flex-col sm:min-h-0">
-      <div className="flex items-center gap-2 p-2 text-[13px]">
+      <div className="flex items-center justify-center gap-2 p-2 text-[13px]">
         <span>Active Camera</span>
-        <span className="relative flex flex-1">
-          <select
-            aria-label="Active Camera"
-            value={activeId ?? ""}
-            onChange={(e) => onSelect(e.target.value || null)}
-            className="w-full cursor-pointer appearance-none rounded-[5px] border border-black/10 bg-white py-[2px] pr-6 pl-2 text-[13px] shadow-[0_0.5px_1px_rgba(0,0,0,0.15)]"
-          >
-            <option value="">None</option>
-            {SOURCES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-          <svg
-            aria-hidden
-            viewBox="0 0 10 14"
-            className="pointer-events-none absolute top-1/2 right-2 h-3 w-2.5 -translate-y-1/2 text-black/55"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M2 5.5 5 2.5l3 3M2 8.5l3 3 3-3" />
-          </svg>
-        </span>
+        <PopUpButton
+          label="Active Camera"
+          value={activeId ?? ""}
+          options={[{ value: "", label: "None" }, ...SOURCES.map((s) => ({ value: s.id, label: s.name }))]}
+          onChange={(v) => onSelect(v || null)}
+        />
       </div>
-      <div className="border-t border-black/10" />
+      <div className="border-t border-mac-sep" />
 
-      <div className="flex-1 overflow-y-auto bg-white">
-        <ul className="divide-y divide-black/[0.06] px-2">
-          {SOURCES.map((source) => {
-            const active = source.id === activeId;
-            const status = statuses[source.id];
-            return (
-              <li key={source.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(source.id)}
-                  aria-pressed={active}
-                  className="flex w-full cursor-pointer items-center gap-2 px-1.5 py-[7px] text-left"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className={`block text-[13px] ${active ? "font-semibold" : ""}`}>
-                      {source.name}
-                    </span>
-                    <span className="mt-0.5 block truncate text-[10px] text-black/50">
-                      {source.subtitle}
-                    </span>
+      <ul className="min-h-0 flex-1 overflow-y-auto px-3 py-1.5">
+        {SOURCES.map((source) => {
+          const active = source.id === activeId;
+          const status = statuses[source.id];
+          return (
+            <li key={source.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(source.id)}
+                aria-pressed={active}
+                className="flex w-full cursor-pointer items-center gap-2.5 rounded-[6px] px-2 py-[7px] text-left"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-[13px] ${active ? "font-semibold" : ""}`}>{source.name}</span>
+                  <span className="mt-0.5 block truncate text-[10px] text-mac-secondary">{source.subtitle}</span>
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-mac-secondary">
+                  <StatusDot status={status} />
+                  {STATUS_LABEL[status]}
+                </span>
+                {active && (
+                  <span className="shrink-0 rounded-full bg-mac-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-mac-accent">
+                    Active
                   </span>
-                  <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-black/50">
-                    <StatusDot color={STATUS_COLOR[status]} />
-                    {STATUS_LABEL[status]}
-                  </span>
-                  {active && (
-                    <span className="shrink-0 rounded-full bg-[#007aff]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#007aff]">
-                      Active
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
 
-      <div className="border-t border-black/10" />
+      <div className="border-t border-mac-sep" />
       <div className="flex gap-2 p-2">
-        <MacButton ariaLabel="Discover Cameras" title="Discover Cameras">
-          <BroadcastIcon className="h-4 w-4" />
+        <MacButton ariaLabel="Discover Cameras" title="Discover Cameras" className="w-[34px] px-0">
+          <Antenna className="h-5 w-5" />
         </MacButton>
-        <MacButton ariaLabel="Add Camera">
-          <PlusIcon className="h-4 w-4" />
+        <MacButton ariaLabel="Add Camera" className="w-[34px] px-0">
+          <Plus className="h-5 w-5" />
         </MacButton>
       </div>
     </div>
@@ -732,56 +394,6 @@ function CamerasPane({
 // ---------------------------------------------------------------------------
 // Preview
 // ---------------------------------------------------------------------------
-
-function Timecode({ fps }: { fps: number }) {
-  const reducedMotion = usePrefersReducedMotion();
-  const [tc, setTc] = useState("00:00:00:00");
-
-  useEffect(() => {
-    if (reducedMotion) return;
-    const start = performance.now();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const id = setInterval(() => {
-      const ms = performance.now() - start;
-      const f = Math.floor((ms / (1000 / fps)) % fps);
-      const s = Math.floor(ms / 1000);
-      setTc(
-        `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s / 60) % 60))}:${pad(s % 60)}:${pad(f)}`
-      );
-    }, 100);
-    return () => clearInterval(id);
-  }, [reducedMotion, fps]);
-
-  return (
-    <span className="rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-white/90">
-      {tc}
-    </span>
-  );
-}
-
-/** Stand-in for a decoded camera frame: a test card with a running timecode. */
-function TestPattern({ fps }: { fps: number }) {
-  return (
-    <div className="relative aspect-video w-[min(100%,320px)] overflow-hidden">
-      <div className="flex h-full">
-        {BARS.map((c) => (
-          <div key={c} className="flex-1" style={{ background: c }} />
-        ))}
-      </div>
-      <div
-        className="absolute inset-x-0 bottom-0 h-1/4"
-        style={{
-          background:
-            "linear-gradient(90deg, #101010 0%, #3a3a3a 18%, #101010 36%, #8f7bff 52%, #d565c8 68%, #ff9e64 84%, #101010 100%)",
-        }}
-      />
-      <div aria-hidden className="tp-scan absolute inset-x-0 h-12 bg-white/8" />
-      <span className="absolute right-2 bottom-2">
-        <Timecode fps={fps} />
-      </span>
-    </div>
-  );
-}
 
 function PreviewPane({
   source,
@@ -796,10 +408,7 @@ function PreviewPane({
   // the new stream is up.
   const live = streaming ? source : null;
   const rows: [string, string][] = [
-    [
-      "Status",
-      source && status ? `${source.name} — ${STATUS_LABEL[status]}` : "No Camera Selected",
-    ],
+    ["Status", source && status ? `${source.name} — ${STATUS_LABEL[status]}` : "No Camera Selected"],
   ];
   if (live) {
     rows.push(
@@ -816,21 +425,20 @@ function PreviewPane({
           {live ? (
             <TestPattern key={live.id} fps={live.fps} />
           ) : (
-            // StreamPreview / PreviewSettingsView: .white.opacity(0.6) on black.
             <span className="text-[10px] text-white/60">No Preview</span>
           )}
         </div>
         {live && (
-          <p className="text-[10px] text-black/50">
+          <p className="text-[10px] text-mac-secondary">
             {`${live.width}x${live.height} · ${CODEC_NAME[live.codec]} · ${live.fps} fps`}
           </p>
         )}
       </div>
-      <div className="px-5 pb-5">
+      <div className="px-5 pt-3 pb-5">
         <FormSection>
           {rows.map(([label, value]) => (
             <FormRow key={label} label={label}>
-              <span className="text-right text-black/50">{value}</span>
+              <span className="text-right text-mac-secondary">{value}</span>
             </FormRow>
           ))}
         </FormSection>
@@ -843,47 +451,31 @@ function PreviewPane({
 // General
 // ---------------------------------------------------------------------------
 
-type VideoFormat = { resolution: string; frameRate: number };
+type GeneralSettings = { launchAtLogin: boolean; resolution: string; frameRate: string };
 
 function GeneralPane({
-  launchAtLogin,
-  setLaunchAtLogin,
-  format,
-  setFormat,
-  launchedFormat,
-  onRestart,
+  settings,
+  onChange,
 }: {
-  launchAtLogin: boolean;
-  setLaunchAtLogin: (on: boolean) => void;
-  format: VideoFormat;
-  setFormat: (format: VideoFormat) => void;
-  launchedFormat: VideoFormat;
-  onRestart: () => void;
+  settings: GeneralSettings;
+  onChange: (settings: GeneralSettings) => void;
 }) {
-  // RuntimeFlags.needsRestart
-  const needsRestart =
-    format.resolution !== launchedFormat.resolution ||
-    format.frameRate !== launchedFormat.frameRate;
+  const { launchAtLogin, resolution, frameRate } = settings;
 
   return (
     <div className="space-y-5 p-5">
       <FormSection header="About">
         <div className="flex items-center gap-3 py-2">
-          <Image src="/icon.png" alt="" width={64} height={64} className="rounded-[14px]" />
+          <Image src="/icon.png" alt="" width={64} height={64} />
           <div className="space-y-1">
             <p className="text-[17px] font-bold">LemurCam</p>
             <p className="flex items-center gap-1 text-[10px]">
-              <span className="text-black/50">by</span>
-              <a
-                href="https://aneesiqbal.ai"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[#007aff]"
-              >
+              <span className="text-mac-secondary">by</span>
+              <a href="https://aneesiqbal.ai" target="_blank" rel="noreferrer" className="text-mac-accent">
                 Anees Iqbal
               </a>
-              <span className="text-black/50">·</span>
-              <a href="https://lemur.cam" className="text-[#007aff]">
+              <span className="text-mac-secondary">·</span>
+              <a href="https://lemur.cam" className="text-mac-accent">
                 lemur.cam
               </a>
             </p>
@@ -895,7 +487,7 @@ function GeneralPane({
         <FormRow label="Launch at Login">
           <Toggle
             on={launchAtLogin}
-            onChange={() => setLaunchAtLogin(!launchAtLogin)}
+            onChange={() => onChange({ ...settings, launchAtLogin: !launchAtLogin })}
             label="Launch at Login"
           />
         </FormRow>
@@ -903,31 +495,21 @@ function GeneralPane({
 
       <FormSection header="Virtual Camera">
         <FormRow label="Resolution">
-          <PopUp
+          <FormPopUp
             label="Resolution"
-            value={format.resolution}
+            value={resolution}
             options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}
-            onChange={(resolution) => setFormat({ ...format, resolution })}
+            onChange={(r) => onChange({ ...settings, resolution: r })}
           />
         </FormRow>
         <FormRow label="Frame Rate">
-          <PopUp
+          <FormPopUp
             label="Frame Rate"
-            value={String(format.frameRate)}
+            value={frameRate}
             options={FRAME_RATES.map((f) => ({ value: String(f), label: `${f} fps` }))}
-            onChange={(rate) => setFormat({ ...format, frameRate: Number(rate) })}
+            onChange={(f) => onChange({ ...settings, frameRate: f })}
           />
         </FormRow>
-        {needsRestart && (
-          <div className="flex min-h-[38px] items-center gap-3 py-1.5">
-            <span className="flex-1 text-[10px] text-black/50">
-              Restart LemurCam to apply changes.
-            </span>
-            <MacButton size="small" onClick={onRestart}>
-              Restart Now
-            </MacButton>
-          </div>
-        )}
       </FormSection>
     </div>
   );
@@ -947,34 +529,30 @@ function LogsPane({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
   }, [entries.length]);
 
   const text = entries
-    .map(
-      (e) => `${e.time}  ${e.category.padEnd(5)}  ${e.level.padEnd(5)}  ${e.message}`
-    )
+    .map((e) => `${e.time}  ${e.category.padEnd(5)}  ${e.level.padEnd(5)}  ${e.message}`)
     .join("\n");
 
   const copyAll = () => {
-    const formatted = entries
-      .map((e) => `[${e.category}] ${e.level}: ${e.time} ${e.message}`)
-      .join("\n");
+    const formatted = entries.map((e) => `[${e.category}] ${e.level}: ${e.time} ${e.message}`).join("\n");
     navigator.clipboard?.writeText(formatted).catch(() => {});
   };
 
   return (
     <div className="flex h-full min-h-[380px] flex-col sm:min-h-0">
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
-        <pre className="p-2 text-[10px] leading-[1.5] break-words whitespace-pre-wrap text-black/85 [font-family:ui-monospace,SFMono-Regular,Menlo,monospace]">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto" tabIndex={0} aria-label="Log">
+        <pre className="selectable p-2 font-mono text-[10px] leading-[1.5] break-words whitespace-pre-wrap">
           {text}
         </pre>
       </div>
-      <div className="border-t border-black/10" />
+      <div className="border-t border-mac-sep" />
       <div className="flex items-center gap-2 p-2">
-        <span className="flex-1 text-[10px] text-black/50">{entries.length} entries</span>
+        <span className="flex-1 text-[10px] text-mac-secondary">{entries.length} entries</span>
         <MacButton onClick={copyAll} disabled={entries.length === 0}>
           Copy All
         </MacButton>
         <MacButton onClick={onClear}>Clear</MacButton>
       </div>
-      <p className="px-2 pb-1 text-[10px] text-black/30">
+      <p className="px-2 pb-1 text-[10px] text-mac-tertiary">
         {'Extension logs are visible in Console.app (filter by "cam.lemur.app.extension").'}
       </p>
     </div>
@@ -985,9 +563,12 @@ function LogsPane({ entries, onClear }: { entries: LogEntry[]; onClear: () => vo
 // Window
 // ---------------------------------------------------------------------------
 
-function Sidebar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void }) {
+function Sidebar({ tab, onSelect }: { tab: SettingsPane; onSelect: (tab: SettingsPane) => void }) {
   return (
-    <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/8 bg-[#ecebf1] p-2 sm:w-[200px] sm:flex-col sm:border-b-0 sm:border-r sm:p-2.5">
+    <nav
+      aria-label="Settings panes"
+      className="flex shrink-0 gap-1 overflow-x-auto border-b border-mac-sep p-2 sm:m-2 sm:w-[200px] sm:flex-col sm:gap-0.5 sm:rounded-[18px] sm:border sm:border-mac-sidebar-line sm:bg-mac-sidebar sm:p-2.5 sm:shadow-[0_1px_4px_rgba(0,0,0,0.05)]"
+    >
       {TABS.map((t) => {
         const Icon = t.icon;
         const selected = tab === t.id;
@@ -996,12 +577,12 @@ function Sidebar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void
             key={t.id}
             type="button"
             onClick={() => onSelect(t.id)}
-            aria-pressed={selected}
-            className={`flex shrink-0 cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
-              selected ? "bg-[#007aff] font-medium text-white" : "text-black/70 hover:bg-black/5"
+            aria-current={selected ? "page" : undefined}
+            className={`flex h-[32px] shrink-0 cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 text-[13px] ${
+              selected ? "bg-mac-selection text-white" : "hover:bg-mac-control"
             }`}
           >
-            <Icon className="h-4 w-4 shrink-0" />
+            <Icon className="h-[17px] w-[17px] shrink-0" />
             <span className="whitespace-nowrap">{t.label}</span>
           </button>
         );
@@ -1011,7 +592,8 @@ function Sidebar({ tab, onSelect }: { tab: TabId; onSelect: (tab: TabId) => void
 }
 
 export default function AppWindow() {
-  const [tab, setTab] = useState<TabId>("preview");
+  const { openSetup } = useBridge();
+  const [tab, setTab] = useState<SettingsPane>("preview");
 
   // Cameras, preview and logs share the source manager's state, as in the app.
   const [activeId, setActiveId] = useState<string | null>("backyard");
@@ -1027,13 +609,12 @@ export default function AppWindow() {
   const [micStatus, setMicStatus] = useState<MicStatus>("ready");
   const micTimers = useTimeouts();
 
-  const [launchAtLogin, setLaunchAtLogin] = useState(false);
-  const launched: VideoFormat = {
-    resolution: DEFAULT_RESOLUTION,
-    frameRate: DEFAULT_FRAME_RATE,
-  };
-  const [launchedFormat, setLaunchedFormat] = useState<VideoFormat>(launched);
-  const [format, setFormat] = useState<VideoFormat>(launched);
+  // LemurCamConfig defaults: 1080p at 60 fps. Launch at Login starts off.
+  const [general, setGeneral] = useState<GeneralSettings>({
+    launchAtLogin: false,
+    resolution: "1080p",
+    frameRate: "60",
+  });
 
   const log = (category: LogCategory, message: string) => {
     const entry: LogEntry = {
@@ -1066,14 +647,14 @@ export default function AppWindow() {
     } else {
       log("rtsp", `Connecting to source '${source.name}'`);
     }
-    connectTimers.after(delay + 700, () => {
+    connectTimers.after(connectDelay(source), () => {
       log("rtsp", `Format description created: ${source.width}x${source.height}`);
       log("rtsp", `Audio stream: ${source.audio}`);
       log("rtsp", `Stream connected: ${source.codec}`);
       setStatuses((prev) => ({ ...prev, [source.id]: "connected" }));
       setStreaming(true);
     });
-    connectTimers.after(delay + 900, () => {
+    connectTimers.after(connectDelay(source) + 200, () => {
       log("rtsp", "Received keyframe");
       log("rtsp", "Created decompression session");
     });
@@ -1081,7 +662,7 @@ export default function AppWindow() {
 
   // PreviewDemandDecision: of the Settings panes only Preview creates demand,
   // and StreamCoordinator.reconcileDemand acts on its edges.
-  const selectTab = (to: TabId) => {
+  const selectTab = (to: SettingsPane) => {
     if (to === tab) return;
     setTab(to);
     if (to === "preview") {
@@ -1097,6 +678,12 @@ export default function AppWindow() {
       if (activeId) setStatuses((prev) => ({ ...prev, [activeId]: "disconnected" }));
     }
   };
+
+  // Another recreation opened Settings: AppDelegate.presentSettings keeps an
+  // open window's pane unless a pane is asked for (Add Camera asks for Cameras).
+  useWindowHandler("settings", (pane) => {
+    if (pane) selectTab(pane);
+  });
 
   // Cameras is not a demand pane, so SourceManager.setActiveSource →
   // syncToActiveSource only records the new source; it connects when the
@@ -1119,34 +706,40 @@ export default function AppWindow() {
   const activeSource = SOURCES.find((s) => s.id === activeId) ?? null;
 
   return (
-    <div className="mx-auto w-full max-w-4xl overflow-hidden rounded-[14px] bg-[#f4f3f7] text-[#1d1c22] shadow-[0_48px_100px_-24px_rgba(0,0,0,0.65)] ring-1 ring-white/10 [font-family:system-ui,-apple-system,sans-serif]">
+    <div
+      id="settings-window"
+      tabIndex={-1}
+      role="group"
+      aria-label="Settings window recreation"
+      className="mac mx-auto w-full max-w-[720px] overflow-hidden rounded-[22px] bg-mac-window mac-shadow outline-none"
+    >
       {/* Title bar */}
-      <div className="relative flex h-11 items-center border-b border-black/8 px-4">
-        <span className="flex gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-          <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-          <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-        </span>
-        <span className="absolute inset-x-0 text-center text-[13px] font-semibold">
-          Settings
+      {/* Title bar, laid out as in the app's macOS 26 screenshots: window
+          buttons, the title at 108 points, the sidebar toggle at 264. */}
+      <div className="relative flex h-[52px] items-center gap-4 border-b border-mac-sep px-[19px] sm:gap-0">
+        <TrafficLights />
+        <span className="text-[15px] font-semibold text-mac-title sm:absolute sm:left-[108px]">Settings</span>
+        <span
+          aria-hidden
+          className="absolute left-[264px] hidden h-[40px] w-[40px] items-center justify-center rounded-full text-mac-title shadow-[0_1px_8px_rgba(0,0,0,0.12)] sm:inline-flex"
+        >
+          <SidebarLeft className="h-[19px] w-[19px]" />
         </span>
       </div>
 
       <div className="flex flex-col sm:h-[480px] sm:flex-row">
         <Sidebar tab={tab} onSelect={selectTab} />
 
-        {/* Content */}
-        <div className="min-h-[380px] flex-1 overflow-y-auto bg-[#fbfafc] sm:min-h-0">
+        <div className="min-h-[380px] flex-1 overflow-y-auto sm:min-h-0">
           {tab === "status" && (
             <StatusPane
               micStatus={micStatus}
               onRemoveMic={() => changeMic("notSetUp")}
               onEnableMic={() => changeMic("ready")}
+              onOpenSetup={openSetup}
             />
           )}
-          {tab === "cameras" && (
-            <CamerasPane activeId={activeId} statuses={statuses} onSelect={selectSource} />
-          )}
+          {tab === "cameras" && <CamerasPane activeId={activeId} statuses={statuses} onSelect={selectSource} />}
           {tab === "preview" && (
             <PreviewPane
               source={activeSource}
@@ -1154,16 +747,7 @@ export default function AppWindow() {
               streaming={streaming}
             />
           )}
-          {tab === "general" && (
-            <GeneralPane
-              launchAtLogin={launchAtLogin}
-              setLaunchAtLogin={setLaunchAtLogin}
-              format={format}
-              setFormat={setFormat}
-              launchedFormat={launchedFormat}
-              onRestart={() => setLaunchedFormat(format)}
-            />
-          )}
+          {tab === "general" && <GeneralPane settings={general} onChange={setGeneral} />}
           {tab === "logs" && <LogsPane entries={logs} onClear={() => setLogs([])} />}
         </div>
       </div>

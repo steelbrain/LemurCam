@@ -1,301 +1,269 @@
 @import "tailwindcss";
 
 /* ----------------------------------------------------------------------------
-   Design tokens — deep ink-violet night, living ambient color, one gradient.
-   The brand gradient (violet → magenta → amber, pulled from the app icon's
-   rim and the lemur's eyes) is reserved for the hero keyword and hairline
-   details. The background itself is alive: two nebula layers drift slowly
-   behind everything, plus film grain. Both are pure gradients animated with
-   transforms — no blur() filters, which stall first paint on iOS.
+   Page tokens. The page stays plain: system font, neutral greys, one accent
+   (blue) for links, buttons and focus. Colour is spent on the product
+   recreations, which use the macOS tokens further down.
 ---------------------------------------------------------------------------- */
 :root {
-  --background: #0e0c16;
-  --foreground: #f3f1f8;
-  --muted: #a19bb2;
-  --card: #161222;
-  --border: rgba(243, 241, 248, 0.09);
-  --border-strong: rgba(243, 241, 248, 0.18);
+  color-scheme: light dark;
 
-  --accent: #a78bfa;
-  --accent-ink: #baa7ff;
-  --accent-soft: rgba(167, 139, 250, 0.12);
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #5b5b62;
+  --line: #e1e1e5;
+  --accent: #0066cc;
+  --accent-fg: #ffffff;
+  --stage: #eeeef1;
+  --stage-line: #e3e3e7;
 
-  --hero-gradient: linear-gradient(
-    100deg,
-    #8f7bff 0%,
-    #d565c8 55%,
-    #ff9e64 100%
-  );
+  /* macOS appearance, light. Values follow the system colours the SwiftUI
+     views use (labels, separators, grouped-form fills, accent and status
+     colours), approximated as sRGB. */
+  --mac-window: #ffffff;
+  --mac-title: rgba(0, 0, 0, 0.68);
+  --mac-sidebar: #f7f7f7;
+  --mac-sidebar-line: rgba(0, 0, 0, 0.07);
+  --mac-group: rgba(0, 0, 0, 0.037);
+  --mac-sep: rgba(0, 0, 0, 0.1);
+  --mac-label: rgba(0, 0, 0, 0.85);
+  --mac-secondary: rgba(0, 0, 0, 0.5);
+  --mac-tertiary: rgba(0, 0, 0, 0.3);
+  --mac-accent: #007aff;
+  --mac-selection: #0064e1;
+  --mac-control: rgba(0, 0, 0, 0.065);
+  --mac-control-hover: rgba(0, 0, 0, 0.1);
+  --mac-card: #ffffff;
+  --mac-card-line: rgba(0, 0, 0, 0.07);
+  --mac-popover: #f4f4f5;
+  --mac-menubar: #e6e6ea;
+  --mac-menubar-fg: rgba(0, 0, 0, 0.85);
+  --mac-menu: #f2f2f3;
+  --mac-switch-off: rgba(0, 0, 0, 0.1);
+  --mac-green: #34c759;
+  /* The status words ("Running") in a darker green than systemGreen so small
+     text stays readable on white. */
+  --mac-green-text: #248a3d;
+  --mac-orange: #ff9500;
+  --mac-red: #ff3b30;
+  --mac-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 22px 48px -16px rgba(0, 0, 0, 0.32);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161618;
+    --fg: #ececee;
+    --muted: #a4a4ab;
+    --line: #2d2d31;
+    --accent: #4da3ff;
+    --accent-fg: #0b1a2b;
+    --stage: #0d0d0e;
+    --stage-line: #26262a;
+
+    /* macOS appearance, dark. */
+    --mac-window: #222224;
+    --mac-title: rgba(255, 255, 255, 0.72);
+    --mac-sidebar: #2c2c2e;
+    --mac-sidebar-line: rgba(255, 255, 255, 0.08);
+    --mac-group: rgba(255, 255, 255, 0.055);
+    --mac-sep: rgba(255, 255, 255, 0.12);
+    --mac-label: rgba(255, 255, 255, 0.86);
+    --mac-secondary: rgba(255, 255, 255, 0.55);
+    --mac-tertiary: rgba(255, 255, 255, 0.28);
+    --mac-accent: #0a84ff;
+    --mac-selection: #0058d0;
+    --mac-control: rgba(255, 255, 255, 0.11);
+    --mac-control-hover: rgba(255, 255, 255, 0.16);
+    --mac-card: #1c1c1e;
+    --mac-card-line: rgba(255, 255, 255, 0.08);
+    --mac-popover: #2a2a2c;
+    --mac-menubar: #1d1d20;
+    --mac-menubar-fg: rgba(255, 255, 255, 0.86);
+    --mac-menu: #2c2c2e;
+    --mac-switch-off: rgba(255, 255, 255, 0.16);
+    --mac-green: #30d158;
+    --mac-green-text: #30d158;
+    --mac-orange: #ff9f0a;
+    --mac-red: #ff453a;
+    --mac-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 22px 48px -16px rgba(0, 0, 0, 0.7);
+  }
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
   --color-muted: var(--muted);
-  --color-card: var(--card);
-  --color-border: var(--border);
-  --color-border-strong: var(--border-strong);
+  --color-line: var(--line);
   --color-accent: var(--accent);
-  --color-accent-ink: var(--accent-ink);
-  --color-accent-soft: var(--accent-soft);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-accent-fg: var(--accent-fg);
+  --color-stage: var(--stage);
+  --color-stage-line: var(--stage-line);
 
-  --animate-marquee: marquee 48s linear infinite;
-}
+  --color-mac-window: var(--mac-window);
+  --color-mac-title: var(--mac-title);
+  --color-mac-sidebar: var(--mac-sidebar);
+  --color-mac-sidebar-line: var(--mac-sidebar-line);
+  --color-mac-group: var(--mac-group);
+  --color-mac-sep: var(--mac-sep);
+  --color-mac-label: var(--mac-label);
+  --color-mac-secondary: var(--mac-secondary);
+  --color-mac-tertiary: var(--mac-tertiary);
+  --color-mac-accent: var(--mac-accent);
+  --color-mac-selection: var(--mac-selection);
+  --color-mac-control: var(--mac-control);
+  --color-mac-control-hover: var(--mac-control-hover);
+  --color-mac-card: var(--mac-card);
+  --color-mac-card-line: var(--mac-card-line);
+  --color-mac-popover: var(--mac-popover);
+  --color-mac-menubar: var(--mac-menubar);
+  --color-mac-menubar-fg: var(--mac-menubar-fg);
+  --color-mac-menu: var(--mac-menu);
+  --color-mac-switch-off: var(--mac-switch-off);
+  --color-mac-green: var(--mac-green);
+  --color-mac-green-text: var(--mac-green-text);
+  --color-mac-orange: var(--mac-orange);
+  --color-mac-red: var(--mac-red);
 
-* {
-  border-color: var(--border);
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 
 html {
-  scroll-behavior: smooth;
-  /* The canvas color lives on <html> (body stays transparent) so the fixed
-     ambient layers can sit between the canvas and the content, and so
-     rubber-band overscroll matches the page. */
-  background-color: var(--background);
-  /* clip (not hidden) keeps decorative bleed from expanding the mobile
-     layout viewport — iOS otherwise widens the page and shifts content
-     off-center. hidden stays as the fallback for old browsers. */
-  overflow-x: hidden;
-  overflow-x: clip;
+  background-color: var(--bg);
 }
 
 body {
-  background: transparent;
-  color: var(--foreground);
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  overflow-x: hidden;
-  overflow-x: clip;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-/* ----------------------------------------------------------------------------
-   Living background — two drifting nebula layers + film grain
----------------------------------------------------------------------------- */
-.ambient-a,
-.ambient-b {
-  position: fixed;
-  inset: -25%;
-  z-index: -10;
-  pointer-events: none;
-  will-change: transform;
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Inside the macOS recreations, focus looks like the system focus ring. */
+  .mac :focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--mac-accent) 55%, transparent);
+    outline-offset: 1px;
+  }
+
+  .mac {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+      sans-serif;
+    color: var(--mac-label);
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .mac .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .mac-shadow {
+    box-shadow: var(--mac-shadow);
+  }
+
+  /* Native <select> styled as a macOS pop-up button; the chevrons are drawn
+     by the component. */
+  .mac select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+  }
+
+  .mac select option {
+    color: initial;
+  }
 }
 
-.ambient-a {
-  background:
-    radial-gradient(38% 32% at 22% 16%, rgba(124, 92, 246, 0.2), transparent 70%),
-    radial-gradient(32% 28% at 84% 22%, rgba(213, 101, 200, 0.11), transparent 70%);
-  animation: drift-a 70s ease-in-out infinite alternate;
+@keyframes mac-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.ambient-b {
-  background:
-    radial-gradient(44% 38% at 72% 82%, rgba(80, 96, 220, 0.13), transparent 70%),
-    radial-gradient(24% 20% at 32% 62%, rgba(255, 158, 100, 0.05), transparent 70%);
-  animation: drift-b 90s ease-in-out infinite alternate;
+.mac-spinner {
+  animation: mac-spin 0.8s steps(8) infinite;
 }
 
-.grain {
-  position: fixed;
-  inset: 0;
-  z-index: -9;
-  pointer-events: none;
-  opacity: 0.045;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-@keyframes drift-a {
+/* SetupDeviceHero: the halo breathes while a step is working, a green ring
+   flashes and expands once when it becomes ready, and SetupView slides each
+   step in from the side it comes from. */
+@keyframes setup-breathe {
   from {
-    transform: translate3d(-3%, -2%, 0) scale(1);
+    transform: scale(0.92);
   }
   to {
-    transform: translate3d(3%, 3%, 0) scale(1.1);
+    transform: scale(1.18);
   }
 }
 
-@keyframes drift-b {
-  from {
-    transform: translate3d(2%, 3%, 0) scale(1.06);
-  }
-  to {
-    transform: translate3d(-3%, -2%, 0) scale(1);
-  }
+.setup-halo {
+  filter: blur(13px);
+  animation: setup-breathe 1.1s ease-in-out infinite alternate;
 }
 
-/* ----------------------------------------------------------------------------
-   Utilities
----------------------------------------------------------------------------- */
-.text-gradient {
-  background-image: var(--hero-gradient);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-/* Thin bar surface for the nav */
-.glass {
-  background: color-mix(in srgb, var(--background) 78%, transparent);
-  backdrop-filter: saturate(140%) blur(12px);
-  -webkit-backdrop-filter: saturate(140%) blur(12px);
-}
-
-/* Fading dot grid behind the hero */
-.dot-grid {
-  background-image: radial-gradient(
-    rgba(243, 241, 248, 0.14) 1px,
-    transparent 1px
-  );
-  background-size: 26px 26px;
-  mask-image: radial-gradient(ellipse 70% 65% at 50% 0%, #000 30%, transparent 78%);
-  -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 0%, #000 30%, transparent 78%);
-}
-
-/* ----------------------------------------------------------------------------
-   Scroll reveal — small rise, soft ease, once
----------------------------------------------------------------------------- */
-.reveal {
-  opacity: 0;
-  transform: translateY(14px);
-  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.reveal.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Mobile: content must paint before JS hydrates; drop reveals entirely so a
-   slow phone never sees a blank screen waiting on IntersectionObserver. */
-@media (max-width: 640px) {
-  .reveal {
-    opacity: 1;
-    transform: none;
-    transition: none;
-    transition-delay: 0ms !important;
-  }
-}
-
-/* ----------------------------------------------------------------------------
-   Keyframes
----------------------------------------------------------------------------- */
-@keyframes marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
-}
-
-@keyframes pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.8);
-  }
-}
-
-@keyframes eq {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-/* Test-pattern scanline inside the mock preview */
-@keyframes tp-scan {
-  from {
-    transform: translateY(-120%);
-  }
-  to {
-    transform: translateY(620%);
-  }
-}
-
-.tp-scan {
-  top: 0;
-  animation: tp-scan 6s linear infinite;
-}
-
-/* One-shot pop for the wizard's "ready" icon */
-@keyframes pop {
+@keyframes setup-ring {
   0% {
-    transform: scale(0.6);
+    transform: scale(1);
     opacity: 0;
   }
-  60% {
-    transform: scale(1.08);
-    opacity: 1;
+  15% {
+    transform: scale(1);
+    opacity: 0.65;
   }
   100% {
-    transform: scale(1);
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+.setup-ring {
+  opacity: 0;
+  animation: setup-ring 0.72s ease-out 1;
+}
+
+@keyframes setup-in {
+  from {
+    transform: translateX(var(--from, 40px));
+    opacity: 0;
+  }
+  to {
+    transform: none;
     opacity: 1;
   }
 }
 
-.anim-pop {
-  animation: pop 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+.setup-in {
+  animation: setup-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.pulse-dot {
-  animation: pulse-dot 2.4s ease-in-out infinite;
+.setup-in-back {
+  --from: -40px;
+  animation: setup-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.eq-bar {
-  transform-origin: bottom;
-  animation: eq 1.4s ease-in-out infinite;
-}
-
+/* Motion only where the product moves (the spinner, a running timecode in the
+   live preview). Under reduced motion it stops. */
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
   *,
   *::before,
   *::after {
     animation: none !important;
     transition-duration: 0.01ms !important;
-  }
-  .reveal {
-    opacity: 1;
-    transform: none;
-  }
-
-  /* "Works with" marquee: show one static, wrapped list instead of a stopped
-     scroller that clips most names. */
-  .marquee {
-    mask-image: none;
-    -webkit-mask-image: none;
-    padding-inline: 1.25rem;
-  }
-  .marquee-track {
-    display: block;
-    width: auto;
-  }
-  .marquee-copy {
-    display: none;
-  }
-  .marquee-list {
-    flex-wrap: wrap;
-    justify-content: center;
-    row-gap: 0.5rem;
-  }
-  .marquee-dot {
-    margin-inline: 1rem;
-  }
-  .marquee-list li:last-child .marquee-dot {
-    display: none;
+    scroll-behavior: auto !important;
   }
 }

@@ -1,24 +1,15 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const title = "LemurCam — Turn your IP camera into a Mac webcam";
 
 const description =
-  "LemurCam turns an RTSP or ONVIF IP camera that streams H.264 or H.265 into a virtual webcam and microphone on macOS. Works with Zoom, Teams, Google Meet, FaceTime, OBS and more.";
+  "LemurCam turns an RTSP or ONVIF IP camera that streams H.264 or H.265 into a virtual webcam and microphone on macOS. Pick it as the camera in Zoom, Google Meet, FaceTime, OBS or any app where you choose a webcam.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://lemur.cam"),
   title: {
-    default: "LemurCam — Turn your IP camera into a Mac webcam",
+    default: title,
     template: "%s · LemurCam",
   },
   description,
@@ -38,7 +29,7 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   openGraph: {
-    title: "LemurCam — Turn your IP camera into a Mac webcam",
+    title,
     description,
     url: "https://lemur.cam",
     siteName: "LemurCam",
@@ -47,15 +38,18 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary",
-    title: "LemurCam — Turn your IP camera into a Mac webcam",
+    title,
     description,
     images: ["/icon.png"],
   },
 };
 
-export const viewport = {
-  themeColor: "#0e0c16",
-  colorScheme: "dark" as const,
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#161618" },
+  ],
+  colorScheme: "light dark",
 };
 
 export default function RootLayout({
@@ -65,18 +59,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head>
-        {/* Without JS the IntersectionObserver never runs, so reveals would
-            stay at opacity:0. Force them visible as a no-JS fallback. */}
-        <noscript>
-          <style>{`.reveal{opacity:1 !important;transform:none !important}`}</style>
-        </noscript>
-      </head>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
