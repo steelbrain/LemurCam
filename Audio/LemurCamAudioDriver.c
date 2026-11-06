@@ -53,7 +53,9 @@ enum {
 // Frames the HAL stays behind the write head when reading input, giving the
 // producer a small head start so the consumer's first reads don't land on
 // not-yet-written frames (which the ring would zero-fill as a brief gap).
-// ~10.7 ms at 48 kHz — imperceptible for a network-camera microphone.
+// ~10.7 ms at 48 kHz — imperceptible for a network-camera microphone. This only
+// describes timing to the HAL; the backlog actually held in the shm ring is set
+// by the consumer latency policy (LEMUR_AUDIO_RING_TARGET_FRAMES, 50 ms).
 #define kDevice_SafetyOffset 512u
 
 // Ring-map retry (see StartRingMapRetry): if the shm region does not exist when
@@ -93,6 +95,11 @@ static LemurAudioRing *_Atomic gRing = NULL;
 // Set while a background ring-map retry thread is running, so StartIO never
 // spawns a second one. Cleared by the thread when it exits.
 static atomic_int gMapRetryRunning = 0;
+
+// Latency control for the ring reads (see lemur_ring_read_paced). Touched only by
+// the IO thread in DoIOOperation, and reset in StartIO when the first client
+// starts, before the HAL begins calling DoIOOperation for that session.
+static LemurAudioRingPacer gPacer = { 0, UINT32_MAX };
 
 // MARK: - Helpers
 
@@ -771,6 +778,7 @@ static OSStatus StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDev
         }
         gAnchorHostTime = mach_absolute_time();
         gNumberTimeStamps = 0;
+        lemur_ring_pacer_reset(&gPacer);
     }
     ++gIOCount;
     pthread_mutex_unlock(&gStateMutex);
@@ -861,7 +869,9 @@ static OSStatus DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID
         // store. Lock-free and allocation-free — safe on the real-time thread.
         LemurAudioRing *ring = atomic_load_explicit(&gRing, memory_order_acquire);
         if (ring != NULL && lemur_ring_ready(ring)) {
-            lemur_ring_read(ring, dst, inIOBufferFrameSize); // zero-fills underrun
+            // Zero-fills underrun; trims backlog that would otherwise persist as
+            // latency (see the latency policy in LemurAudioShared.h).
+            lemur_ring_read_paced(ring, &gPacer, dst, inIOBufferFrameSize);
         } else {
             memset(dst, 0, (size_t)inIOBufferFrameSize * LEMUR_AUDIO_BYTES_PER_FRAME);
         }
