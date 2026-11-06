@@ -6,7 +6,8 @@ import XCTest
 /// A camera that refuses it without authentication (HTTP 401, or a `NotAuthorized`
 /// fault) used to leave the client on the default `/onvif/media` path, which fails on
 /// cameras that serve media elsewhere. With credentials it is now asked once more,
-/// signed. Cameras are stubbed with `ONVIFStubURLProtocol`; nothing goes on the network.
+/// signed; a refusal of that is the one failed login, with no request after it.
+/// Cameras are stubbed with `ONVIFStubURLProtocol`; nothing goes on the network.
 internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
     private struct Sent: Equatable {
         let operation: String
@@ -53,8 +54,12 @@ internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
     )
 
     /// Runs getProfiles against a stub that answers unsigned GetCapabilities with
-    /// `unsigned` and everything else normally; returns the requests sent.
-    private func run(username: String?, unsigned: ONVIFStubURLProtocol.Reply) async throws -> [Sent] {
+    /// `unsigned`, every signed request with `signedRefusal` when there is one (a wrong
+    /// password), and everything else normally; returns the requests sent and the error
+    /// getProfiles threw, if any.
+    private func exchange(
+        username: String?, unsigned: ONVIFStubURLProtocol.Reply, signedRefusal: ONVIFStubURLProtocol.Reply? = nil
+    ) async -> (sent: [Sent], error: (any Error)?) {
         let host = "onvif-capabilities-\(UUID().uuidString).invalid"
         defer { ONVIFStubURLProtocol.unregister(host: host) }
         let recorder = Recorder()
@@ -63,6 +68,7 @@ internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
             let operation = root?["Body"]?.elementChildren.first?.name ?? "?"
             let signed = root?["Header"]?["Security"] != nil
             recorder.record(Sent(operation: operation, path: request.url?.path ?? "", signed: signed))
+            if signed, let signedRefusal { return signedRefusal }
             switch (operation, signed) {
             case ("GetCapabilities", false): return unsigned
             case ("GetCapabilities", true): return ONVIFStubURLProtocol.Reply(body: Self.capabilities)
@@ -74,8 +80,18 @@ internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
             host: host, port: 80, username: username, password: username.map { _ in "pw" },
             configuration: ONVIFStubURLProtocol.configuration()
         )
-        _ = try await client.getProfiles()
-        return recorder.all
+        do {
+            _ = try await client.getProfiles()
+            return (recorder.all, nil)
+        } catch {
+            return (recorder.all, error)
+        }
+    }
+
+    private func run(username: String?, unsigned: ONVIFStubURLProtocol.Reply) async throws -> [Sent] {
+        let (sent, error) = await exchange(username: username, unsigned: unsigned)
+        if let error { throw error }
+        return sent
     }
 
     func testUnauthorizedStatusIsRetriedSigned() async throws {
@@ -94,6 +110,31 @@ internal final class ONVIFCapabilitiesAuthTests: XCTestCase {
 
         XCTAssertEqual(sent.filter { $0.operation == "GetCapabilities" }.map(\.signed), [false, true])
         XCTAssertEqual(sent.last, Sent(operation: "GetProfiles", path: "/onvif/Media2", signed: true))
+    }
+
+    /// A wrong password: the camera refuses the signed GetCapabilities too. That one
+    /// failed login is reported as such. The client used to fall back to
+    /// `/onvif/media` and log in once more there, and report that answer (often an
+    /// HTTP 404) instead.
+    func testRefusedSignedRetryIsTheOnlyLoginAndReportsAuthenticationFailed() async {
+        let refusals = [
+            "HTTP 401": ONVIFStubURLProtocol.Reply(status: 401),
+            "NotAuthorized fault": Self.notAuthorized
+        ]
+        for (label, refusal) in refusals {
+            for unsigned in [ONVIFStubURLProtocol.Reply(status: 401), Self.notAuthorized] {
+                let (sent, error) = await exchange(username: "viewer", unsigned: unsigned, signedRefusal: refusal)
+
+                XCTAssertEqual(sent.filter(\.signed), [
+                    Sent(operation: "GetCapabilities", path: "/onvif/device_service", signed: true)
+                ], label)
+                XCTAssertFalse(sent.contains { $0.operation == "GetProfiles" }, label)
+                guard case .authenticationFailed? = error as? ONVIFError else {
+                    XCTFail("\(label): expected authenticationFailed, got \(String(describing: error))")
+                    continue
+                }
+            }
+        }
     }
 
     /// Without credentials there is nothing to sign with: the default path is used.

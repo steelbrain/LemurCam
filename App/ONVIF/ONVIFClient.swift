@@ -89,6 +89,11 @@ internal final class ONVIFClient: Sendable {
         return resolved
     }
 
+    /// A camera that refuses the signed GetCapabilities as well has refused the
+    /// credentials. That is reported as `authenticationFailed`: falling back to the
+    /// default media path sent one more signed request (another failed login, which
+    /// counts towards locking the account) and reported whatever the camera answered
+    /// there, often an HTTP 404, instead.
     private func resolveMediaServicePath() async throws -> String {
         let fallback = Self.defaultMediaServicePath
         do {
@@ -97,16 +102,22 @@ internal final class ONVIFClient: Sendable {
             Log.app.info("ONVIF device listed no media service; using \(fallback)")
         } catch let error as ONVIFError where error.isTransportFailure {
             throw error
+        } catch is SignedRequestRefused {
+            throw ONVIFError.authenticationFailed
         } catch {
             Log.app.info("ONVIF GetCapabilities failed (\(error.localizedDescription)); using \(fallback)")
         }
         return Self.defaultMediaServicePath
     }
 
+    /// The camera refused a signed request: the credentials are wrong.
+    private struct SignedRequestRefused: Error {}
+
     /// The GetCapabilities reply, asked for unsigned. A camera that refuses it without
     /// authentication (HTTP 401 or a `NotAuthorized` fault) used to get the default
     /// media path, which fails on cameras that serve media elsewhere; with credentials
-    /// it is now asked once more, signed.
+    /// it is now asked once more, signed. Throws `SignedRequestRefused` when the camera
+    /// refuses that too.
     private func capabilities() async throws -> Data {
         let body = ONVIFSOAP.getMediaCapabilities()
         let (data, response) = try await exchange(path: Self.deviceServicePath, body: body, signed: false)
@@ -115,7 +126,10 @@ internal final class ONVIFClient: Sendable {
             return data
         }
         Log.app.info("ONVIF GetCapabilities requires authentication; asking again signed")
-        return try await post(path: Self.deviceServicePath, body: body)
+        let (signedData, signedResponse) = try await exchange(path: Self.deviceServicePath, body: body, signed: true)
+        if Self.refusesUnauthenticated(signedData, response: signedResponse) { throw SignedRequestRefused() }
+        try checkReply(signedData, response: signedResponse)
+        return signedData
     }
 
     // MARK: - SOAP

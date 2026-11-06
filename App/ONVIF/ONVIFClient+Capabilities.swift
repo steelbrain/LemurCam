@@ -15,8 +15,9 @@ internal extension ONVIFClient {
         return xaddr.flatMap(servicePath(fromXAddr:))
     }
 
-    /// Whether a reply to an unsigned request says the request needs authentication:
-    /// HTTP 401, or a SOAP fault whose subcode is ONVIF's `ter:NotAuthorized`.
+    /// Whether a reply says the request was not authorized: HTTP 401, or a SOAP fault
+    /// whose subcode is ONVIF's `ter:NotAuthorized`. To an unsigned request that means
+    /// it needs authentication; to a signed one, that the credentials were refused.
     static func refusesUnauthenticated(_ data: Data, response: URLResponse) -> Bool {
         if (response as? HTTPURLResponse)?.statusCode == 401 { return true }
         guard let root = try? ONVIFXML.parse(data) else { return false }
