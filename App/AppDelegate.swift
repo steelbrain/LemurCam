@@ -102,8 +102,11 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_: Notification) {
-        // xcodebuild can activate the test host: no camera query or helper XPC there.
-        if TestHost.isThisProcess { return }
+        // Not in the unit-test host, nor in a launch that has not finished
+        // (`ActivationRefreshDecision`).
+        guard ActivationRefreshDecision.refreshes(
+            isTestHost: TestHost.isThisProcess, hasFinishedLaunching: hasFinishedLaunching
+        ) else { return }
         // Approval happens out-of-process in System Settings, where Login Items can
         // change too; re-poll on reactivation to notice when the user finishes a step.
         setupCoordinator.refreshAll()

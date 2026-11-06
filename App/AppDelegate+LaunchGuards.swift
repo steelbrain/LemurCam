@@ -175,6 +175,23 @@ internal enum TerminationDecision: Equatable {
     }
 }
 
+// MARK: - Becoming Active
+
+/// Whether `applicationDidBecomeActive` re-checks the camera, the microphone and
+/// Launch at Login, as a pure decision.
+internal enum ActivationRefreshDecision {
+    /// - Parameters:
+    ///   - isTestHost: the app is only the unit-test host (`TestHost`), which
+    ///     xcodebuild can activate: no camera query or helper XPC there.
+    ///   - hasFinishedLaunching: false while launch runs, and in a launch a guard is
+    ///     quitting: AppKit can activate the app while the guard's alert ("Move to
+    ///     Applications") is up, before the app quits. Launch makes the first checks
+    ///     itself, so an activation before it finished has nothing to re-check.
+    static func refreshes(isTestHost: Bool, hasFinishedLaunching: Bool) -> Bool {
+        !isTestHost && hasFinishedLaunching
+    }
+}
+
 // MARK: - Restart
 
 /// Builds the detached `/bin/sh` relauncher. It waits for the old process to exit
