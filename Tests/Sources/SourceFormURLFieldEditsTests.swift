@@ -70,7 +70,8 @@ internal final class SourceFormURLFieldEditsTests: XCTestCase {
     /// A leading space made the URL unparseable, which disabled Add without a word.
     func testNormalizedURLPassesTheCheckThatTheRawTextFails() {
         let typed = " rtsp://192.0.2.8/s"
-        XCTAssertEqual(RTSPURLInput.problem(with: typed), RTSPURLInput.invalidMessage)
+        // Refused for its space now, as IPCamKit refuses one.
+        XCTAssertEqual(RTSPURLInput.problem(with: typed), RTSPURLInput.spaceMessage)
         XCTAssertEqual(RTSPURLInput.normalized(typed), "rtsp://192.0.2.8/s")
         XCTAssertNil(RTSPURLInput.problem(with: RTSPURLInput.normalized(typed)))
     }
