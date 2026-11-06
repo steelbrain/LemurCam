@@ -144,8 +144,9 @@ extension StreamCoordinator {
     /// `ONVIFRediscovery.shouldRediscover`), does it look for the camera with
     /// WS-Discovery, and it asks again only where the scan finds the camera moved to.
     /// An address the scan reports is saved only when it differs from the saved one and
-    /// `ONVIFRediscovery.shouldSave` allows it;
-    /// otherwise it is used for this connection only. A failure carries the error from
+    /// `ONVIFRediscovery.shouldSave` allows it (after a rejected login or a SOAP fault,
+    /// only once the camera answered there); otherwise it is used for this connection
+    /// only. A failure carries the error from
     /// the saved address, unless the camera was found elsewhere and failed there.
     /// Throws only when cancelled.
     static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> ONVIFStreamURIResult {
@@ -174,7 +175,7 @@ extension StreamCoordinator {
             Log.rtsp.info("Device \(uuid) still answers at the saved address")
         case .moved(let moved):
             Log.rtsp.info("Found device at \(moved.host):\(moved.port)")
-            return try await connect(movedTo: moved, params: params)
+            return try await connect(movedTo: moved, after: savedAddressError, params: params)
         }
         return .failure(savedAddressError)
     }
@@ -194,24 +195,42 @@ extension StreamCoordinator {
         return ResolvedONVIFStreamURI(uri: uri, onvifHost: info.host)
     }
 
+    /// Asks the camera at the address the scan found. A move `ONVIFRediscovery.shouldSave`
+    /// allows is saved before asking, or, after a rejected login or a SOAP fault at the
+    /// saved address, only once the camera answered there
+    /// (`ONVIFRediscovery.savesMoveOnlyOnceAnswered`).
     private static func connect(
-        movedTo moved: ONVIFSourceInfo, params: ONVIFResolveParams
+        movedTo moved: ONVIFSourceInfo, after savedAddressError: any Error, params: ONVIFResolveParams
     ) async throws -> ONVIFStreamURIResult {
-        if ONVIFRediscovery.shouldSave(moved, replacing: params.info) {
-            await MainActor.run {
-                params.sourceManager?.updateONVIFAddress(
-                    id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
-                )
-            }
-        } else {
+        let save = ONVIFRediscovery.shouldSave(moved, replacing: params.info)
+        let saveOnceAnswered = ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: savedAddressError)
+        if !save {
             Log.rtsp.info("Using the address found for '\(params.sourceName)' for this connection only")
+        } else if !saveOnceAnswered {
+            await saveMove(moved, params: params)
         }
         do {
-            return .success(try await fetchStreamURI(from: moved, params: params))
+            let resolved = try await fetchStreamURI(from: moved, params: params)
+            if save, saveOnceAnswered {
+                try Task.checkCancellation()
+                await saveMove(moved, params: params)
+            }
+            return .success(resolved)
         } catch {
             try Task.checkCancellation()
             Log.rtsp.error("ONVIF fetch failed at new address: \(error.localizedDescription)")
+            if save, saveOnceAnswered {
+                Log.rtsp.info("Keeping the saved address for '\(params.sourceName)': the camera found did not answer")
+            }
             return .failure(error)
+        }
+    }
+
+    private static func saveMove(_ moved: ONVIFSourceInfo, params: ONVIFResolveParams) async {
+        await MainActor.run {
+            params.sourceManager?.updateONVIFAddress(
+                id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
+            )
         }
     }
 }

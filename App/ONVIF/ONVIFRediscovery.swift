@@ -47,6 +47,24 @@ internal enum ONVIFRediscovery {
         }
     }
 
+    /// Whether a move found after `error` at the saved address is saved only once the
+    /// camera gave its stream URI at the new address. After a rejected login or a SOAP
+    /// fault the saved address still answers, maybe as this camera itself, and the scan
+    /// reply that matched may come from another device claiming the same UUID (cloned
+    /// firmware) while the camera's own reply was lost: saved at once, the source was
+    /// re-pointed for good, and could flip between the two on retries. After a
+    /// transport failure, or an answer that is not this camera's ONVIF service,
+    /// nothing at the saved address is the camera, so the move is saved before asking.
+    static func savesMoveOnlyOnceAnswered(after error: Error) -> Bool {
+        guard let onvifError = error as? ONVIFError else { return false }
+        switch onvifError {
+        case .soapFault, .authenticationFailed:
+            return true
+        case .networkError, .timedOut, .httpStatus, .parseError, .invalidURL:
+            return false
+        }
+    }
+
     static func outcome(for info: ONVIFSourceInfo, among devices: [DiscoveredDevice]) -> Outcome {
         guard let uuid = info.deviceUUID, !uuid.isEmpty else { return .notFound }
         let matches = devices.filter { $0.endpointUUID == uuid }
