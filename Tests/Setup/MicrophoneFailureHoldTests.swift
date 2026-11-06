@@ -64,8 +64,18 @@ internal final class MicrophoneFailureHoldTests: XCTestCase {
             .setStatus(.needsApproval)
         )
         XCTAssertEqual(
-            MicrophoneRefresh.decide(helper: .requiresApproval, operationRunning: true, holdingFailure: false),
-            .keepStatus, "an operation's progress stays up"
+            MicrophoneRefresh.decide(helper: .enabled, operationRunning: false, holdingFailure: false), .checkDriver
         )
+    }
+
+    func testRefreshLeavesARunningOperationAlone() {
+        // Its progress stays up, and no check is sent: the helper would answer it only
+        // after the operation, which is then checked on its own.
+        for state: AudioDeviceInstaller.State in [.enabled, .notRegistered, .notFound, .requiresApproval] {
+            XCTAssertEqual(
+                MicrophoneRefresh.decide(helper: state, operationRunning: true, holdingFailure: false),
+                .keepStatus, "\(state)"
+            )
+        }
     }
 }

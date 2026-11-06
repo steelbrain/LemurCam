@@ -63,6 +63,10 @@ internal final class SetupCoordinator {
     /// Monotonic token so only the latest installed-version reply applies; drops
     /// stale async replies that would otherwise clobber freshly-changed state.
     @ObservationIgnored private var micRefreshToken = 0
+    /// The token of the installed-driver check still waiting for the helper's
+    /// answer, if any. Refreshes meanwhile wait for it instead of sending another,
+    /// so its time limit runs out even while the setup window keeps polling.
+    @ObservationIgnored private var micPendingCheck: Int?
     /// The install or removal the user last started, until a check shows how it
     /// ended: what a "Try Again" check redoes if that is still needed.
     @ObservationIgnored private var micLastOperation: MicrophoneDriverOperation?
@@ -84,8 +88,8 @@ internal final class SetupCoordinator {
     /// but never replies (e.g. it crashes mid-request), so `micStatus` can't stick.
     @ObservationIgnored private let micOperationTimeLimit: Duration
     /// Treat a version query the helper accepted but never answered as unreachable,
-    /// so a status waiting on it cannot spin forever. A reply that arrives later
-    /// still applies.
+    /// so a status waiting on it cannot spin forever. Counted from when the query was
+    /// sent; a reply that arrives later still applies until the next query is sent.
     @ObservationIgnored private let micCheckTimeLimit: Duration
 
     /// The camera is the core feature and is required; the microphone is optional.
@@ -310,6 +314,7 @@ extension SetupCoordinator {
         micLastOperation = kind
         micOperationFailure = nil
         micStatus = .installing
+        dropPendingDriverCheck()
         micInstallTimeout?.cancel()
         let timeLimit = micOperationTimeLimit
         micInstallTimeout = Task { [weak self] in
@@ -370,22 +375,40 @@ extension SetupCoordinator {
     }
 
     private func queryInstalledDriverVersion() {
+        // The check already on its way answers for this refresh too (its reply is
+        // applied against the state at that time). Sending another would push its
+        // time limit back, and with the setup window polling every 2.5 s, a helper
+        // that accepts a check but never answers would leave a spinner up for good.
+        guard micPendingCheck == nil else { return }
         micRefreshToken += 1
         let token = micRefreshToken
+        micPendingCheck = token
         micQueryTimeout?.cancel()
         let timeLimit = micCheckTimeLimit
         micQueryTimeout = Task { [weak self] in
             try? await Task.sleep(for: timeLimit)
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.micPendingCheck == token else { return }
+            self.micPendingCheck = nil
             self.applyDriverCheck(.unreachable, token: token)
         }
         audioInstaller.installedDriver { [weak self] check in
             Task { @MainActor in
                 guard let self else { return }
-                if token == self.micRefreshToken { self.micQueryTimeout?.cancel() }
+                if self.micPendingCheck == token {
+                    self.micPendingCheck = nil
+                    self.micQueryTimeout?.cancel()
+                }
                 self.applyDriverCheck(check, token: token)
             }
         }
+    }
+
+    /// Stop waiting for the check on its way, if any: an install or removal is
+    /// starting, and a check sent before it must not answer for the state after it.
+    private func dropPendingDriverCheck() {
+        micRefreshToken += 1
+        micPendingCheck = nil
+        micQueryTimeout?.cancel()
     }
 
     private func applyDriverCheck(_ check: InstalledDriverCheck, token: Int) {
