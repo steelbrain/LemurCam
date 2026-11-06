@@ -12,7 +12,7 @@ internal struct PreviewSettingsView: View {
             } else {
                 Text("No Preview")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.6))
                     .frame(height: 180)
                     .frame(maxWidth: .infinity)
                     .background(.black)

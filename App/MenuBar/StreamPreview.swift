@@ -53,7 +53,7 @@ internal struct StreamPreview: View {
         } else {
             Text("No Preview")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
