@@ -1,5 +1,17 @@
 import Foundation
 
+/// The network operations the ONVIF resolve performs. Tests replace them so the
+/// rediscovery decisions can be exercised without a multicast scan or a camera.
+internal struct ONVIFResolveEnvironment: Sendable {
+    var scan: @Sendable () async -> [DiscoveredDevice]
+    var makeClient: @Sendable (ONVIFSourceInfo, SourceCredentials?) -> ONVIFClient
+
+    static let live = Self(
+        scan: { await ONVIFDiscovery().scan() },
+        makeClient: { info, credentials in StreamCoordinator.makeONVIFClient(for: info, credentials: credentials) }
+    )
+}
+
 internal struct ONVIFResolveParams {
     let info: ONVIFSourceInfo
     let token: String
@@ -7,6 +19,7 @@ internal struct ONVIFResolveParams {
     let sourceID: UUID
     let sourceName: String
     weak var sourceManager: SourceManager?
+    var environment = ONVIFResolveEnvironment.live
 }
 
 extension StreamCoordinator {
@@ -31,7 +44,7 @@ extension StreamCoordinator {
         }
     }
 
-    static func makeONVIFClient(for info: ONVIFSourceInfo, credentials: SourceCredentials?) -> ONVIFClient {
+    nonisolated static func makeONVIFClient(for info: ONVIFSourceInfo, credentials: SourceCredentials?) -> ONVIFClient {
         ONVIFClient(
             host: info.host, port: info.port,
             username: credentials?.username, password: credentials?.password,
@@ -39,44 +52,55 @@ extension StreamCoordinator {
         )
     }
 
+    /// Asks the camera for the stream URI at its saved address. Only when that gets no
+    /// answer at all does it look for the camera with WS-Discovery, and it saves the
+    /// address the scan reports only when that address differs from the saved one.
+    /// See `ONVIFRediscovery`.
     static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> String? {
-        let client = makeONVIFClient(for: params.info, credentials: params.credentials)
+        let client = params.environment.makeClient(params.info, params.credentials)
         do {
             return try await client.getStreamURI(profileToken: params.token)
         } catch {
             try Task.checkCancellation()
-            Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error)")
+            Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error.localizedDescription)")
+            guard ONVIFRediscovery.shouldRediscover(after: error) else { return nil }
         }
 
         guard let uuid = params.info.deviceUUID, !uuid.isEmpty else { return nil }
 
         Log.rtsp.info("Scanning for device \(uuid) via WS-Discovery")
-        let devices = await ONVIFDiscovery().scan()
+        let devices = await params.environment.scan()
         try Task.checkCancellation()
 
-        guard let match = devices.first(where: { $0.endpointUUID == uuid }) else { return nil }
-        Log.rtsp.info("Found device at \(match.host):\(match.port)")
+        switch ONVIFRediscovery.outcome(for: params.info, among: devices) {
+        case .notFound:
+            Log.rtsp.info("Device \(uuid) did not answer the scan")
+            return nil
+        case .ambiguous:
+            Log.rtsp.warning("Several addresses claim device \(uuid); keeping the saved address")
+            return nil
+        case .unchanged:
+            Log.rtsp.info("Device \(uuid) still answers at the saved address")
+            return nil
+        case .moved(let moved):
+            Log.rtsp.info("Found device at \(moved.host):\(moved.port)")
+            return try await connect(movedTo: moved, params: params)
+        }
+    }
 
-        var updated = params.info
-        updated.host = match.host
-        updated.port = match.port
-        updated.useHTTPS = match.useHTTPS
-        await MainActor.run { [updated] in
-            guard let sourceManager = params.sourceManager else { return }
-            sourceManager.updateSource(
-                id: params.sourceID, name: params.sourceName,
-                sourceType: .onvif(updated), credentials: .keep
+    private static func connect(movedTo moved: ONVIFSourceInfo, params: ONVIFResolveParams) async throws -> String? {
+        await MainActor.run {
+            params.sourceManager?.updateONVIFAddress(
+                id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
             )
         }
-
-        let newClient = makeONVIFClient(for: updated, credentials: params.credentials)
+        let client = params.environment.makeClient(moved, params.credentials)
         do {
-            return try await newClient.getStreamURI(profileToken: params.token)
+            return try await client.getStreamURI(profileToken: params.token)
         } catch {
             try Task.checkCancellation()
-            Log.rtsp.error("ONVIF fetch failed at new address: \(error)")
+            Log.rtsp.error("ONVIF fetch failed at new address: \(error.localizedDescription)")
+            return nil
         }
-
-        return nil
     }
 }

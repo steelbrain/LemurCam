@@ -101,6 +101,23 @@ internal final class SourceManager {
         onSourceConfigChanged?()
     }
 
+    /// Records that an ONVIF camera now answers at a new address (found by
+    /// WS-Discovery). Only the address changes: name, profile and credentials are left
+    /// alone, nothing is written when the address is the same, and no config change is
+    /// signalled, because the resolve that found the address goes on to connect there.
+    /// `updatedAt` marks user edits and stays as it is.
+    func updateONVIFAddress(id: UUID, host: String, port: Int, useHTTPS: Bool) {
+        guard let index = sources.firstIndex(where: { $0.id == id }),
+              case .onvif(var info) = sources[index].sourceType,
+              info.host != host || info.port != port || info.useHTTPS != useHTTPS else { return }
+        info.host = host
+        info.port = port
+        info.useHTTPS = useHTTPS
+        sources[index].sourceType = .onvif(info)
+        persist()
+        Log.app.info("Camera '\(sources[index].name)' now answers at \(host):\(port)")
+    }
+
     private func apply(_ change: CredentialChange, for id: UUID, sourceName: String) {
         switch change {
         case .keep:
