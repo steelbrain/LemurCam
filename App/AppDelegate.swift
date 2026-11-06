@@ -20,6 +20,11 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var setupWindow: NSWindow?
     private var nudgeWindow: NSWindow?
+    /// The Settings window's selected pane; survives the window so a reopened
+    /// Settings can be routed to a pane before it appears.
+    private let settingsNavigation = SettingsNavigation()
+    /// Whether the menu bar popover is showing (between will-show and did-close).
+    private var isPopoverOpen = false
     var helpWindow: NSWindow?
     var aboutWindow: NSWindow?
     /// Set when the user clicks "Later" on the launch banner, so it doesn't reappear
@@ -73,6 +78,7 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         setupPopover()
+        settingsNavigation.onSelectionChange = { [weak self] in self?.updatePreviewDemand() }
 
         // The coordinator installs/activates the extension and reports real state;
         // discovery runs once the virtual camera device is live.
@@ -99,6 +105,8 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
             openSetupWindow(at: step)
         }
         hasFinishedLaunching = true
+        // A status change during launch was held back until now; evaluate it.
+        presentLaunchNudgeIfNeeded()
     }
 
     func applicationDidBecomeActive(_: Notification) {
@@ -141,7 +149,6 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            streamCoordinator?.previewStore.isPreviewEnabled = true
             let view = PopoverView(
                 setup: setupCoordinator,
                 sourceManager: sourceManager,
@@ -223,27 +230,28 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate {
     @objc func openSettings() {
-        presentSettings(initialTab: .status)
+        presentSettings()
     }
 
-    func presentSettings(initialTab: SettingsTab) {
-        // The launch banner is a backstop for users who never open a window; once
-        // Settings is up (it shows the same restart prompt), retire it.
-        nudgeWindow?.close()
+    /// Bring up Settings. `tab` switches to that pane even if Settings is already
+    /// open; nil keeps an open window's pane and starts a new one on Setup & Status.
+    func presentSettings(showing tab: SettingsTab? = nil) {
         if let window = settingsWindow {
+            if let tab { settingsNavigation.selection = tab }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            retireLaunchNudge()
             return
         }
 
-        streamCoordinator?.previewStore.isPreviewEnabled = true
+        settingsNavigation.selection = tab ?? .status
         let view = SettingsView(
             sourceManager: sourceManager,
             launchAtLoginManager: launchAtLoginManager,
             previewStore: streamCoordinator?.previewStore,
             setup: setupCoordinator,
             openSetup: { [weak self] in self?.openSetupWindow() },
-            initialTab: initialTab
+            navigation: settingsNavigation
         )
         // The sidebar `NavigationSplitView` needs a full-size content view. Without
         // it, macOS 27 draws the toolbar's scroll-edge glass over the top of each
@@ -260,9 +268,11 @@ extension AppDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         settingsWindow = window
+        updatePreviewDemand()
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        retireLaunchNudge()
     }
 
     /// Selector-compatible entry point (menu item, popover, settings). Opens the
@@ -272,12 +282,10 @@ extension AppDelegate {
     }
 
     func openSetupWindow(at step: SetupStep) {
-        // The launch banner is a backstop for users who never open a window; once the
-        // wizard is up (it shows the same restart prompt), retire it.
-        nudgeWindow?.close()
         if let window = setupWindow {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            retireLaunchNudge()
             return
         }
 
@@ -304,6 +312,25 @@ extension AppDelegate {
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        retireLaunchNudge()
+    }
+
+    /// The launch banner is a backstop for users who never open a window; once
+    /// Settings or the wizard is up (both show the same restart prompt), retire it.
+    /// Call only after the new window is front: closing the banner while it is the
+    /// only window makes `windowWillClose` drop the app to `.accessory`, which can
+    /// leave the window being presented hidden.
+    private func retireLaunchNudge() {
+        nudgeWindow?.close()
+    }
+
+    /// Keep the stream connected for the in-app preview only while something shows
+    /// it: the popover, or Settings on its Preview pane.
+    private func updatePreviewDemand() {
+        streamCoordinator?.previewStore.isPreviewEnabled = PreviewDemandDecision.isPreviewNeeded(
+            popoverOpen: isPopoverOpen,
+            settingsPane: settingsWindow == nil ? nil : settingsNavigation.selection
+        )
     }
 
     /// Present (or tear down) the proactive launch banner based on the current
@@ -317,17 +344,15 @@ extension AppDelegate {
             nudgeWindow?.close()
             return
         }
-        // Guided setup owns the upgrade flow: it auto-opens whenever any step is
-        // unfinished (including after a version change) and shows the same restart
-        // prompt. The banner is only a backstop for when setup is already complete,
-        // so don't compete with a pending or open wizard (nor the Settings window).
-        //
-        // The `launchStep() == nil` check is also load-bearing for launch ordering:
-        // `setupCoordinator.start()` can drive a status change (firing this) before
-        // `applicationDidFinishLaunching` opens the setup window, so at that instant
-        // `setupWindow` is still nil. Suppressing on a pending step keeps the banner
-        // from flashing ahead of the wizard. Don't weaken this to a window-only gate.
-        guard setupStateStore.launchStep() == nil, setupWindow == nil, settingsWindow == nil else {
+        // Don't compete with guided setup or Settings while either is open (both
+        // show the same restart prompt), nor flash ahead of the wizard during launch.
+        // A pending step the user put off with "Set Up Later" doesn't block it. See
+        // `LaunchNudgeGate`.
+        guard LaunchNudgeGate.canPresent(
+            hasFinishedLaunching: hasFinishedLaunching,
+            setupWindowOpen: setupWindow != nil,
+            settingsWindowOpen: settingsWindow != nil
+        ) else {
             return
         }
         if let hosting = nudgeWindow?.contentView as? NSHostingView<LaunchNudgeView> {
@@ -390,7 +415,7 @@ extension AppDelegate {
             // policy flip and left the Settings window hidden (the "Add Camera"
             // dead-end). Opening first keeps a window alive across the handoff, so
             // the activation policy never flips and Settings reliably comes forward.
-            if openCameras { presentSettings(initialTab: .cameras) }
+            if openCameras { presentSettings(showing: .cameras) }
             setupWindow?.performClose(nil)
         }
     }
@@ -409,6 +434,11 @@ extension AppDelegate {
 // MARK: - NSPopoverDelegate
 
 extension AppDelegate: NSPopoverDelegate {
+    func popoverWillShow(_: Notification) {
+        isPopoverOpen = true
+        updatePreviewDemand()
+    }
+
     func popoverDidShow(_: Notification) {
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
@@ -423,10 +453,8 @@ extension AppDelegate: NSPopoverDelegate {
             NSEvent.removeMonitor(monitor)
             globalClickMonitor = nil
         }
-        // Disable preview when popover closes (unless settings window is open)
-        if settingsWindow == nil {
-            streamCoordinator?.previewStore.isPreviewEnabled = false
-        }
+        isPopoverOpen = false
+        updatePreviewDemand()
     }
 }
 
@@ -437,10 +465,7 @@ extension AppDelegate: NSWindowDelegate {
         guard let window = notification.object as? NSWindow else { return }
         if window === settingsWindow {
             settingsWindow = nil
-            // Only disable preview if popover is also closed
-            if !popover.isShown {
-                streamCoordinator?.previewStore.isPreviewEnabled = false
-            }
+            updatePreviewDemand()
         } else if window === setupWindow {
             setupWindow = nil
         } else if window === nudgeWindow {

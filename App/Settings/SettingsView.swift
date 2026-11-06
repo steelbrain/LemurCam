@@ -11,23 +11,30 @@ internal struct SettingsView: View {
     var setup: SetupCoordinator
     /// Opens the dedicated guided setup window (owned by `AppDelegate`).
     var openSetup: (() -> Void)?
-    /// Pane to show on first appearance (e.g. jump straight to Cameras).
-    var initialTab: SettingsTab = .status
-
-    @State private var selection: SettingsTab?
+    /// The selected pane. `AppDelegate` owns it, so it can switch an open window to
+    /// a pane (e.g. Cameras) and start or stop preview demand with the Preview pane.
+    var navigation: SettingsNavigation
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsTab.allCases, id: \.self, selection: $selection) { tab in
+            List(SettingsTab.allCases, id: \.self, selection: selection) { tab in
                 Label(tab.title, systemImage: tab.symbol)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         } detail: {
-            detail(for: selection ?? initialTab)
+            detail(for: navigation.selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: Tuning.settingsWindowWidth, minHeight: Tuning.settingsWindowHeight)
-        .onAppear { if selection == nil { selection = initialTab } }
+    }
+
+    /// The sidebar can report no selection (Command-click on the selected row);
+    /// keep the current pane rather than leave the detail without one.
+    private var selection: Binding<SettingsTab?> {
+        Binding(
+            get: { navigation.selection },
+            set: { tab in if let tab { navigation.selection = tab } }
+        )
     }
 
     @ViewBuilder
@@ -44,6 +51,32 @@ internal struct SettingsView: View {
         case .logs:
             LogsSettingsView()
         }
+    }
+}
+
+/// The Settings window's selected pane, shared between `SettingsView` and
+/// `AppDelegate`.
+@MainActor @Observable
+internal final class SettingsNavigation {
+    var selection: SettingsTab = .status {
+        didSet {
+            if selection != oldValue { onSelectionChange?() }
+        }
+    }
+
+    /// Called after the selected pane changes.
+    @ObservationIgnored var onSelectionChange: (() -> Void)?
+}
+
+/// Pure rule for in-app preview demand. Only the menu bar popover and the Settings
+/// Preview pane show the live preview, so only they keep the stream connected for
+/// it; Settings on any other pane does not.
+internal enum PreviewDemandDecision {
+    /// - Parameters:
+    ///   - popoverOpen: the menu bar popover is showing.
+    ///   - settingsPane: the pane the Settings window shows, or nil when it's closed.
+    static func isPreviewNeeded(popoverOpen: Bool, settingsPane: SettingsTab?) -> Bool {
+        popoverOpen || settingsPane == .preview
     }
 }
 
