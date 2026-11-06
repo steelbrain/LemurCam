@@ -25,6 +25,10 @@ internal final class SourceManager {
     private(set) var activeSourceID: UUID?
     private(set) var connectionStatuses: [UUID: ConnectionStatus] = [:]
     private(set) var errorMessages: [UUID: String] = [:]
+    /// The sources whose error message is about not reaching the camera's host at all
+    /// (refused, no route, no answer), rather than an answer from the camera. Runtime
+    /// state only, never saved; it goes with the error message.
+    private(set) var unreachableSourceIDs: Set<UUID> = []
     /// Why camera changes are not being saved this session, or nil while saving
     /// works. Set by `load()`; shown in Settings → Cameras. Meanwhile adding, editing
     /// and removing cameras throws `SaveRefusedError`, and the active camera is not saved.
@@ -95,7 +99,7 @@ internal final class SourceManager {
         try checkChangesAllowed()
         sources.removeAll { $0.id == id }
         connectionStatuses[id] = nil
-        errorMessages[id] = nil
+        updateErrorMessage(for: id, message: nil)
         do {
             try keychain.delete(for: id)
         } catch {
@@ -225,8 +229,15 @@ internal final class SourceManager {
         connectionStatuses[sourceID] = status
     }
 
-    func updateErrorMessage(for sourceID: UUID, message: String?) {
+    /// `hostUnreachable`: the error is about not reaching the camera's host at all
+    /// (see `unreachableSourceIDs`).
+    func updateErrorMessage(for sourceID: UUID, message: String?, hostUnreachable: Bool = false) {
         errorMessages[sourceID] = message
+        if message != nil, hostUnreachable {
+            unreachableSourceIDs.insert(sourceID)
+        } else {
+            unreachableSourceIDs.remove(sourceID)
+        }
     }
 
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an

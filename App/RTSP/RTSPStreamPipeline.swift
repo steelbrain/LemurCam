@@ -43,7 +43,9 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         case connecting
         case streaming
         case disconnected
-        case error(String)
+        /// `hostUnreachable`: no connection to the camera's host could be made (see
+        /// `failureState(for:afterSetup:)`), as opposed to a camera that answered.
+        case error(String, hostUnreachable: Bool = false)
     }
 
     struct TimeoutError: LocalizedError {
@@ -158,9 +160,11 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
     private func runStream(url: String, credentials: Credentials?, connection: StreamConnectionID) async {
         let session = RTSPClientSession(url: url, credentials: credentials)
+        var setUp = false
 
         do {
             let description = try await connectWithTimeout(session: session)
+            setUp = true
             guard !Task.isCancelled else {
                 await session.stop()
                 return
@@ -194,7 +198,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
             }
         } catch {
             if !Task.isCancelled {
-                setState(.error(error.localizedDescription), connection: connection)
+                setState(Self.failureState(for: error, afterSetup: setUp), connection: connection)
                 Log.rtsp.error("Stream error: \(error)")
             }
             await session.stop()

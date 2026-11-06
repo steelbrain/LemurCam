@@ -179,8 +179,9 @@ internal struct PopoverView: View {
 
     // MARK: - Local Network warning
 
-    /// Heuristic: the active LAN camera errored, which on macOS is most often a
-    /// denied/never-granted Local Network permission (there's no API to query it).
+    /// Heuristic: the active LAN camera's host couldn't be reached, which on macOS is
+    /// most often a denied/never-granted Local Network permission (there's no API to
+    /// query it).
     private func localNetworkLikelyBlocked(_ sourceManager: SourceManager) -> Bool {
         guard let activeID = sourceManager.activeSourceID,
               let source = sourceManager.sources.first(where: { $0.id == activeID }) else {
@@ -189,7 +190,7 @@ internal struct PopoverView: View {
         let status = sourceManager.connectionStatuses[activeID] ?? .pending
         return LocalNetworkGuidance.isLikelyBlocked(
             host: LocalNetworkGuidance.host(for: source), status: status,
-            errorMessage: sourceManager.errorMessages[activeID]
+            hostUnreachable: sourceManager.unreachableSourceIDs.contains(activeID)
         )
     }
 

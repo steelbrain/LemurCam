@@ -141,11 +141,33 @@ internal final class SourceManagerCallbackTests: XCTestCase {
         try addRTSP("a")
         let id = try XCTUnwrap(sourceManager.sources.first).id
         sourceManager.updateConnectionStatus(for: id, status: .connected)
-        sourceManager.updateErrorMessage(for: id, message: "x")
+        sourceManager.updateErrorMessage(for: id, message: "x", hostUnreachable: true)
 
         try sourceManager.removeSource(id: id)
 
         XCTAssertNil(sourceManager.connectionStatuses[id])
         XCTAssertNil(sourceManager.errorMessages[id])
+        XCTAssertFalse(sourceManager.unreachableSourceIDs.contains(id))
+    }
+
+    /// The unreachable mark (for the Local Network hint) belongs to the error message
+    /// it came with: any other message, or none, clears it.
+    func testTheUnreachableMarkGoesWithItsErrorMessage() throws {
+        let sourceManager = try XCTUnwrap(manager)
+        try addRTSP("a")
+        let id = try XCTUnwrap(sourceManager.sources.first).id
+
+        sourceManager.updateErrorMessage(for: id, message: "No route to host", hostUnreachable: true)
+        XCTAssertEqual(sourceManager.unreachableSourceIDs, [id])
+
+        sourceManager.updateErrorMessage(for: id, message: "Authentication failed")
+        XCTAssertEqual(sourceManager.unreachableSourceIDs, [])
+
+        sourceManager.updateErrorMessage(for: id, message: "Timeout", hostUnreachable: true)
+        sourceManager.updateErrorMessage(for: id, message: nil)
+        XCTAssertEqual(sourceManager.unreachableSourceIDs, [])
+
+        sourceManager.updateErrorMessage(for: id, message: nil, hostUnreachable: true)
+        XCTAssertEqual(sourceManager.unreachableSourceIDs, [], "no mark without a message")
     }
 }

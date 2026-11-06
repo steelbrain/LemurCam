@@ -369,7 +369,7 @@ private extension StreamCoordinator {
             // Retry like any failed connect, so a camera that was offline when we
             // tried is picked up once it is back instead of staying in error.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
-            sourceManager.updateErrorMessage(for: sourceID, message: Self.onvifResolveFailureMessage(for: error))
+            sourceManager.updateErrorMessage(for: sourceID, onvifResolveFailure: error)
             scheduleRetry()
         }
     }
@@ -403,9 +403,9 @@ private extension StreamCoordinator {
             // Connected is not yet working: the backoff resets on the first decoded frame.
             firstDecodedFrame.arm()
             fallbackGenerator.stop()
-        case .error(let msg):
+        case let .error(msg, hostUnreachable):
             connectionStatus = .error
-            sourceManager.updateErrorMessage(for: sourceID, message: msg)
+            sourceManager.updateErrorMessage(for: sourceID, message: msg, hostUnreachable: hostUnreachable)
             previewStore.clear()
             fallbackGenerator.start(message: "Connection error in LemurCam")
         }
