@@ -23,4 +23,11 @@ internal final class JitterBufferTuningTests: XCTestCase {
     func testPrimingIsBelowCapacity() {
         XCTAssertLessThan(Tuning.jitterBufferPrimingThreshold, Tuning.jitterBufferCapacity)
     }
+
+    /// The catch-up window decides whether a cushion was needed, so it must be far
+    /// longer than the cushion itself, or it would trim frames a stall is about to use.
+    func testCatchUpWindowIsMuchLongerThanTheSmoothingWindow() {
+        let smoothingSeconds = Double(Tuning.jitterBufferCapacity) / Tuning.jitterBufferDrainFPS
+        XCTAssertGreaterThanOrEqual(Tuning.jitterBufferCatchUpWindow, smoothingSeconds * 10)
+    }
 }

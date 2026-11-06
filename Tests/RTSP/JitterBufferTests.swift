@@ -264,4 +264,37 @@ internal final class JitterBufferTests: XCTestCase {
         XCTAssertTrue(secondRound.wait(seconds: 2.0))
         buffer.reset()
     }
+
+    /// A burst that leaves the buffer deeper than the priming level for a whole
+    /// catch-up window is cut back: the oldest frames above the priming level are
+    /// dropped, so latency does not stay raised. Before the fix the buffer drained
+    /// one frame per tick and never skipped, so here every enqueued frame would be
+    /// delivered in order. A 3-tick window keeps this fast; the synchronous burst
+    /// lands before the first tick, as in `testCapacityEvictsOldestFrames`.
+    func testDropsFramesAboveThePrimingLevelAfterACatchUpWindow() throws {
+        let window = 3
+        let capacity = Tuning.jitterBufferCapacity
+        let priming = Tuning.jitterBufferPrimingThreshold
+        let toObserve = window + 2
+        let recorder = DrainRecorder()
+        let drained = DrainSignal()
+        let buffer = JitterBuffer(catchUpWindowTicks: window) { frame in
+            recorder.append(frame)
+            if recorder.count == toObserve { drained.signal() }
+        }
+
+        let enqueued = try (0..<capacity).map { _ in try makePixelBuffer() }
+        for frame in enqueued { buffer.enqueue(frame) }
+
+        XCTAssertTrue(drained.wait(seconds: 3.0))
+        buffer.reset()
+
+        let delivered = Array(recorder.snapshot().prefix(toObserve))
+        // The window's lowest depth is what was left after its last tick.
+        let lowestDepth = capacity - window
+        let dropped = lowestDepth - priming
+        XCTAssertGreaterThan(dropped, 0, "the burst must exceed the priming level for this test")
+        let expected = Array(enqueued[0..<window]) + Array(enqueued[(window + dropped)...].prefix(2))
+        XCTAssertEqual(delivered, expected.map(frameIdentity), "the frames above the priming level were not dropped")
+    }
 }

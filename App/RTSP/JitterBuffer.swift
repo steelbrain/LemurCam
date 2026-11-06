@@ -13,16 +13,26 @@ internal final class JitterBuffer: Sendable {
         var lastFrame: SendablePixelBuffer?
         var drainTimer: DispatchSourceTimer?
         var isPrimed = false
+        var depthTracker: JitterDepthTracker
     }
 
-    private let state = OSAllocatedUnfairLock<State>(initialState: State())
+    private let state: OSAllocatedUnfairLock<State>
 
     private let drainQueue = DispatchQueue(
         label: "com.steelbrain.LemurCam.jitterDrain", qos: .userInteractive
     )
     private let onDrain: @Sendable (CVPixelBuffer) -> Void
 
-    init(onDrain: @escaping @Sendable (CVPixelBuffer) -> Void) {
+    /// - Parameter catchUpWindowTicks: drain ticks per catch-up window (see
+    ///   `JitterDepthTracker`); tests pass a short one.
+    init(
+        catchUpWindowTicks: Int = Int(Tuning.jitterBufferCatchUpWindow * Tuning.jitterBufferDrainFPS),
+        onDrain: @escaping @Sendable (CVPixelBuffer) -> Void
+    ) {
+        let tracker = JitterDepthTracker(
+            windowTicks: catchUpWindowTicks, targetDepth: Tuning.jitterBufferPrimingThreshold
+        )
+        self.state = OSAllocatedUnfairLock(initialState: State(depthTracker: tracker))
         self.onDrain = onDrain
     }
 
@@ -63,6 +73,7 @@ internal final class JitterBuffer: Sendable {
             $0.buffer.removeAll()
             $0.lastFrame = nil
             $0.isPrimed = false
+            $0.depthTracker.reset()
         }
     }
 
@@ -83,17 +94,60 @@ internal final class JitterBuffer: Sendable {
 
     private func drain() {
         let frame: SendablePixelBuffer? = state.withLock {
-            if let next = $0.buffer.first {
+            let next = $0.buffer.first
+            if next != nil {
                 $0.buffer.removeFirst()
+            }
+            // Catch up: drop the oldest frames a whole window showed were never needed.
+            let excess = $0.depthTracker.recordDrain(depth: $0.buffer.count)
+            if excess > 0 {
+                $0.buffer.removeFirst(excess)
+            }
+            if let next {
                 $0.lastFrame = next
                 return next
-            } else {
-                return $0.lastFrame
             }
+            return $0.lastFrame
         }
 
         if let frame {
             frame.withValue(onDrain)
         }
+    }
+}
+
+/// Decides when the jitter buffer can drop frames it does not need. The buffer drains
+/// one frame per tick while a camera at the drain rate delivers one per tick, so after
+/// a burst (a network hiccup, a long stall) it stays as deep as the burst left it and
+/// the extra latency, up to the full capacity, never goes away. The tracker records
+/// the lowest depth over a window of drain ticks. If that lowest depth stayed above
+/// `targetDepth`, the frames above it were never needed to ride out a stall, so the
+/// excess is dropped. A window in which the depth fell to the target or below (a
+/// keyframe stall drained it) drops nothing.
+internal struct JitterDepthTracker: Sendable {
+    let windowTicks: Int
+    let targetDepth: Int
+    private var ticks = 0
+    private var lowestDepth = Int.max
+
+    init(windowTicks: Int, targetDepth: Int) {
+        self.windowTicks = max(1, windowTicks)
+        self.targetDepth = targetDepth
+    }
+
+    /// Record the depth left after one drain tick. Returns how many of the oldest
+    /// frames to drop now: non-zero only at the end of a window.
+    mutating func recordDrain(depth: Int) -> Int {
+        lowestDepth = min(lowestDepth, depth)
+        ticks += 1
+        guard ticks >= windowTicks else { return 0 }
+        let excess = max(0, lowestDepth - targetDepth)
+        reset()
+        return excess
+    }
+
+    mutating func reset() {
+        ticks = 0
+        lowestDepth = .max
     }
 }

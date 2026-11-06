@@ -88,6 +88,14 @@ internal enum Tuning {
     /// Frames to accumulate before starting the drain timer (~200ms at 30fps).
     static let jitterBufferPrimingThreshold: Int = 6
 
+    /// Window (seconds) over which the jitter buffer watches its lowest depth. If the
+    /// depth never fell to the priming level within a window, the frames above it
+    /// were never needed and the oldest are dropped down to that level, so a burst
+    /// doesn't raise latency for good. A window must span at least one keyframe
+    /// interval: a stall that recurs less often looks like unneeded cushion and costs
+    /// one stutter per window.
+    static let jitterBufferCatchUpWindow: TimeInterval = 10
+
     /// Timer leeway for the jitter buffer drain timer (milliseconds).
     static let jitterBufferTimerLeewayMs: Int = 2
 
