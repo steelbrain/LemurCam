@@ -90,16 +90,15 @@ internal final class SourceManager {
 
     /// Replaces a source's name and type and applies `credentials` to its stored
     /// credentials. Credentials embedded in an RTSP URL are moved to the Keychain and
-    /// take precedence over `credentials`, even a `.set` of other ones: the edit form
-    /// shows the saved URL without credentials and fills the fields with the saved
-    /// ones, so a login in the URL was just typed or pasted and is the newest input.
-    /// Throws `CredentialSaveError`, changing nothing, when new credentials can't be
-    /// stored.
+    /// take precedence over `credentials`, even a `.set` of other ones, for the parts
+    /// the URL holds (see `CredentialChange.merging`). Throws `CredentialSaveError`,
+    /// changing nothing, when new credentials can't be stored, or when the URL holds
+    /// only part of a login and the stored part it needs can't be read.
     func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) throws {
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
-        let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
-        let change = urlCredentials.map(CredentialChange.set) ?? credentials
+        let (cleanType, _) = Self.sanitizingCredentials(from: sourceType)
+        let change = try credentialChange(credentials, mergingLoginFrom: sourceType, for: id, sourceName: name)
         try apply(change, for: id, sourceName: name)
 
         var updated = sources[index]
@@ -290,5 +289,23 @@ internal final class SourceManager {
 
     private func persistActiveSource() {
         UserDefaults.standard.set(activeSourceID?.uuidString, forKey: LemurCamConfig.activeSourceKey)
+    }
+}
+
+private extension SourceManager {
+    /// `change` with the login an edited RTSP URL holds. A stored part that can't be
+    /// read throws `CredentialSaveError`: saving without it would replace it with an
+    /// empty one.
+    func credentialChange(
+        _ change: CredentialChange, mergingLoginFrom sourceType: SourceType, for id: UUID, sourceName: String
+    ) throws -> CredentialChange {
+        guard case .rtsp(let info) = sourceType else { return change }
+        let login = SourceCredentials.extractingLoginFromRTSPURL(info.url).login
+        do {
+            return try change.merging(login) { try keychain.retrieve(for: id) }
+        } catch {
+            Log.app.error("Not saving '\(sourceName)': its stored credentials could not be read (\(error))")
+            throw CredentialSaveError()
+        }
     }
 }

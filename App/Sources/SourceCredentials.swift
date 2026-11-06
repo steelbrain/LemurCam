@@ -19,21 +19,25 @@ internal extension SourceCredentials {
     static func extractingFromRTSPURL(
         _ urlString: String
     ) -> (url: String, credentials: SourceCredentials?) {
+        let (cleaned, login) = extractingLoginFromRTSPURL(urlString)
+        return (cleaned, login?.credentials)
+    }
+
+    /// `extractingFromRTSPURL`, telling which parts of the login the URL holds: a user
+    /// name only when it is not empty, a password whenever the userinfo has one, even
+    /// an empty one (`admin:@cam`, but not `admin@cam`). Nil when both parts are empty.
+    static func extractingLoginFromRTSPURL(_ urlString: String) -> (url: String, login: URLLogin?) {
         if let split = AmbiguousUserInfo(urlString) {
-            return (split.urlWithout, split.credentials)
+            return (split.urlWithout, split.login)
         }
         guard var components = URLComponents(string: urlString),
               components.user != nil || components.password != nil else {
             return (urlString, nil)
         }
-        let user = components.user ?? ""
-        let password = components.password ?? ""
+        let login = URLLogin(username: components.user ?? "", password: components.password)
         components.user = nil
         components.password = nil
-        let cleaned = components.string ?? urlString
-        let credentials = user.isEmpty && password.isEmpty
-            ? nil : SourceCredentials(username: user, password: password)
-        return (cleaned, credentials)
+        return (components.string ?? urlString, login)
     }
 
     /// `urlString` without any userinfo, for display and for URLs whose embedded
@@ -48,6 +52,26 @@ internal extension SourceCredentials {
     /// rejects it with an explanation.
     static func hasAmbiguousUserInfo(_ urlString: String) -> Bool {
         AmbiguousUserInfo(urlString) != nil
+    }
+}
+
+/// The parts of a login an RTSP URL's userinfo holds (see
+/// `SourceCredentials.extractingLoginFromRTSPURL`). A missing part is nil.
+internal struct URLLogin: Equatable {
+    let username: String?
+    let password: String?
+
+    /// Nil when the URL holds no part of a login: an empty user name and no password,
+    /// or an empty one.
+    init?(username: String, password: String?) {
+        guard !username.isEmpty || !(password ?? "").isEmpty else { return nil }
+        self.username = username.isEmpty ? nil : username
+        self.password = password
+    }
+
+    /// The login as credentials, with a missing part empty.
+    var credentials: SourceCredentials {
+        SourceCredentials(username: username ?? "", password: password ?? "")
     }
 }
 
@@ -70,6 +94,28 @@ internal enum CredentialChange: Equatable {
         }
         return storedCredentialsUnreadable ? .keep : .remove
     }
+
+    /// This change with the login an edited RTSP URL holds. The edit form shows the
+    /// saved URL without credentials and fills its fields with the saved ones, so a
+    /// login in the URL was just typed or pasted and is the newest input. But it is
+    /// often only part of one: pasting `rtsp://admin@192.168.1.6/s` to change the
+    /// address replaced the saved password with an empty one. So the URL wins only for
+    /// the parts it holds; a part it lacks is the form's, or, when the form keeps what
+    /// is stored (`.keep`), the stored one. `stored` is called only in that case.
+    func merging(_ login: URLLogin?, stored: () throws -> SourceCredentials?) rethrows -> Self {
+        guard let login else { return self }
+        guard login.username == nil || login.password == nil else { return .set(login.credentials) }
+        let other: SourceCredentials?
+        switch self {
+        case .set(let entered): other = entered
+        case .keep: other = try stored()
+        case .remove: other = nil
+        }
+        return .set(SourceCredentials(
+            username: login.username ?? other?.username ?? "",
+            password: login.password ?? other?.password ?? ""
+        ))
+    }
 }
 
 /// The userinfo of a URL whose `user:password@` `URLComponents` can't read: everything
@@ -81,7 +127,7 @@ internal enum CredentialChange: Equatable {
 /// does, so a combining mark after a delimiter can't hide it.
 private struct AmbiguousUserInfo {
     let urlWithout: String
-    let credentials: SourceCredentials?
+    let login: URLLogin?
 
     init?(_ urlString: String) {
         let scalars = urlString.unicodeScalars
@@ -101,18 +147,15 @@ private struct AmbiguousUserInfo {
         let userInfo = rest[..<lastAt]
         urlWithout = String(scalars[..<separator.upperBound]) + String(rest[rest.index(after: lastAt)...])
         let user: Substring.UnicodeScalarView
-        let password: Substring.UnicodeScalarView
+        let password: Substring.UnicodeScalarView?
         if let colon = userInfo.firstIndex(of: ":") {
             user = userInfo[..<colon]
             password = userInfo[userInfo.index(after: colon)...]
         } else {
             user = userInfo
-            password = Substring.UnicodeScalarView()
+            password = nil
         }
-        let username = Self.decoded(user)
-        let secret = Self.decoded(password)
-        credentials = username.isEmpty && secret.isEmpty
-            ? nil : SourceCredentials(username: username, password: secret)
+        login = URLLogin(username: Self.decoded(user), password: password.map(Self.decoded))
     }
 
     /// Percent-decoded, or as written when it is not valid percent-encoding (a raw `%`).
