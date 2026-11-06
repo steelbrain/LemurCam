@@ -56,8 +56,9 @@ import {
      timers instead of real network and install work.
    - Open Guided Setup… scrolls to the setup window's recreation. Buttons that
      open sheets (add or discover a camera) and Re-check Now do nothing here.
-   - Resolution and Frame Rate only change the menus here; when and how the app
-     applies them is not shown.
+   - Resolution and Frame Rate only change their menus here. The caption under
+     them is GeneralSettingsView.formatCaption, which says what they do in the
+     app.
    - The About section leaves out the "Version …" line so the site never shows
      a stale version.
    - On narrow screens the sidebar is drawn as a row above the pane. */
@@ -510,6 +511,12 @@ function GeneralPane({
             onChange={(f) => onChange({ ...settings, frameRate: f })}
           />
         </FormRow>
+        {/* GeneralSettingsView.formatCaption: .caption, .secondary */}
+        <p className="py-2 text-[10px] leading-snug text-mac-secondary">
+          The LemurCam camera uses this format unless an app picks its own. A change here applies
+          right away, or once no app is using the camera. A format an app picks stays until the next
+          change.
+        </p>
       </FormSection>
     </div>
   );
