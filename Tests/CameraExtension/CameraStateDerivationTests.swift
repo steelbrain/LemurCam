@@ -172,6 +172,58 @@ internal final class CameraStateDerivationTests: XCTestCase {
         )
     }
 
+    // MARK: - Poll-timeout gate
+
+    func testPollTimeoutResolvesOnlyWhileInstallingAndIdle() {
+        var gate = CameraStateDerivation.PollTimeoutGate()
+        XCTAssertTrue(gate.pollTimedOut(currentStatus: .installing, isBusy: false))
+        XCTAssertFalse(gate.isDeferred)
+
+        for status: CameraExtensionStatus in [.ready, .awaitingApproval, .needsAppRestart, .needsReboot, .disabled] {
+            var other = CameraStateDerivation.PollTimeoutGate()
+            XCTAssertFalse(other.pollTimedOut(currentStatus: status, isBusy: false), "\(status)")
+            XCTAssertFalse(other.isDeferred, "\(status)")
+        }
+    }
+
+    func testPollTimeoutDuringAnInFlightRequestIsDeferred() {
+        // B8: an activation slower than the poll budget used to show a false restart
+        // prompt and record the restart marker (a reboot prompt on the next launch).
+        var gate = CameraStateDerivation.PollTimeoutGate()
+        XCTAssertFalse(gate.pollTimedOut(currentStatus: .installing, isBusy: true))
+        XCTAssertTrue(gate.isDeferred)
+    }
+
+    func testDeferredTimeoutRestartsThePollOnceTheRequestLandsStillInstalling() {
+        var gate = CameraStateDerivation.PollTimeoutGate()
+        _ = gate.pollTimedOut(currentStatus: .installing, isBusy: true)
+
+        XCTAssertFalse(gate.stateSettled(currentStatus: .installing, isBusy: true), "request still in flight")
+        XCTAssertTrue(gate.isDeferred)
+
+        XCTAssertTrue(gate.stateSettled(currentStatus: .installing, isBusy: false))
+        XCTAssertFalse(gate.isDeferred)
+        XCTAssertFalse(gate.stateSettled(currentStatus: .installing, isBusy: false), "re-armed only once")
+    }
+
+    func testDeferredTimeoutIsDroppedWhenTheRequestResolvesTheStatus() {
+        var gate = CameraStateDerivation.PollTimeoutGate()
+        _ = gate.pollTimedOut(currentStatus: .installing, isBusy: true)
+        XCTAssertFalse(gate.stateSettled(currentStatus: .ready, isBusy: false))
+        XCTAssertFalse(gate.isDeferred)
+
+        var changed = CameraStateDerivation.PollTimeoutGate()
+        _ = changed.pollTimedOut(currentStatus: .installing, isBusy: true)
+        changed.statusChanged()
+        XCTAssertFalse(changed.isDeferred)
+        XCTAssertFalse(changed.stateSettled(currentStatus: .installing, isBusy: false))
+    }
+
+    func testSettlingWithoutADeferredTimeoutDoesNothing() {
+        var gate = CameraStateDerivation.PollTimeoutGate()
+        XCTAssertFalse(gate.stateSettled(currentStatus: .installing, isBusy: false))
+    }
+
     func testUnknownRunningVersionResolvesReadyBehindLiveness() {
         // Pre-handshake extension (never stamps → .unknown): don't false-alarm —
         // once the device is live, ready.

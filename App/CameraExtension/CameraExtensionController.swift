@@ -49,14 +49,20 @@ internal final class CameraExtensionController: NSObject {
             guard status != oldValue else { return }
             let transition = "\(String(describing: oldValue)) → \(String(describing: self.status))"
             Log.app.info("Camera extension status: \(transition)")
+            pollTimeoutGate.statusChanged()
             onStatusChange?(status)
         }
     }
 
-    /// Called on the main thread whenever `status` changes. Owners that capture
+    /// Called on the main thread whenever `status` changes, and once with an
+    /// unchanged `.installing` to restart the liveness poll after a poll timeout
+    /// that arrived mid-request (see `PollTimeoutGate`). Owners that capture
     /// `self` in this closure must use `[weak self]` to avoid a retain cycle
     /// (owner → controller → closure → owner).
     var onStatusChange: ((CameraExtensionStatus) -> Void)?
+
+    /// Holds a liveness-poll timeout back while a request is in flight.
+    private var pollTimeoutGate = CameraStateDerivation.PollTimeoutGate()
 
     /// The in-flight activation request, if any. Tracked by reference so callbacks
     /// can tell an activation result apart from a properties-query result (both
@@ -218,8 +224,14 @@ internal final class CameraExtensionController: NSObject {
     /// that already happened and the device is *still* absent, escalate to a reboot
     /// (mirrors `escalateIfStuck`). Never fakes `.ready` — bug reports showed the
     /// device can be genuinely absent for all apps, not just this process.
+    /// Deferred while an activation/deactivation is still in flight (`PollTimeoutGate`).
     func resolvePollTimeout() {
-        guard status == .installing else { return }
+        guard pollTimeoutGate.pollTimedOut(currentStatus: status, isBusy: isBusy) else {
+            if pollTimeoutGate.isDeferred {
+                Log.app.info("Camera poll budget ran out while a request is in flight; waiting for it to land")
+            }
+            return
+        }
         switch CameraStateDerivation.resolvePollTimeout(
             restartAlreadyTried: restartMarker.wasRestartAlreadyTried(forBundled: bundledExtensionVersion)
         ) {
@@ -242,6 +254,17 @@ internal final class CameraExtensionController: NSObject {
             repairReactivationPending = false
             refreshStatus()
         }
+        rearmDeferredPollIfSettled()
+    }
+
+    /// A poll timeout was deferred because a request was in flight, and the state
+    /// has now settled with the status still `.installing`. That unchanged status
+    /// fires no change callback, so the coordinator's poll (already over) would
+    /// never run again; announce `.installing` once more so it starts a fresh one.
+    private func rearmDeferredPollIfSettled() {
+        guard pollTimeoutGate.stateSettled(currentStatus: status, isBusy: isBusy) else { return }
+        Log.app.info("Camera request landed while still installing; restarting the liveness poll")
+        onStatusChange?(status)
     }
 
     private static func readBundledExtensionVersion() -> String? {
@@ -277,6 +300,7 @@ internal final class CameraExtensionController: NSObject {
         case .keepCurrent:
             break
         }
+        rearmDeferredPollIfSettled()
     }
 
     private static func message(for error: NSError) -> String {

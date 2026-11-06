@@ -78,6 +78,45 @@ internal enum CameraStateDerivation {
         restartAlreadyTried ? .escalateReboot : .promptRestart
     }
 
+    /// Decides whether the setup coordinator's liveness-poll timeout may act, and
+    /// re-arms the poll when it had to wait. While one of our own activation or
+    /// deactivation requests is in flight, "installing" is accurate, not stuck (an
+    /// activation can take longer than the ~11 s poll budget), so a timeout then
+    /// must not prompt an app restart or record the restart marker, which would
+    /// escalate to a reboot prompt on the next launch. It is deferred instead, and
+    /// once the request has landed with the status still `.installing` (unchanged,
+    /// so no status-change callback restarted the poll) a fresh poll is started.
+    struct PollTimeoutGate: Equatable {
+        private(set) var isDeferred = false
+
+        /// The poll budget ran out. Returns true when the timeout should be
+        /// resolved now (prompt restart or escalate); false when it doesn't apply
+        /// or was deferred until the in-flight request lands.
+        mutating func pollTimedOut(currentStatus: CameraExtensionStatus, isBusy: Bool) -> Bool {
+            guard currentStatus == .installing else { return false }
+            guard !isBusy else {
+                isDeferred = true
+                return false
+            }
+            isDeferred = false
+            return true
+        }
+
+        /// A request outcome or properties reply was applied. Returns true when the
+        /// caller should restart the liveness poll for a deferred timeout.
+        mutating func stateSettled(currentStatus: CameraExtensionStatus, isBusy: Bool) -> Bool {
+            guard isDeferred, !isBusy else { return false }
+            isDeferred = false
+            return currentStatus == .installing
+        }
+
+        /// The status changed: any status change starts or cancels the poll itself,
+        /// so a deferred timeout no longer needs re-arming.
+        mutating func statusChanged() {
+            isDeferred = false
+        }
+    }
+
     /// Map liveness + the (already-resolved) version handshake to a status outcome.
     /// The caller computes `upgradeState` from `ExtensionUpgradeDecision.evaluate`
     /// + `escalateIfStuck` (both tested separately), so the version inputs stay
