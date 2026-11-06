@@ -126,6 +126,18 @@ internal enum Tuning {
     /// Minimum buffers required before the sink stream starts.
     static let sinkBuffersForStartup = 1
 
+    // MARK: - Extension Formats
+
+    /// How far (as a fraction of the duration) a frame duration a client sets may be
+    /// from a valid one and still count as it: 1/29.97 s is 30 fps.
+    static let frameDurationMatchTolerance = 0.02
+
+    /// How early (as a fraction of the frame duration) the extension still sends a
+    /// frame. A camera at the active rate delivers with some jitter; without this
+    /// slack, every frame that came a little early would be dropped and a 30 fps
+    /// camera at 30 fps would come out near 15.
+    static let framePacingTolerance = 0.25
+
     // MARK: - Settings Window
 
     /// Settings window size. Wider than a single pane to fit the sidebar layout.

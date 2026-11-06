@@ -89,11 +89,20 @@ internal enum LemurCamConfig {
         sharedDefaults?.string(forKey: runningExtensionVersionKey)
     }
 
+    /// The resolution and frame rate the virtual camera uses until the user picks
+    /// others. The camera extension starts in this format; the app then sets the
+    /// stored one (see `SinkStreamFormatWriter`).
+    static let defaultResolution: Resolution = .hd1080
+    static let defaultFrameRate: FrameRate = .fps60
+    static let defaultFormat = StreamFormatSelection(resolution: defaultResolution, frameRate: defaultFrameRate)
+
+    /// The user's Resolution and Frame Rate settings. Readable only in the app: the
+    /// camera extension runs as another user, whose app-group defaults are its own.
     static var storedResolution: Resolution {
         get {
             guard let raw = sharedDefaults?.string(forKey: resolutionKey),
                   let value = Resolution(rawValue: raw) else {
-                return .hd1080
+                return defaultResolution
             }
             return value
         }
@@ -107,7 +116,7 @@ internal enum LemurCamConfig {
             guard let raw = sharedDefaults?.integer(forKey: frameRateKey),
                   raw != 0,
                   let value = FrameRate(rawValue: raw) else {
-                return .fps60
+                return defaultFrameRate
             }
             return value
         }
@@ -116,8 +125,8 @@ internal enum LemurCamConfig {
         }
     }
 
-    // Backward-compatible computed property
-    static var frameRate: Int {
-        storedFrameRate.rawValue
+    /// The stored settings as one format.
+    static var storedFormat: StreamFormatSelection {
+        StreamFormatSelection(resolution: storedResolution, frameRate: storedFrameRate)
     }
 }

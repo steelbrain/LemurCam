@@ -4,6 +4,13 @@ import CoreText
 import CoreVideo
 
 internal enum PlaceholderRenderer {
+    /// The font size that keeps text `base` points tall at 1080 lines the same
+    /// share of a frame `height` lines tall, so a placeholder looks alike at every
+    /// resolution the camera offers.
+    static func fontSize(_ base: CGFloat, forHeight height: Int) -> CGFloat {
+        base * CGFloat(max(height, 1)) / 1080.0
+    }
+
     static func render(
         text: String,
         width: Int,

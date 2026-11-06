@@ -1,6 +1,9 @@
 import CoreMediaIO
 import Foundation
 
+/// The stream other apps capture from. It offers every resolution at every frame
+/// rate (`ExtensionStreamFormats`); an app that picks a format or frame rate gets
+/// it at once, and frames are scaled and paced to it (`ExtensionDeviceRuntime`).
 internal class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
 
     private(set) var stream: CMIOExtensionStream?
@@ -9,33 +12,18 @@ internal class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
 
     private let _formats: [CMIOExtensionStreamFormat]
 
-    init(localizedName: String, streamID: UUID, streamFormat: CMIOExtensionStreamFormat, device: CMIOExtensionDevice) {
+    private let runtime: ExtensionDeviceRuntime
 
+    init(
+        localizedName: String,
+        streamID: UUID,
+        formats: [CMIOExtensionStreamFormat],
+        device: CMIOExtensionDevice,
+        runtime: ExtensionDeviceRuntime
+    ) {
         self.device = device
-
-        // Advertise multiple resolutions so consuming apps can find a compatible format
-        let frameRate = Int32(LemurCamConfig.frameRate)
-        var allFormats: [CMIOExtensionStreamFormat] = []
-        for resolution in LemurCamConfig.Resolution.allCases {
-            var desc: CMFormatDescription?
-            CMVideoFormatDescriptionCreate(
-                allocator: kCFAllocatorDefault,
-                codecType: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-                width: resolution.width,
-                height: resolution.height,
-                extensions: nil,
-                formatDescriptionOut: &desc
-            )
-            if let desc {
-                allFormats.append(CMIOExtensionStreamFormat(
-                    formatDescription: desc,
-                    maxFrameDuration: CMTime(value: 1, timescale: frameRate),
-                    minFrameDuration: CMTime(value: 1, timescale: frameRate),
-                    validFrameDurations: nil
-                ))
-            }
-        }
-        _formats = allFormats.isEmpty ? [streamFormat] : allFormats
+        self._formats = formats
+        self.runtime = runtime
 
         super.init()
         self.stream = CMIOExtensionStream(
@@ -48,15 +36,6 @@ internal class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
         return _formats
     }
 
-    var activeFormatIndex: Int = 0 {
-        didSet {
-            if activeFormatIndex >= _formats.count {
-                Log.ext.error("Invalid activeFormatIndex \(activeFormatIndex), reverting to \(oldValue)")
-                activeFormatIndex = oldValue
-            }
-        }
-    }
-
     var availableProperties: Set<CMIOExtensionProperty> {
 
         return [.streamActiveFormatIndex, .streamFrameDuration]
@@ -67,13 +46,13 @@ internal class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
         forProperties properties: Set<CMIOExtensionProperty>
     ) throws -> CMIOExtensionStreamProperties {
 
+        let active = runtime.activeFormat
         let streamProperties = CMIOExtensionStreamProperties(dictionary: [:])
         if properties.contains(.streamActiveFormatIndex) {
-            streamProperties.activeFormatIndex = activeFormatIndex
+            streamProperties.activeFormatIndex = active.formatIndex
         }
         if properties.contains(.streamFrameDuration) {
-            let frameDuration = CMTime(value: 1, timescale: Int32(LemurCamConfig.frameRate))
-            streamProperties.frameDuration = frameDuration
+            streamProperties.frameDuration = active.frameDuration
         }
 
         return streamProperties
@@ -82,10 +61,7 @@ internal class ExtensionStreamSource: NSObject, CMIOExtensionStreamSource {
 
     // swiftlint:disable:next unneeded_throws_rethrows
     func setStreamProperties(_ streamProperties: CMIOExtensionStreamProperties) throws {
-
-        if let newActiveFormatIndex = streamProperties.activeFormatIndex {
-            activeFormatIndex = newActiveFormatIndex
-        }
+        runtime.setSourceFormat(ExtensionStreamFormats.request(in: streamProperties, stream: "source"))
     }
 
     func authorizedToStartStream(for _: CMIOExtensionClient) -> Bool {

@@ -12,7 +12,6 @@ internal final class ExtensionSinkStreamState: Sendable {
         var consumeSampleBuffer: SinkSampleBufferHandler?
         var client: SendableRetainedReference<CMIOExtensionClient>?
         var session = SinkStreamSession()
-        var activeFormatIndex = 0
     }
 
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
@@ -25,21 +24,6 @@ internal final class ExtensionSinkStreamState: Sendable {
             state.withLock {
                 $0.consumeSampleBuffer = newValue
             }
-        }
-    }
-
-    var activeFormatIndex: Int {
-        state.withLock { $0.activeFormatIndex }
-    }
-
-    func setActiveFormatIndex(_ index: Int) -> Int? {
-        state.withLock { state in
-            let oldValue = state.activeFormatIndex
-            guard index < 1 else {
-                return oldValue
-            }
-            state.activeFormatIndex = index
-            return nil
         }
     }
 

@@ -30,7 +30,8 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
 
     private(set) var stream: CMIOExtensionStream?
     let device: CMIOExtensionDevice
-    private let _streamFormat: CMIOExtensionStreamFormat
+    private let _formats: [CMIOExtensionStreamFormat]
+    private let runtime: ExtensionDeviceRuntime
 
     /// Serial queue used to defer the next sink pull after an empty completion,
     /// so the consume loop throttles instead of busy-polling the producer.
@@ -38,9 +39,20 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
         label: "cam.lemur.app.extension.sinkConsume", qos: .userInteractive
     )
 
-    init(localizedName: String, streamID: UUID, streamFormat: CMIOExtensionStreamFormat, device: CMIOExtensionDevice) {
+    /// The sink offers the source's formats so the app can name its default with
+    /// the standard format and frame-rate properties: what the app sets here
+    /// becomes the source stream's default (`ExtensionDeviceRuntime.setDefaultFormat`).
+    /// It takes the app's frames at any size, whatever format is active.
+    init(
+        localizedName: String,
+        streamID: UUID,
+        formats: [CMIOExtensionStreamFormat],
+        device: CMIOExtensionDevice,
+        runtime: ExtensionDeviceRuntime
+    ) {
         self.device = device
-        self._streamFormat = streamFormat
+        self._formats = formats
+        self.runtime = runtime
         super.init()
         self.stream = CMIOExtensionStream(localizedName: localizedName,
                                           streamID: streamID,
@@ -50,17 +62,7 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
     }
 
     var formats: [CMIOExtensionStreamFormat] {
-        return [_streamFormat]
-    }
-    var activeFormatIndex: Int {
-        get {
-            state.activeFormatIndex
-        }
-        set {
-            if let oldValue = state.setActiveFormatIndex(newValue) {
-                Log.ext.error("Invalid activeFormatIndex, reverting to \(oldValue)")
-            }
-        }
+        return _formats
     }
     var availableProperties: Set<CMIOExtensionProperty> {
         [
@@ -74,13 +76,13 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
     func streamProperties(
         forProperties properties: Set<CMIOExtensionProperty>
     ) throws -> CMIOExtensionStreamProperties {
+        let preferred = runtime.preferredFormat
         let streamProperties = CMIOExtensionStreamProperties(dictionary: [:])
         if properties.contains(.streamActiveFormatIndex) {
-            streamProperties.activeFormatIndex = activeFormatIndex
+            streamProperties.activeFormatIndex = preferred.formatIndex
         }
         if properties.contains(.streamFrameDuration) {
-            let frameDuration = CMTime(value: 1, timescale: Int32(LemurCamConfig.frameRate))
-            streamProperties.frameDuration = frameDuration
+            streamProperties.frameDuration = preferred.frameDuration
         }
         if properties.contains(.streamSinkBufferQueueSize) {
             streamProperties.sinkBufferQueueSize = Tuning.sinkBufferQueueSize
@@ -94,9 +96,7 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
 
     // swiftlint:disable:next unneeded_throws_rethrows
     func setStreamProperties(_ streamProperties: CMIOExtensionStreamProperties) throws {
-        if let newActiveFormatIndex = streamProperties.activeFormatIndex {
-            activeFormatIndex = newActiveFormatIndex
-        }
+        runtime.setDefaultFormat(ExtensionStreamFormats.request(in: streamProperties, stream: "sink"))
     }
 
     func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
@@ -176,7 +176,9 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
             generation: context.generation,
             hasBuffer: completion.sampleBuffer != nil,
             hasError: completion.error != nil,
-            frameRate: LemurCamConfig.frameRate
+            // The fastest rate any format allows, whatever the active one, so a
+            // frame never waits long in the queue; the source stream does the pacing.
+            frameRate: StreamFormatTable.fastestFrameRate.rawValue
         ) {
         case .discardStale:
             return

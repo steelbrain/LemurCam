@@ -15,34 +15,25 @@ internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource 
     )
 
     private var _sinkClientsObservation: NSKeyValueObservation?
-    private let runtime = ExtensionDeviceRuntime()
-
-    private let _width: Int32
-    private let _height: Int32
+    /// Starts in the default format. The user's settings can't be read here: the
+    /// extension runs as another user, with app-group defaults of its own. The app
+    /// sets them through the sink stream once it finds the device.
+    private let runtime = ExtensionDeviceRuntime(initialFormat: LemurCamConfig.defaultFormat)
 
     init(localizedName: String) {
-        let resolution = LemurCamConfig.storedResolution
-        _width = resolution.width
-        _height = resolution.height
-
         super.init()
 
-        let (createdDevice, videoDescription) = createDevice(localizedName: localizedName)
+        let createdDevice = createDevice(localizedName: localizedName)
         self.device = createdDevice
 
-        let videoStreamFormat = createStreamFormat(videoDescription: videoDescription)
-        createStreams(device: createdDevice, streamFormat: videoStreamFormat)
+        createStreams(device: createdDevice, formats: ExtensionStreamFormats.make())
 
         if let sourceStream = _streamSource?.stream {
-            let placeholder = renderPlaceholder()
+            let placeholder = PlaceholderFrame.render(at: runtime.activeFormat.resolution)
             if placeholder == nil {
                 Log.ext.error("Placeholder render failed; consumers see only live frames")
             }
-            runtime.configure(
-                sourceStream: sourceStream,
-                videoDescription: videoDescription,
-                placeholderBuffer: placeholder
-            )
+            runtime.configure(sourceStream: sourceStream, placeholder: placeholder)
         }
         observeSinkClients()
     }
@@ -104,48 +95,25 @@ internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource 
 // MARK: - Private Helpers
 
 private extension ExtensionDeviceSource {
-    func createDevice(
-        localizedName: String
-    ) -> (CMIOExtensionDevice, CMFormatDescription) {
+    func createDevice(localizedName: String) -> CMIOExtensionDevice {
         guard let deviceID = UUID(uuidString: LemurCamConfig.deviceID) else {
             fatalError("Invalid device UUID string: \(LemurCamConfig.deviceID)")
         }
-        let device = CMIOExtensionDevice(
+        return CMIOExtensionDevice(
             localizedName: localizedName, deviceID: deviceID,
             legacyDeviceID: nil, source: self
         )
-
-        var videoDescription: CMFormatDescription?
-        let fmtStatus = CMVideoFormatDescriptionCreate(
-            allocator: kCFAllocatorDefault,
-            codecType: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            width: _width, height: _height,
-            extensions: nil, formatDescriptionOut: &videoDescription
-        )
-        if fmtStatus != noErr {
-            fatalError("Failed to create video format description: \(fmtStatus)")
-        }
-        guard let videoDescription else {
-            fatalError("Failed to unwrap video format description after creation")
-        }
-        return (device, videoDescription)
     }
 
-    func createStreamFormat(videoDescription: CMFormatDescription) -> CMIOExtensionStreamFormat {
-        let frameDuration = CMTime(value: 1, timescale: Int32(LemurCamConfig.frameRate))
-        return CMIOExtensionStreamFormat(
-            formatDescription: videoDescription, maxFrameDuration: frameDuration,
-            minFrameDuration: frameDuration, validFrameDurations: nil
-        )
-    }
-
-    func createStreams(device: CMIOExtensionDevice, streamFormat: CMIOExtensionStreamFormat) {
+    /// The source stream first and the sink second: the app finds the sink at
+    /// stream index 1.
+    func createStreams(device: CMIOExtensionDevice, formats: [CMIOExtensionStreamFormat]) {
         guard let videoID = UUID(uuidString: LemurCamConfig.videoID) else {
             fatalError("Invalid video UUID string: \(LemurCamConfig.videoID)")
         }
         _streamSource = ExtensionStreamSource(
             localizedName: "\(LemurCamConfig.virtualCameraName).Video",
-            streamID: videoID, streamFormat: streamFormat, device: device
+            streamID: videoID, formats: formats, device: device, runtime: runtime
         )
 
         guard let sinkStreamID = UUID(uuidString: LemurCamConfig.sinkStreamID) else {
@@ -153,7 +121,7 @@ private extension ExtensionDeviceSource {
         }
         _sinkStreamSource = ExtensionSinkStreamSource(
             localizedName: "\(LemurCamConfig.virtualCameraName).Video.Sink",
-            streamID: sinkStreamID, streamFormat: streamFormat, device: device
+            streamID: sinkStreamID, formats: formats, device: device, runtime: runtime
         )
         do {
             guard let streamSource = _streamSource,
@@ -190,14 +158,5 @@ private extension ExtensionDeviceSource {
             ? LemurCamConfig.consumerStartedNotification
             : LemurCamConfig.consumerStoppedNotification
         CFNotificationCenterPostNotification(center, CFNotificationName(name), nil, nil, true)
-    }
-
-    func renderPlaceholder() -> CVPixelBuffer? {
-        PlaceholderRenderer.render(
-            text: "LemurCam is not running",
-            width: Int(_width),
-            height: Int(_height),
-            fontSize: 64.0
-        )
     }
 }
