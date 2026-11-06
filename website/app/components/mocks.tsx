@@ -69,53 +69,26 @@ export function WizardMock() {
   );
 }
 
-// DiscoveryView's scanning sheet, from its SwiftUI source: the "Discover Cameras"
-// header with Cancel, "Scanning network…" with a small spinner while the scan
-// runs, and one row per reply (name; host · manufacturer model; chevron). The
-// camera names, hosts and makers are samples.
+// DiscoveryView's sheet after a scan, from its SwiftUI source: the "Discover
+// Cameras" header with Cancel, one row per reply (name; host · manufacturer
+// model; chevron), and the "Scan Again" footer. The scan returns every reply at
+// once when it ends, so rows and the "Scanning network…" spinner never show
+// together. The camera names, hosts and makers are samples.
 const DISCOVERED = [
   { name: "Front Door", host: "192.168.1.82", maker: "Reolink" },
   { name: "Backyard Cam", host: "192.168.1.115", maker: "Amcrest" },
 ];
 
-function SmallSpinner() {
-  // ProgressView().controlSize(.small)
-  return (
-    <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5 animate-spin text-black/50">
-      {Array.from({ length: 8 }, (_, i) => (
-        <line
-          key={i}
-          x1="8"
-          y1="1.8"
-          x2="8"
-          y2="4.6"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          opacity={0.25 + (i / 8) * 0.75}
-          transform={`rotate(${i * 45} 8 8)`}
-        />
-      ))}
-    </svg>
-  );
-}
-
 export function DiscoveryMock() {
   return (
     <Frame>
-      <div className="space-y-3 p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-[13px] font-semibold">Discover Cameras</span>
-          <span className="rounded-md border border-black/10 bg-white px-2.5 py-0.5 text-[12px] shadow-sm">
-            Cancel
-          </span>
-        </div>
-        <p className="flex items-center justify-center gap-2 text-[12px] text-black/50">
-          <SmallSpinner />
-          Scanning network…
-        </p>
+      <div className="flex items-center justify-between p-4">
+        <span className="text-[13px] font-semibold">Discover Cameras</span>
+        <span className="rounded-md border border-black/10 bg-white px-2.5 py-0.5 text-[12px] shadow-sm">
+          Cancel
+        </span>
       </div>
-      <ul className="border-t border-black/8 bg-white">
+      <ul className="border-y border-black/8 bg-white">
         {DISCOVERED.map((d) => (
           <li
             key={d.host}
@@ -133,6 +106,11 @@ export function DiscoveryMock() {
           </li>
         ))}
       </ul>
+      <div className="flex justify-end p-4">
+        <span className="rounded-md border border-black/10 bg-white px-2.5 py-0.5 text-[12px] shadow-sm">
+          Scan Again
+        </span>
+      </div>
     </Frame>
   );
 }
