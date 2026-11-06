@@ -7,7 +7,11 @@ import XCTest
 /// where IPCamKit reads `Grüße/1`, so every login failed; a path `/caméra%20one` was
 /// saved as `/cam%C3%A9ra%2520one`, and a reported ONVIF stream URI was connected to
 /// that way too. Camera URLs are now read as IPCamKit reads them, with each non-ASCII
-/// character percent-encoded first. Keychain access goes to an in-memory store.
+/// character percent-encoded first. That alone left the same double encoding wherever
+/// a component also held an ASCII character `URLComponents` encodes (`|`, `^`, `{`, a
+/// lone `%`): `admin:£ecret|1@` was saved with the password `%C2%A3ecret|1`, so such
+/// characters are now percent-encoded first too, everywhere but the host and port.
+/// Keychain access goes to an in-memory store.
 @MainActor
 internal final class NonASCIIEscapeTests: XCTestCase {
     private var directory: URL?
@@ -30,9 +34,10 @@ internal final class NonASCIIEscapeTests: XCTestCase {
         try await super.tearDown()
     }
 
-    private func makeManager() throws -> (SourceManager, InMemoryCredentialStore, URL) {
+    private func makeManager(
+        keychain: InMemoryCredentialStore = InMemoryCredentialStore()
+    ) throws -> (SourceManager, InMemoryCredentialStore, URL) {
         let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
-        let keychain = InMemoryCredentialStore()
         return (SourceManager(storage: SourceStorage(fileURL: fileURL), keychain: keychain), keychain, fileURL)
     }
 
@@ -46,6 +51,20 @@ internal final class NonASCIIEscapeTests: XCTestCase {
         XCTAssertEqual(encode("rtsp://cam/x?a=%26b&c=é"), "rtsp://cam/x?a=%26b&c=%C3%A9")
         XCTAssertEqual(encode("rtsp://u:p@cam/s?x=%2F#f"), "rtsp://u:p@cam/s?x=%2F#f")
         XCTAssertEqual(encode("e\u{301}😀"), "e%CC%81%F0%9F%98%80")
+    }
+
+    /// What `URLComponents` would encode itself is encoded first, but not in the host
+    /// and port: an IPv6 host keeps its brackets and zone, and a host it can't read
+    /// stays unreadable.
+    func testWhatURLComponentsEncodesIsEncodedFirstOutsideTheHost() {
+        let encode = URLComponents.percentEncodingForParsing
+        XCTAssertEqual(encode("rtsp://u:p|w@[fe80::1%en0]:554/a|b"), "rtsp://u:p%7Cw@[fe80::1%en0]:554/a%7Cb")
+        XCTAssertEqual(encode("rtsp://u:a@b:c%@cam/x"), "rtsp://u:a%40b%3Ac%25@cam/x")
+        XCTAssertEqual(encode("rtsp://cam/[1]%zz?a=^`\\#f#\"<>"), "rtsp://cam/%5B1%5D%25zz?a=%5E%60%5C#f%23%22%3C%3E")
+        XCTAssertEqual(encode("rtsp://cam/s?{x}=%7C%4"), "rtsp://cam/s?%7Bx%7D=%7C%254")
+        XCTAssertEqual(encode("rtsp://ca|m/s"), "rtsp://ca|m/s")
+        XCTAssertNil(URLComponents(cameraURL: "rtsp://ca|m/s"), "IPCamKit can't read that host either")
+        XCTAssertEqual(encode("cam/a|b%zz"), "cam/a|b%zz", "not a URL with a scheme://")
     }
 
     // MARK: - A URL typed into the form
@@ -63,6 +82,42 @@ internal final class NonASCIIEscapeTests: XCTestCase {
             let extracted = SourceCredentials.extractingLoginFromRTSPURL(url)
             XCTAssertEqual(extracted.url, cleaned, url)
             XCTAssertEqual(extracted.login?.credentials, login, url)
+        }
+    }
+
+    /// A component holding an ASCII character `URLComponents` encodes itself had the
+    /// escapes in it encoded again, the non-ASCII ones just made among them.
+    func testALoginNextToACharacterURLComponentsEncodesIsDecodedOnce() {
+        let admin = { (password: String) in SourceCredentials(username: "admin", password: password) }
+        let cases: [(url: String, login: SourceCredentials)] = [
+            ("rtsp://admin:£ecret|1@192.168.1.10/live", admin("£ecret|1")),
+            ("rtsp://admin:Grüße^1@cam/x", admin("Grüße^1")),
+            ("rtsp://admin:§pass{1}@cam/x", admin("§pass{1}")),
+            ("rtsp://admin:100%Grün@cam/x", admin("100%Grün")),
+            ("rtsp://admin:Grüße%2F1|x@cam/x", admin("Grüße/1|x")),
+            ("rtsp://jürgen|1:pw@cam/x", SourceCredentials(username: "jürgen|1", password: "pw")),
+            ("rtsp://admin:P|ss%40word@cam/x", admin("P|ss@word")),
+            ("rtsp://admin:p@ss%21@cam/x", admin("p@ss!")),
+            ("rtsp://admin:pa:ss%21@cam/x", admin("pa:ss!")),
+            ("rtsp://admin:£|1@[fe80::1%en0]/s", admin("£|1"))
+        ]
+        for (url, login) in cases {
+            XCTAssertNil(RTSPURLInput.problem(with: url), url)
+            XCTAssertEqual(SourceCredentials.extractingLoginFromRTSPURL(url).login?.credentials, login, url)
+        }
+    }
+
+    func testAPathNextToACharacterURLComponentsEncodesKeepsItsEscapes() {
+        let cases = [
+            "rtsp://admin:pw@cam/caméra|1": "rtsp://cam/cam%C3%A9ra%7C1",
+            "rtsp://admin:pw@cam/100%Grün": "rtsp://cam/100%25Gr%C3%BCn",
+            "rtsp://admin:pw@cam/s?q=ü^%26": "rtsp://cam/s?q=%C3%BC%5E%26",
+            "rtsp://admin:£|1@[fe80::1%en0]:554/caméra": "rtsp://[fe80::1%25en0]:554/cam%C3%A9ra",
+            "rtsp://admin:pw@[fe80::1%25en0]/s|1": "rtsp://[fe80::1%25en0]/s%7C1"
+        ]
+        for (url, cleaned) in cases {
+            XCTAssertNil(RTSPURLInput.problem(with: url), url)
+            XCTAssertEqual(SourceCredentials.extractingFromRTSPURL(url).url, cleaned, url)
         }
     }
 
@@ -111,6 +166,27 @@ internal final class NonASCIIEscapeTests: XCTestCase {
         XCTAssertEqual(manager.sources.first?.sourceType, .rtsp(RTSPSourceInfo(url: "rtsp://192.168.1.10/live")))
     }
 
+    /// v1.5 saved a URL with its login. Moving it to the Keychain on load must not
+    /// save a wrong password in place of the only right copy.
+    func testALoginLeftInASavedURLIsMovedDecodedOnce() throws {
+        let (_, keychain, fileURL) = try makeManager()
+        let source = CameraSource(name: "Porch", sourceType: .rtsp(RTSPSourceInfo(
+            url: "rtsp://admin:£ecret|1@192.168.1.10/caméra|1"
+        )))
+        SourceStorage(fileURL: fileURL).save([source])
+        let (manager, _, _) = try makeManager(keychain: keychain)
+
+        manager.load()
+
+        XCTAssertEqual(keychain.stored[source.id], SourceCredentials(username: "admin", password: "£ecret|1"))
+        XCTAssertEqual(
+            manager.sources.first?.sourceType, .rtsp(RTSPSourceInfo(url: "rtsp://192.168.1.10/cam%C3%A9ra%7C1"))
+        )
+        let file = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertFalse(file.contains("ecret"), file)
+        XCTAssertFalse(file.contains("%25"), file)
+    }
+
     // MARK: - A stream URI an ONVIF camera reported
 
     /// What is saved is what is connected to, and the login connected with is the one
@@ -120,6 +196,7 @@ internal final class NonASCIIEscapeTests: XCTestCase {
         let cases: [(uri: String, url: String, login: SourceCredentials?)] = [
             ("rtsp://admin:pw@192.0.2.5/caméra%20one", "rtsp://192.0.2.5/cam%C3%A9ra%20one", admin("pw")),
             ("rtsp://admin:pässw%40rd@192.0.2.5/s", "rtsp://192.0.2.5/s", admin("pässw@rd")),
+            ("rtsp://admin:pä|ss%21@192.0.2.5/s|1", "rtsp://192.0.2.5/s%7C1", admin("pä|ss!")),
             ("rtsp://admin:pw@192.0.2.5/s?ch=é%26x", "rtsp://192.0.2.5/s?ch=%C3%A9%26x", admin("pw")),
             // Split at its last `@`: the rest is kept as reported, and IPCamKit encodes it.
             ("rtsp://admin:Grü#ße%2F1@192.0.2.5/caméra%20one", "rtsp://192.0.2.5/caméra%20one", admin("Grü#ße/1")),

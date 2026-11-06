@@ -44,9 +44,9 @@ internal extension SourceCredentials {
     /// left that address and another device may answer there, and the stored URI is
     /// what is connected to, with the saved login, when a later resolve fails. A URI
     /// naming another host (a recorder serving the stream, say) is kept. Nil when the
-    /// URI's host can't be read or the new host can't be put in it. The URI is read as
-    /// IPCamKit reads it (`URLComponents(cameraURL:)`), so an escape next to a
-    /// non-ASCII character is not encoded again.
+    /// URI's host can't be read or the new host can't be put in it. The URI is read by
+    /// `URLComponents(cameraURL:)`, so an escape next to a non-ASCII character, or to
+    /// another character `URLComponents` encodes, is not encoded again.
     static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
         guard var components = URLComponents(cameraURL: uri), let host = components.host else { return nil }
         guard comparableHost(host) == comparableHost(oldHost) else { return uri }
@@ -126,9 +126,9 @@ internal extension SourceCredentials {
 }
 
 private extension SourceCredentials {
-    /// The userinfo `URLComponents` reads, taken out of `urlString`, read as IPCamKit
-    /// reads it (`URLComponents(cameraURL:)`): the login is what IPCamKit would send,
-    /// and the URL is written with each non-ASCII character percent-encoded.
+    /// The userinfo `URLComponents` reads, taken out of `urlString`, read by
+    /// `URLComponents(cameraURL:)`: the login with each escape in it decoded once, and
+    /// the URL written with each character `URLComponents` encodes percent-encoded.
     static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
         guard var components = URLComponents(cameraURL: urlString),
               components.user != nil || components.password != nil else {
