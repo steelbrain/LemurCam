@@ -92,7 +92,7 @@ internal struct SourceFormView: View {
     private var addModeButtons: some View {
         HStack {
             Button("Connect") { connect() }
-                .disabled(inputText.trimmingCharacters(in: .whitespaces).isEmpty || isProbing)
+                .disabled(RTSPURLInput.normalized(inputText).isEmpty || isProbing)
                 .opacity(resolvedType != nil ? 0 : 1)
                 .frame(width: resolvedType != nil ? 0 : nil)
             if resolvedType != nil {
@@ -132,7 +132,7 @@ internal struct SourceFormView: View {
             switch editType {
             case .rtsp:
                 TextField("RTSP URL", text: $inputText).textContentType(.URL)
-                if !inputText.isEmpty, let problem = RTSPURLInput.problem(with: inputText) {
+                if !inputText.isEmpty, let problem = RTSPURLInput.problem(with: RTSPURLInput.normalized(inputText)) {
                     Text(problem).font(.caption).foregroundStyle(.red)
                 }
             case .onvif:
@@ -228,7 +228,7 @@ private extension SourceFormView {
     }
 
     func isValidRTSPURL(_ urlString: String) -> Bool {
-        RTSPURLInput.problem(with: urlString) == nil
+        RTSPURLInput.problem(with: RTSPURLInput.normalized(urlString)) == nil
     }
 
     func makeONVIFClient() -> ONVIFClient {
@@ -241,7 +241,7 @@ private extension SourceFormView {
     }
 
     func connect() {
-        let trimmed = inputText.trimmingCharacters(in: .whitespaces)
+        let trimmed = RTSPURLInput.normalized(inputText)
         guard !trimmed.isEmpty else { return }
         let lower = trimmed.lowercased()
         if lower.hasPrefix("rtsp://") || lower.hasPrefix("rtsps://") {
@@ -254,7 +254,9 @@ private extension SourceFormView {
     }
 
     /// Moves any `user:password@` in the URL into the credential fields, including a
-    /// password with an empty user name, so it is not kept in the URL.
+    /// password with an empty user name, so it is not kept in the URL. The field then
+    /// holds the URL as it will be saved: without the credentials and without the
+    /// surrounding whitespace Connect ignored.
     func handleDirectRTSP(_ url: String) {
         if let problem = RTSPURLInput.problem(with: url) {
             probeError = problem
@@ -267,10 +269,7 @@ private extension SourceFormView {
             password = credentials.password
             hasCredentials = true
         }
-        if cleaned != url {
-            urlFieldEdits.rewrite(to: cleaned)
-            inputText = cleaned
-        }
+        urlFieldEdits.replace(&inputText, with: cleaned)
         if name.isEmpty { name = URLComponents(string: cleaned)?.host ?? "Camera" }
     }
 
@@ -356,7 +355,7 @@ private extension SourceFormView {
             }
         }
         if useRTSP {
-            return .rtsp(RTSPSourceInfo(url: inputText))
+            return .rtsp(RTSPSourceInfo(url: RTSPURLInput.normalized(inputText)))
         }
         return .onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: onvifHost, port: onvifPort,
@@ -417,6 +416,14 @@ internal struct SourceFormURLFieldEdits {
     /// Call just before the form sets the field to `text` itself.
     mutating func rewrite(to text: String) {
         pendingRewrite = text
+    }
+
+    /// Sets `field` to `text` as the form's own change. Compares with what the field
+    /// holds, so a URL that only lost its surrounding spaces is written back too.
+    mutating func replace(_ field: inout String, with text: String) {
+        guard field != text else { return }
+        rewrite(to: text)
+        field = text
     }
 
     /// Whether the field's new value came from the user.
