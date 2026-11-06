@@ -7,6 +7,11 @@ internal struct SourceListView: View {
     @State private var editingSource: CameraSource?
     @State private var sourceToDelete: CameraSource?
     @State private var removeError: String?
+    /// What an edit saved with a problem (`SourceFormSaveOutcome.savedWithProblem`)
+    /// must tell the user, held until its form has closed.
+    @State private var pendingEditProblem: String?
+    /// The same, shown over the list once the form is gone.
+    @State private var editProblem: String?
 
     /// While saving is refused, cameras can't be added, edited or removed (the banner
     /// says why), so the actions that would are disabled.
@@ -30,8 +35,8 @@ internal struct SourceListView: View {
         .sheet(isPresented: $showingDiscoverySheet) {
             DiscoveryView(sourceManager: sourceManager)
         }
-        .sheet(item: $editingSource) { source in
-            SourceFormView(sourceManager: sourceManager, editing: source)
+        .sheet(item: $editingSource, onDismiss: showPendingEditProblem) { source in
+            SourceFormView(sourceManager: sourceManager, editing: source) { pendingEditProblem = $0 }
         }
         .alert("Delete Camera", isPresented: Binding(
             get: { sourceToDelete != nil },
@@ -61,6 +66,20 @@ internal struct SourceListView: View {
         } message: {
             Text(removeError ?? "")
         }
+        .alert("Login Not Saved", isPresented: Binding(
+            get: { editProblem != nil },
+            set: { if !$0 { editProblem = nil } }
+        )) {
+            Button("OK") { editProblem = nil }
+        } message: {
+            Text(editProblem ?? "")
+        }
+    }
+
+    /// The edit form closed: show what its save left to do, now that no sheet is up.
+    private func showPendingEditProblem() {
+        editProblem = pendingEditProblem
+        pendingEditProblem = nil
     }
 
     private var emptyState: some View {

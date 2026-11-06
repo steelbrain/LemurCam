@@ -6,8 +6,9 @@ import XCTest
 /// the file kept the edited camera, with its new address, while the Keychain kept the
 /// old login, and the form said the change wasn't made: after a restart the old
 /// password went to the new address. The camera now stays as edited, in the app and in
-/// the file, without a login, and the error says so. The storage's writes are stubbed;
-/// credentials go to an in-memory store.
+/// the file, without a login, and the error says so; the form closes on it, so the next
+/// edit starts from the camera as saved. The storage's writes are stubbed; credentials
+/// go to an in-memory store.
 @MainActor
 internal final class SourceEditUndoFailureTests: XCTestCase {
     /// Lets a number of file writes work, then fails every one after.
@@ -125,12 +126,105 @@ internal final class SourceEditUndoFailureTests: XCTestCase {
         XCTAssertEqual(fixture.keychain.stored[fixture.id], Self.oldLogin)
     }
 
-    /// Shown in the edit form, which stays open with what was entered.
+    /// Shown over the camera list once the edit form closes (`SourceFormSaveOutcome`).
     func testTheErrorSaysTheCameraWasSavedWithoutItsLogin() {
         let removed = EditSavedWithoutLoginError(oldLoginRemoved: true).localizedDescription
         XCTAssertTrue(removed.contains("saved without its username and password"), removed)
-        XCTAssertTrue(removed.contains("Enter them again"), removed)
+        XCTAssertTrue(removed.contains("Edit the camera to enter them again"), removed)
         let kept = EditSavedWithoutLoginError(oldLoginRemoved: false).localizedDescription
         XCTAssertTrue(kept.contains("old ones couldn't be removed"), kept)
+        XCTAssertTrue(kept.contains("Edit the camera to enter them again"), kept)
+    }
+
+    // MARK: - The next edit
+
+    private static let atA = ONVIFSourceInfo(
+        deviceUUID: "urn:uuid:5f0c3a2e-0000-4000-8000-00000000000a", host: "192.0.2.10", port: 80,
+        selectedProfileToken: "a-main", streamURI: "rtsp://192.0.2.10:554/a-main", serialNumber: "SN-A"
+    )
+    private static let atB = ONVIFSourceInfo(
+        deviceUUID: "urn:uuid:5f0c3a2e-0000-4000-8000-00000000000b", host: "192.0.2.11", port: 8080,
+        selectedProfileToken: "b-main", streamURI: "rtsp://192.0.2.11:554/b-main", serialNumber: "SN-B"
+    )
+
+    /// ONVIF "Porch" saved at A with `oldLogin`, then edited to B with `newLogin` as in
+    /// `makeFixture`: the Keychain can't save and the undo's write fails, so the camera
+    /// is saved at B without a login. Returns what the edit form had loaded.
+    private func editONVIFCameraToB(
+        _ writes: WriteCountdown
+    ) throws -> (fixture: Fixture, loaded: SourceType, error: (any Error)?) {
+        let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
+        let storage = SourceStorage(fileURL: fileURL) { data, url in
+            if writes.nextWriteFails() { throw WriteFailure() }
+            try data.write(to: url, options: .atomic)
+        }
+        let keychain = InMemoryCredentialStore()
+        let manager = SourceManager(storage: storage, keychain: keychain)
+        try manager.addSource(name: "Porch", sourceType: .onvif(Self.atA), credentials: Self.oldLogin)
+        let camera = try XCTUnwrap(manager.sources.first)
+        let fixture = Fixture(manager: manager, keychain: keychain, fileURL: fileURL, id: camera.id)
+        writes.writesLeft = 1
+        keychain.failSaves = true
+        do {
+            try manager.updateSource(
+                id: camera.id, name: "Porch", sourceType: .onvif(Self.atB), credentials: .set(Self.newLogin),
+                editedFrom: camera.sourceType
+            )
+        } catch {
+            return (fixture, camera.sourceType, error)
+        }
+        return (fixture, camera.sourceType, nil)
+    }
+
+    /// The reported case. The form stayed open on its copy of the camera at A; edited
+    /// back to A, Save took B for a move WS-Discovery saved since, and saved B's address
+    /// and stream URI with A's profile and device UUID. The edit is saved, so the form
+    /// now closes on the error, and the next edit starts from the camera saved at B.
+    func testAnEditAfterOneSavedWithoutItsLoginStartsFromTheCameraAsSaved() throws {
+        let writes = WriteCountdown()
+        let (fixture, loaded, error) = try editONVIFCameraToB(writes)
+        XCTAssertTrue(error is EditSavedWithoutLoginError)
+        XCTAssertTrue(SourceFormSaveOutcome(error: error).closesForm, "the edit is saved")
+        let reopened = try XCTUnwrap(fixture.manager.sources.first).sourceType
+        XCTAssertEqual(reopened, .onvif(Self.atB))
+        XCTAssertNotEqual(
+            SourceType.onvif(Self.atA).keepingMove(savedSince: loaded, now: reopened), .onvif(Self.atA),
+            "from the copy the form loaded before the edit, going back to A reads as a move"
+        )
+        writes.writesLeft = .max
+        fixture.keychain.failSaves = false
+
+        try fixture.manager.updateSource(
+            id: fixture.id, name: "Porch", sourceType: .onvif(Self.atA), credentials: .set(Self.newLogin),
+            editedFrom: reopened
+        )
+
+        XCTAssertEqual(fixture.manager.sources.first?.sourceType, .onvif(Self.atA), "A as it was, nothing of B")
+        XCTAssertEqual(try savedSources(in: fixture.fileURL).map(\.sourceType), [.onvif(Self.atA)])
+        XCTAssertEqual(fixture.keychain.stored[fixture.id], Self.newLogin)
+    }
+
+    /// The Keychain still can't save at the next edit: the error says the camera
+    /// wasn't saved, and it stays as that edit's form loaded it, at B.
+    func testANextEditWhoseLoginCantBeSavedLeavesTheCameraAsItsFormLoadedIt() throws {
+        let writes = WriteCountdown()
+        let (fixture, _, firstError) = try editONVIFCameraToB(writes)
+        XCTAssertTrue(firstError is EditSavedWithoutLoginError)
+        let reopened = try XCTUnwrap(fixture.manager.sources.first).sourceType
+        writes.writesLeft = .max
+
+        XCTAssertThrowsError(try fixture.manager.updateSource(
+            id: fixture.id, name: "Garage", sourceType: reopened, credentials: .set(Self.newLogin),
+            editedFrom: reopened
+        )) { error in
+            XCTAssertTrue(error is CredentialSaveError, "\(error)")
+            XCTAssertFalse(SourceFormSaveOutcome(error: error).closesForm, "nothing was saved")
+        }
+
+        let camera = try XCTUnwrap(fixture.manager.sources.first)
+        XCTAssertEqual(camera.name, "Porch")
+        XCTAssertEqual(camera.sourceType, .onvif(Self.atB))
+        XCTAssertEqual(try savedSources(in: fixture.fileURL).map(\.sourceType), [.onvif(Self.atB)])
+        XCTAssertNil(fixture.keychain.stored[fixture.id])
     }
 }

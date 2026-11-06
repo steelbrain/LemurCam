@@ -5,6 +5,9 @@ internal struct SourceFormView: View {
 
     let sourceManager: SourceManager
     let editing: CameraSource?
+    /// Called with what to tell the user when Save saved the camera with a problem
+    /// (`SourceFormSaveOutcome.savedWithProblem`); the form then closes.
+    let onSavedWithProblem: ((String) -> Void)?
 
     @State private var name: String = ""
     @State private var inputText: String = ""
@@ -28,9 +31,13 @@ internal struct SourceFormView: View {
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
 
-    init(sourceManager: SourceManager, editing: CameraSource? = nil) {
+    init(
+        sourceManager: SourceManager, editing: CameraSource? = nil,
+        onSavedWithProblem: ((String) -> Void)? = nil
+    ) {
         self.sourceManager = sourceManager
         self.editing = editing
+        self.onSavedWithProblem = onSavedWithProblem
     }
 
     var body: some View {
@@ -398,17 +405,21 @@ private extension SourceFormView {
         ))
     }
 
-    /// Saves the camera. False, with `saveError` set, when it could not be saved (its
-    /// credentials could not be stored), so the form stays open with what was entered.
+    /// Saves the camera, and returns whether the form closes: it was saved. When it was
+    /// not (its credentials could not be stored, say), `saveError` is set and the form
+    /// stays open with what was entered. When it was saved with a problem, the form
+    /// closes and `onSavedWithProblem` says what (see `SourceFormSaveOutcome`).
     func save() -> Bool {
         guard let sourceType = resolvedSourceType() else { return false }
         let change = CredentialChange.fromForm(
             authenticationEnabled: hasCredentials, username: username, password: password,
             storedCredentialsUnreadable: credentialsUnreadable
         )
+        var failure: (any Error)?
         do {
             if let source = editing {
-                // What the form loaded, so a move WS-Discovery saved since is kept.
+                // What the form loaded, so a move WS-Discovery saved since is kept. The
+                // form closes once it saved the camera, so no save of its own came since.
                 try sourceManager.updateSource(
                     id: source.id, name: name, sourceType: sourceType, credentials: change,
                     editedFrom: source.sourceType
@@ -417,11 +428,13 @@ private extension SourceFormView {
                 let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
                 try sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
             }
-            return true
         } catch {
-            saveError = error.localizedDescription
-            return false
+            failure = error
         }
+        let outcome = SourceFormSaveOutcome(error: failure)
+        if case .notSaved(let message) = outcome { saveError = message }
+        if case .savedWithProblem(let message) = outcome { onSavedWithProblem?(message) }
+        return outcome.closesForm
     }
 
     func populateFrom(_ source: CameraSource) {
