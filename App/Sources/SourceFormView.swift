@@ -28,6 +28,7 @@ internal struct SourceFormView: View {
     @State private var serialNumber: String?
     @State private var urlFieldEdits = SourceFormURLFieldEdits()
     @State private var fetchTickets = SourceFormFetchTickets()
+    @State private var onvifAddressEdits = SourceFormONVIFAddressEdits()
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
 
@@ -170,10 +171,16 @@ internal struct SourceFormView: View {
             .disabled(onvifHost.isEmpty || isProbing)
             if let probeError {
                 Text(probeError).font(.caption).foregroundStyle(.red)
+            } else if !isProbing, !onvifAddressEdits.allowsSave(at: onvifAddress) {
+                Text("Fetch Profiles from the new address before saving.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             onvifProfilePicker
             streamURILabel
         }
+        .onChange(of: onvifHost) { onvifAddressEdited() }
+        .onChange(of: onvifPort) { onvifAddressEdited() }
+        .onChange(of: onvifUseHTTPS) { onvifAddressEdited() }
     }
 
     private var probeProgressRow: some View {
@@ -222,7 +229,9 @@ private extension SourceFormView {
         if editing != nil {
             switch editSourceType {
             case .rtsp: return isValidRTSPURL(inputText)
-            case .onvif: return !onvifHost.isEmpty && selectedProfileToken != nil
+            case .onvif:
+                return !onvifHost.isEmpty && selectedProfileToken != nil
+                    && onvifAddressEdits.allowsSave(at: onvifAddress)
             case nil: return false
             }
         }
@@ -235,6 +244,34 @@ private extension SourceFormView {
 
     func isValidRTSPURL(_ urlString: String) -> Bool {
         RTSPURLInput.problem(with: RTSPURLInput.normalized(urlString)) == nil
+    }
+
+    var onvifAddress: SourceFormONVIFAddressEdits.Address {
+        .init(host: onvifHost, port: onvifPort, useHTTPS: onvifUseHTTPS)
+    }
+
+    /// Host, Port or Use HTTPS changed. What is still being fetched is for the
+    /// address as it was, and details read from another address are cleared.
+    func onvifAddressEdited() {
+        fetchTickets.invalidate()
+        isProbing = false
+        switch onvifAddressEdits.addressEdited(to: onvifAddress) {
+        case .keep:
+            return
+        case .clear:
+            onvifProfiles = []
+            selectedProfileToken = nil
+            streamURI = nil
+            deviceUUID = nil
+            serialNumber = nil
+        case .restore(let saved):
+            onvifProfiles = []
+            selectedProfileToken = saved.selectedProfileToken
+            streamURI = saved.streamURI
+            deviceUUID = saved.deviceUUID
+            serialNumber = saved.serialNumber
+        }
+        probeError = nil
     }
 
     func makeONVIFClient() -> ONVIFClient {
@@ -298,6 +335,7 @@ private extension SourceFormView {
         onvifProfiles = []
         selectedProfileToken = nil
         streamURI = nil
+        let address = onvifAddress
         let client = makeONVIFClient()
         Task {
             do {
@@ -306,6 +344,7 @@ private extension SourceFormView {
                 }
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
+                    onvifAddressEdits.fetchSucceeded(at: address)
                     onvifProfiles = fetched.profiles
                     isProbing = false
                     resolvedType = .onvif
@@ -412,6 +451,13 @@ private extension SourceFormView {
             streamURI = info.streamURI
             deviceUUID = info.deviceUUID
             serialNumber = info.serialNumber
+            onvifAddressEdits = SourceFormONVIFAddressEdits(
+                savedAt: onvifAddress,
+                details: .init(
+                    selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
+                    deviceUUID: info.deviceUUID, serialNumber: info.serialNumber
+                )
+            )
         }
         do {
             if let creds = try sourceManager.loadCredentials(for: source.id) {
@@ -449,29 +495,5 @@ internal struct SourceFormURLFieldEdits {
     mutating func isUserEdit(_ newText: String) -> Bool {
         defer { pendingRewrite = nil }
         return pendingRewrite != newText
-    }
-}
-
-/// Ties the form's ONVIF fetches to the input they were sent for. Editing the URL
-/// while "Connecting…" did not stop the probe, and when it finished it applied
-/// the old host: Add then saved host A while the field showed B. Each fetch takes a
-/// ticket; a newer fetch, or an edit of the URL, makes the earlier tickets stale, and
-/// the result (or error) of a fetch whose ticket is stale is dropped.
-internal struct SourceFormFetchTickets {
-    private var current = 0
-
-    /// The ticket for a fetch about to start; every earlier one becomes stale.
-    mutating func issue() -> Int {
-        current += 1
-        return current
-    }
-
-    /// Makes every ticket issued so far stale.
-    mutating func invalidate() {
-        current += 1
-    }
-
-    func isCurrent(_ ticket: Int) -> Bool {
-        ticket == current
     }
 }
