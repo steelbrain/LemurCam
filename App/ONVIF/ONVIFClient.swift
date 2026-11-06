@@ -16,16 +16,20 @@ internal final class ONVIFClient: Sendable {
 
     private let useHTTPS: Bool
 
-    init(host: String, port: Int, username: String?, password: String?, useHTTPS: Bool = false) {
+    /// `configuration` exists so tests can install a stub `URLProtocol`; the app
+    /// always uses the default configuration.
+    init(
+        host: String, port: Int, username: String?, password: String?, useHTTPS: Bool = false,
+        configuration: URLSessionConfiguration = .default
+    ) {
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.useHTTPS = useHTTPS
 
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = Tuning.onvifRequestTimeout
-        self.session = URLSession(configuration: config)
+        configuration.timeoutIntervalForRequest = Tuning.onvifRequestTimeout
+        self.session = URLSession(configuration: configuration)
     }
 
     deinit {
@@ -161,12 +165,7 @@ internal final class ONVIFClient: Sendable {
         request.setValue("application/soap+xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(body.utf8)
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ONVIFError.networkError(error.localizedDescription)
-        }
+        let (data, response) = try await send(request)
 
         if let httpResponse = response as? HTTPURLResponse {
             if httpResponse.statusCode == 401 {
@@ -188,6 +187,37 @@ internal final class ONVIFClient: Sendable {
         return data
     }
 
+    /// Reads the response body, giving up once it exceeds `ONVIFXML.maxDocumentBytes`
+    /// so a hostile or broken device cannot make the app buffer an unbounded body.
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch {
+            throw ONVIFError.networkError(error.localizedDescription)
+        }
+        let limit = ONVIFXML.maxDocumentBytes
+        if response.expectedContentLength > Int64(limit) {
+            bytes.task.cancel()
+            throw ONVIFXML.Rejection.tooLarge
+        }
+        var data = Data()
+        do {
+            for try await byte in bytes {
+                guard data.count < limit else {
+                    bytes.task.cancel()
+                    throw ONVIFXML.Rejection.tooLarge
+                }
+                data.append(byte)
+            }
+        } catch let rejection as ONVIFXML.Rejection {
+            throw rejection
+        } catch {
+            throw ONVIFError.networkError(error.localizedDescription)
+        }
+        return (data, response)
+    }
 }
 
 // MARK: - XML Parsing
@@ -196,7 +226,7 @@ internal final class ONVIFClient: Sendable {
 // helpers; these are pure functions exercised directly by ONVIFClientTests.
 internal extension ONVIFClient {
     func parseProfiles(_ data: Data) throws -> [ONVIFProfile] {
-        let root = try XElement.parse(data)
+        let root = try ONVIFXML.parse(data)
         var profiles: [ONVIFProfile] = []
 
         root.findElements(named: "Profiles") { profileEl in
@@ -230,7 +260,7 @@ internal extension ONVIFClient {
     }
 
     func parseStreamURI(_ data: Data) throws -> String {
-        let root = try XElement.parse(data)
+        let root = try ONVIFXML.parse(data)
         var uri: String?
         root.findElements(named: "Uri") { el in
             if uri == nil, let text = el.getText(), !text.isEmpty {
@@ -244,7 +274,7 @@ internal extension ONVIFClient {
     }
 
     func parseDeviceInformation(_ data: Data) throws -> ONVIFDeviceInfo {
-        let root = try XElement.parse(data)
+        let root = try ONVIFXML.parse(data)
         var info: ONVIFDeviceInfo?
         root.findElements(named: "GetDeviceInformationResponse") { el in
             info = ONVIFDeviceInfo(
@@ -262,7 +292,7 @@ internal extension ONVIFClient {
     }
 
     func extractSOAPFault(from data: Data) -> String? {
-        guard let root = try? XElement.parse(data) else { return nil }
+        guard let root = try? ONVIFXML.parse(data) else { return nil }
         var faultReason: String?
         root.findElements(named: "Fault") { fault in
             if let reason = fault["Reason"], let text = reason["Text"] {

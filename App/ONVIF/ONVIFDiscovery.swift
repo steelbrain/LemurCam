@@ -177,7 +177,7 @@ internal final class ONVIFDiscovery: Sendable {
     // MARK: - Response Parsing
 
     static func parseProbeMatch(xml: String) -> DiscoveredDevice? {
-        guard let root = try? XElement.parse(xml) else { return nil }
+        guard let root = try? ONVIFXML.parse(xml) else { return nil }
 
         var uuid: String?
         var xaddrs: String?
