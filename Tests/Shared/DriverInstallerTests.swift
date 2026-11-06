@@ -1,5 +1,6 @@
 import Darwin
 @testable import LemurCam
+import Security
 import XCTest
 
 /// Runs the helper's install pipeline (`DriverInstaller`) against a temporary
@@ -207,13 +208,18 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertFalse(DriverInstaller.isDowngrade(from: "abc", to: "1"), "unparseable versions never block")
     }
 
+    /// Skips only a driver no team signed (an unsigned CI build signs it ad hoc). A
+    /// team-signed one must pass the helper's own check: skipping when it failed let a
+    /// signed build whose driver every install would refuse pass CI.
     func testShippedDriverSignatureSurvivesTheCopy() throws {
         let shipped = LemurAudioHelper.bundledDriverPath(inAppBundle: Bundle.main.bundlePath)
-        guard FileManager.default.fileExists(atPath: shipped),
-              LemurAudioHelper.validateSignature(path: shipped, requirement: LemurAudioHelper.driverRequirement) == nil
-        else {
+        guard FileManager.default.fileExists(atPath: shipped), Self.signingTeam(ofCodeAt: shipped) != nil else {
             throw XCTSkip("no team-signed driver in the test host (unsigned CI build)")
         }
+        XCTAssertNil(
+            LemurAudioHelper.validateSignature(path: shipped, requirement: LemurAudioHelper.driverRequirement),
+            "the helper must accept the driver this app ships"
+        )
         let scratch = try Scratch()
         let requirement = LemurAudioHelper.driverRequirement
         let installer = DriverInstaller(
@@ -221,5 +227,18 @@ internal final class DriverInstallerTests: XCTestCase {
             validateSignature: { LemurAudioHelper.validateSignature(path: $0, requirement: requirement) }
         )
         XCTAssertNoThrow(try installer.install(from: shipped), "the strict flags must accept a byte copy")
+    }
+
+    /// The team that signed the code at `path`, or nil when it is unsigned or signed
+    /// ad hoc.
+    private static func signingTeam(ofCodeAt path: String) -> String? {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &staticCode) == errSecSuccess,
+              let code = staticCode else { return nil }
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        guard SecCodeCopySigningInformation(code, flags, &information) == errSecSuccess,
+              let signing = information as? [String: Any] else { return nil }
+        return signing[kSecCodeInfoTeamIdentifier as String] as? String
     }
 }
