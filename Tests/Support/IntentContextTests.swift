@@ -60,13 +60,14 @@ internal final class IntentContextTests: XCTestCase {
 
     private static let rtsp = SourceType.rtsp(RTSPSourceInfo(url: "rtsp://camera.invalid/stream"))
 
-    /// A manager loaded from a throwaway sources file. `load()` only reads defaults,
-    /// so nothing is written outside the temp directory and no Keychain item is made.
+    /// A manager loaded from a throwaway sources file, with its credentials in memory:
+    /// `load()` only reads defaults, so nothing is written outside the temp directory,
+    /// and the real Keychain is never touched.
     private func loadedManager(with sources: [CameraSource]) throws -> SourceManager {
         let tempDirectory = try XCTUnwrap(directory)
         let storage = SourceStorage(fileURL: tempDirectory.appendingPathComponent("sources.json"))
         storage.save(sources)
-        let manager = SourceManager(storage: storage)
+        let manager = SourceManager(storage: storage, keychain: InMemoryCredentialStore())
         manager.load()
         return manager
     }
