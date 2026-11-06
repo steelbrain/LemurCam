@@ -1,9 +1,10 @@
 import Foundation
 
-/// Checks the host typed into the edit form of an ONVIF camera. The host goes into the
-/// device service URL as typed (`ONVIFClient`), so `admin:secret@192.168.1.64` made a
-/// valid `http://admin:secret@192.168.1.64:80/onvif/device_service`: Fetch Profiles
-/// worked, and the login was saved in the cameras file and shown in the camera list.
+/// Checks the host typed into the edit form of an ONVIF camera, and the host of an
+/// ONVIF URL typed into the add form (`ONVIFURLInput`). The host goes into the device
+/// service URL as typed (`ONVIFClient`), so `admin:secret@192.168.1.64` made a valid
+/// `http://admin:secret@192.168.1.64:80/onvif/device_service`: Fetch Profiles worked,
+/// and the login was saved in the cameras file and shown in the camera list.
 internal enum ONVIFHostInput {
     static let loginMessage =
         "Enter only the camera's address here. Enter its user name and password under Requires Authentication."

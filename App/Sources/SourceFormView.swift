@@ -315,17 +315,17 @@ private extension SourceFormView {
     }
 
     func handleDirectONVIF(_ urlString: String) {
-        guard let components = URLComponents(string: urlString),
-              let host = components.host, !host.isEmpty else {
-            probeError = "Invalid ONVIF URL"
-            return
+        switch ONVIFURLInput.address(in: urlString) {
+        case .failure(let problem):
+            probeError = problem.message
+        case .success(let address):
+            onvifHost = address.host
+            onvifUseHTTPS = address.useHTTPS
+            onvifPort = address.port
+            // Connect is for the camera at this URL, which need not be the one before.
+            onvifDetails.clear()
+            fetchProfiles()
         }
-        onvifHost = host
-        onvifUseHTTPS = components.scheme?.lowercased() == "https"
-        onvifPort = components.port ?? (onvifUseHTTPS ? Tuning.defaultHTTPSPort : Tuning.defaultHTTPPort)
-        // Connect is for the camera at this URL, which need not be the one before.
-        onvifDetails.clear()
-        fetchProfiles()
     }
 
     func fetchProfiles() {
