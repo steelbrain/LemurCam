@@ -27,6 +27,7 @@ internal struct SourceFormView: View {
     @State private var deviceUUID: String?
     @State private var serialNumber: String?
     @State private var urlFieldEdits = SourceFormURLFieldEdits()
+    @State private var fetchTickets = SourceFormFetchTickets()
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
 
@@ -114,6 +115,9 @@ internal struct SourceFormView: View {
                 .textContentType(.URL)
                 .onChange(of: inputText) { _, newValue in
                     guard urlFieldEdits.isUserEdit(newValue) else { return }
+                    // What is still being fetched is for the URL as it was.
+                    fetchTickets.invalidate()
+                    isProbing = false
                     if resolvedType != nil {
                         resolvedType = nil
                         onvifProfiles = []
@@ -294,6 +298,7 @@ private extension SourceFormView {
     }
 
     func fetchProfiles() {
+        let ticket = fetchTickets.issue()
         isProbing = true
         probeError = nil
         onvifProfiles = []
@@ -314,6 +319,7 @@ private extension SourceFormView {
                     return FetchedDevice(profiles: profiles, info: info, endpointReference: reference)
                 }
                 await MainActor.run {
+                    guard fetchTickets.isCurrent(ticket) else { return }
                     onvifProfiles = fetched.profiles
                     isProbing = false
                     resolvedType = .onvif
@@ -324,21 +330,32 @@ private extension SourceFormView {
                     )
                 }
             } catch {
-                await MainActor.run { probeError = error.localizedDescription; isProbing = false }
+                await MainActor.run {
+                    guard fetchTickets.isCurrent(ticket) else { return }
+                    probeError = error.localizedDescription
+                    isProbing = false
+                }
             }
         }
     }
 
     func fetchStreamURI(profileToken: String) {
+        let ticket = fetchTickets.issue()
         let client = makeONVIFClient()
         Task {
             do {
                 let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     try await client.getStreamURI(profileToken: profileToken)
                 }
-                await MainActor.run { streamURI = SourceCredentials.strippingUserInfo(from: uri) }
+                await MainActor.run {
+                    guard fetchTickets.isCurrent(ticket) else { return }
+                    streamURI = SourceCredentials.strippingUserInfo(from: uri)
+                }
             } catch {
-                await MainActor.run { probeError = error.localizedDescription }
+                await MainActor.run {
+                    guard fetchTickets.isCurrent(ticket) else { return }
+                    probeError = error.localizedDescription
+                }
             }
         }
     }
@@ -446,5 +463,29 @@ internal struct SourceFormURLFieldEdits {
     mutating func isUserEdit(_ newText: String) -> Bool {
         defer { pendingRewrite = nil }
         return pendingRewrite != newText
+    }
+}
+
+/// Ties the form's ONVIF fetches to the input they were sent for. Editing the URL
+/// while "Connecting…" did not stop the probe, and when it finished it applied
+/// the old host: Add then saved host A while the field showed B. Each fetch takes a
+/// ticket; a newer fetch, or an edit of the URL, makes the earlier tickets stale, and
+/// the result (or error) of a fetch whose ticket is stale is dropped.
+internal struct SourceFormFetchTickets {
+    private var current = 0
+
+    /// The ticket for a fetch about to start; every earlier one becomes stale.
+    mutating func issue() -> Int {
+        current += 1
+        return current
+    }
+
+    /// Makes every ticket issued so far stale.
+    mutating func invalidate() {
+        current += 1
+    }
+
+    func isCurrent(_ ticket: Int) -> Bool {
+        ticket == current
     }
 }
