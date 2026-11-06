@@ -140,16 +140,8 @@ internal final class AudioDecoder {
     }
 
     func resampleAndEmit(_ samples: ArraySlice<Float>) {
-        guard !samples.isEmpty, let converter, let inputFormat, let outputFormat else { return }
-        let inFrames = samples.count / sourceChannels
-        guard inFrames > 0,
-              let inBuf = reusableBuffer(
-                  &reusableInputBuffer, format: inputFormat, frames: AVAudioFrameCount(inFrames)
-              ), let inChannel = inBuf.floatChannelData else { return }
-        inBuf.frameLength = AVAudioFrameCount(inFrames)
-        samples.withUnsafeBufferPointer { src in
-            if let base = src.baseAddress { inChannel[0].update(from: base, count: src.count) }
-        }
+        guard let converter, let outputFormat, let inBuf = loadInputBuffer(samples) else { return }
+        let inFrames = Int(inBuf.frameLength)
 
         let outCap = AVAudioFrameCount(Double(inFrames) * Self.outputSampleRate / sourceRate) + 2048
         guard let outBuf = reusableBuffer(
@@ -168,6 +160,24 @@ internal final class AudioDecoder {
         let outFrames = Int(outBuf.frameLength)
         guard outFrames > 0, let out = outBuf.floatChannelData?[0] else { return }
         onPCM?(out, outFrames)
+    }
+
+    /// Copy the whole interleaved frames in `samples` into the reusable input buffer
+    /// and return it, or nil when there is not one whole frame. The buffer holds
+    /// `frames * sourceChannels` samples, so a trailing partial frame (an odd sample
+    /// count on a stereo L16 packet) is dropped rather than written past its end.
+    func loadInputBuffer(_ samples: ArraySlice<Float>) -> AVAudioPCMBuffer? {
+        guard let inputFormat else { return nil }
+        let inFrames = samples.count / sourceChannels
+        guard inFrames > 0,
+              let inBuf = reusableBuffer(
+                  &reusableInputBuffer, format: inputFormat, frames: AVAudioFrameCount(inFrames)
+              ), let inChannel = inBuf.floatChannelData else { return nil }
+        inBuf.frameLength = AVAudioFrameCount(inFrames)
+        samples.withUnsafeBufferPointer { src in
+            if let base = src.baseAddress { inChannel[0].update(from: base, count: inFrames * sourceChannels) }
+        }
+        return inBuf
     }
 
     private func logUnsupportedOnce(_ codec: PublicAudioCodec) {
