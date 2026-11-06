@@ -21,4 +21,20 @@ internal final class SendableSimpleQueue: Sendable {
             return CMSimpleQueueEnqueue(queue, element: rawElement) == noErr
         }
     }
+
+    /// Dequeue every element still in the queue and release the retain it was
+    /// enqueued with: a `CMSimpleQueue` holds bare pointers and never releases them.
+    /// The queue supports only one dequeuing thread, so call this only once nothing
+    /// else (CMIO) can dequeue from it. Returns how many elements were released.
+    @discardableResult
+    func releaseRetainedElements() -> Int {
+        withValue { queue in
+            var released = 0
+            while let element = CMSimpleQueueDequeue(queue) {
+                Unmanaged<AnyObject>.fromOpaque(element).release()
+                released += 1
+            }
+            return released
+        }
+    }
 }

@@ -102,14 +102,18 @@ internal final class LemurCamStreamState: Sendable {
 
         /// Forget the cached device and everything tied to it, including a sink
         /// stream that is stuck "streaming" because the extension died without
-        /// posting `consumerStopped`.
-        mutating func dropDevice() {
+        /// posting `consumerStopped`. Returns the sink queue resources it dropped,
+        /// whose queue may still hold retained buffers.
+        @discardableResult
+        mutating func dropDevice() -> CMIOStreamQueueResources? {
+            let dropped = streamResources
             streamResources = nil
             isStreaming = false
             isStarting = false
             deviceID = nil
             streamID = nil
             hasConnectedOnce = false
+            return dropped
         }
 
         mutating func armDiscovery() {
@@ -277,22 +281,30 @@ extension LemurCamStreamState {
     /// pass starts after this lookup (both run on the same serial queue), so its
     /// result is at least as fresh.
     func deviceListChanged(lemurDeviceID: CMIODeviceID?) -> DeviceListChangeAction {
-        state.withLock { state in
+        let (action, lostResources) = state.withLock { state -> (DeviceListChangeAction, CMIOStreamQueueResources?) in
             if let cachedDeviceID = state.deviceID {
-                guard cachedDeviceID != lemurDeviceID else { return .unchanged }
-                state.dropDevice()
+                guard cachedDeviceID != lemurDeviceID else { return (.unchanged, nil) }
+                let dropped = state.dropDevice()
                 guard lemurDeviceID != nil else {
                     state.discoveryPending = false
-                    return .deviceLost
+                    return (.deviceLost, dropped)
                 }
                 state.armDiscovery()
-                return .rediscover
+                return (.rediscover, nil)
             }
             guard state.discoveryRequested, lemurDeviceID != nil, !state.isDiscovering else {
-                return .unchanged
+                return (.unchanged, nil)
             }
             state.armDiscovery()
-            return .rediscover
+            return (.rediscover, nil)
         }
+        // The buffers still queued were enqueued retained and would leak with the
+        // queue. Draining is safe only here: no LemurCam device is listed any more,
+        // so CMIO has torn down the device's streams and no longer dequeues from
+        // this queue, and `enqueue` can't reach it since it left the state above.
+        // A replaced device is not drained: the old one may still be listed, and a
+        // second thread dequeuing alongside CMIO would corrupt the queue.
+        lostResources?.queue.releaseRetainedElements()
+        return action
     }
 }
