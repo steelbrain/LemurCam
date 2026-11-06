@@ -340,19 +340,17 @@ private extension StreamCoordinator {
         )
         onvifTask = Task { [weak self] in
             let uri = await Self.resolveONVIFStreamURI(params: params)
+            // Acted on with no suspension after the check: a pause that cancelled this
+            // task in a hop between the two still let the result connect.
             guard !Task.isCancelled else { return }
-            await MainActor.run { [weak self] in
-                self?.handleONVIFResolution(
-                    uri: uri, info: info, sourceID: sourceID, credentials: credentials
-                )
-            }
+            self?.handleONVIFResolution(uri: uri, info: info, sourceID: sourceID, credentials: credentials)
         }
     }
 
     func handleONVIFResolution(
         uri: ONVIFStreamURIResult, info: ONVIFSourceInfo, sourceID: UUID, credentials: SourceCredentials?
     ) {
-        guard currentSourceID == sourceID else { return }
+        guard currentSourceID == sourceID, lastDemand else { return }
         switch uri {
         case .success(let resolved):
             let target = Self.connectionTarget(
@@ -426,9 +424,7 @@ private extension StreamCoordinator {
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } catch { return }
             guard let self, !Task.isCancelled else { return }
-            await MainActor.run {
-                self.syncToActiveSource(force: true)
-            }
+            self.syncToActiveSource(force: true)
         }
 
         if let sourceID = currentSourceID {
