@@ -352,6 +352,13 @@ static OSStatus Initialize(AudioServerPlugInDriverRef inDriver, AudioServerPlugI
     double ticksPerSecond = ((double)tb.denom / (double)tb.numer) * 1.0e9;
     gHostTicksPerFrame = ticksPerSecond / gSampleRate;
     os_log(gLog, "Initialize: hostTicksPerFrame=%{public}.3f", gHostTicksPerFrame);
+
+    // A freshly loaded driver has no IO running. When coreaudiod is restarted
+    // (the helper's kickstart, or a crash) while a client is recording, the old
+    // instance dies without StopIO and never posts consumerStopped, so the app
+    // would keep mic demand, and the camera stream, up with no consumer. Clear it
+    // here; a client that resumes IO posts consumerStarted from StartIO as usual.
+    PostDarwinNotification(LEMUR_AUDIO_NOTIFY_CONSUMER_STOPPED);
     return noErr;
 }
 
