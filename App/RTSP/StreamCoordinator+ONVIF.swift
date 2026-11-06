@@ -90,13 +90,14 @@ extension StreamCoordinator {
     /// saved credentials. `URLComponents` fails on some of these
     /// (`rtsp://user:p#ss@192.0.2.5/stream`) and reads others as an address: host
     /// `user` and port 1234 in `user:1234#ab@`, an empty port in `user:#ab@`, host `us`
-    /// in `us#er:pw@`. A URI is split only when what follows the last `@` is
-    /// `onvifHost` (`SourceCredentials.splitsAtLastAt`, the rule the saved fallback URI
-    /// follows too), since that `@` may belong to a query (`?password=p@ss`), and the
-    /// saved login must never go to a host taken from a query. That holds for a URI
-    /// `URLComponents` can't read as well: split at the `@` in `?password=p@ss word`,
-    /// the rest of the password, `ss word`, was taken for the host. Any other URI is
-    /// connected to as reported, with the saved credentials.
+    /// in `us#er:pw@`. A URI is split as `SourceCredentials.splitsAtLastAt` says, the
+    /// rule the saved fallback URI follows too: when no `/` or `?` comes before the
+    /// last `@`, or else only when what follows it is `onvifHost`, since that `@` may
+    /// belong to a query (`?password=p@ss`), and the saved login must never go to a
+    /// host taken from a query. That holds for a URI `URLComponents` can't read as
+    /// well: split at the `@` in `?password=p@ss word`, the rest of the password,
+    /// `ss word`, was taken for the host. Any other URI is connected to as reported,
+    /// with the saved credentials.
     nonisolated static func connectionTarget(
         forResolvedURI uri: String, reportedBy onvifHost: String, savedCredentials: SourceCredentials?
     ) -> (url: String, credentials: SourceCredentials?) {

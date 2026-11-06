@@ -41,25 +41,31 @@ internal extension SourceCredentials {
 
     /// Whether a stream URI an ONVIF camera reported is split at its last `@`, as
     /// `extractingFromRTSPURL` splits a URL with ambiguous userinfo (see
-    /// `hasAmbiguousUserInfo`): only when the host after that `@` is `onvifHost`, the
-    /// camera that reported the URI. Otherwise that `@` may be part of the address, as
-    /// in a login in the query (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), and
-    /// splitting there would leave the end of the password as the host. The same rule
-    /// decides what is saved (`strippingUserInfo(fromReportedURI:onvifHost:)`) and what
-    /// is connected to (`StreamCoordinator.connectionTarget`), so they can't disagree.
+    /// `hasAmbiguousUserInfo`), leaving a host after it. That `@` ends the login when
+    /// no `/` or `?` comes before it, since then it can't be in a path or a query
+    /// (`rtsp://admin:p#ss@192.0.2.20/s`, `rtsp://user:1234#ab@192.0.2.20/s`). When one
+    /// does, the `@` may be part of the address, as in a login in the query
+    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), where splitting would leave
+    /// the end of the password as the host; such a URI is split only when the host
+    /// after the `@` is `onvifHost`, the camera that reported it
+    /// (`rtsp://admin:1234/5@192.0.2.5/s`). A camera saved by a name
+    /// (`frontdoor.local`) usually reports its IP address, so the host alone can't
+    /// decide every URI. The same rule decides what is saved
+    /// (`strippingUserInfo(fromReportedURI:onvifHost:)`) and what is connected to
+    /// (`StreamCoordinator.connectionTarget`), so they can't disagree.
     ///
-    /// The host is `URLComponents`' when it can parse the URI
-    /// (`rtsp://admin:1234/5@192.0.2.5/s`). When it can't (a `#` or `?` in the
-    /// password: `rtsp://user:p#ss@192.0.2.5/s`, or a space in a query on some macOS
-    /// versions) it is read by hand: a bracketed IPv6 literal, or the text up to the
-    /// first `:`, `/`, `?` or `#`. IP literals compare by value, names without case.
+    /// The host is `URLComponents`' when it can parse the URI. When it can't (a `#`
+    /// or `?` in the password: `rtsp://user:p#ss@192.0.2.5/s`, or a space in a query
+    /// on some macOS versions) it is read by hand: a bracketed IPv6 literal, or the
+    /// text up to the first `:`, `/`, `?` or `#`. IP literals compare by value, names
+    /// without case.
     static func splitsAtLastAt(reportedURI uri: String, onvifHost: String) -> Bool {
         guard let split = AmbiguousUserInfo(uri) else { return false }
         let host = URLComponents(string: uri) != nil
             ? URLComponents(string: split.urlWithout)?.host
             : leadingHost(of: split.urlWithout)
         guard let host else { return false }
-        return comparableHost(host) == comparableHost(onvifHost)
+        return !split.mayBeInPathOrQuery || comparableHost(host) == comparableHost(onvifHost)
     }
 
     /// A stream URI an ONVIF camera at `onvifHost` reported, without the login some
@@ -198,6 +204,9 @@ internal enum CredentialChange: Equatable {
 private struct AmbiguousUserInfo {
     let urlWithout: String
     let login: URLLogin?
+    /// Whether a `/` or `?` comes before the last `@`, so that `@` may be in a path or
+    /// a query rather than end a login.
+    let mayBeInPathOrQuery: Bool
 
     init?(_ urlString: String) {
         let scalars = urlString.unicodeScalars
@@ -215,6 +224,7 @@ private struct AmbiguousUserInfo {
         }
 
         let userInfo = rest[..<lastAt]
+        mayBeInPathOrQuery = userInfo.contains { $0 == "/" || $0 == "?" }
         urlWithout = String(scalars[..<separator.upperBound]) + String(rest[rest.index(after: lastAt)...])
         let user: Substring.UnicodeScalarView
         let password: Substring.UnicodeScalarView?

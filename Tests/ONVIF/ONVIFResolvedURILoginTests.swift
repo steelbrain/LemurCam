@@ -6,10 +6,12 @@ import XCTest
 /// IPCamKit refuses such a URI as ambiguous, so the camera could never stream. The
 /// login is now taken out of the URI, and used only when the camera has no saved
 /// credentials. That first covered only URIs `URLComponents` can't parse; one it
-/// misreads as an address (`viewer:1234#ab@`) is split too. Either is split only
-/// when what follows the last `@` is the camera's own host, so a login is never
-/// taken from (or sent to a host made of) a query. Cameras are stubbed; nothing
-/// goes on the network.
+/// misreads as an address (`viewer:1234#ab@`) is split too. Either is split when no
+/// `/` or `?` comes before the last `@`, which then can only end the login, and
+/// otherwise only when what follows that `@` is the camera's own host, so a login is
+/// never taken from (or sent to a host made of) a query. Requiring the camera's host
+/// in every case left a camera saved by a name that reports its IP address unable to
+/// stream. Cameras are stubbed; nothing goes on the network.
 @MainActor
 internal final class ONVIFResolvedURILoginTests: XCTestCase {
     nonisolated private static let reportedURI = "rtsp://viewer:p#ss@192.0.2.5:554/stream"
@@ -58,14 +60,33 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         XCTAssertEqual(target.credentials, Self.savedLogin)
     }
 
-    /// A URI `URLComponents` can't read is split only when what follows its last `@`
-    /// is the camera, as one it reads is: that `@` may be in a query. With
-    /// `?password=p@ss word` the split made `ss word`, the rest of the password, the
-    /// host the login went to.
+    /// A camera saved by a name reports its IP address: with no `/` or `?` before the
+    /// last `@`, that `@` ends the login whatever host follows it. It was used as
+    /// reported, which IPCamKit refuses on every connect.
+    func testALoginEndingBeforeAnyPathOrQueryIsTakenOutForACameraSavedByName() {
+        let named = Self.target(Self.reportedURI, reportedBy: "porch-camera.local", saved: Self.savedLogin)
+        XCTAssertEqual(named.url, Self.addressOnly)
+        XCTAssertEqual(named.credentials, Self.savedLogin)
+
+        let cases: [(uri: String, url: String, login: SourceCredentials)] = [
+            ("rtsp://admin:p#ss@192.168.1.20/s", "rtsp://192.168.1.20/s", .init(username: "admin", password: "p#ss")),
+            ("rtsp://user:1234#ab@192.168.1.20/s", "rtsp://192.168.1.20/s", .init(username: "user", password: "1234#ab"))
+        ]
+        for (uri, url, login) in cases {
+            let target = Self.target(uri, reportedBy: "frontdoor.local")
+            XCTAssertEqual(target.url, url, uri)
+            XCTAssertEqual(target.credentials, login, uri)
+        }
+    }
+
+    /// With a `/` or `?` before the last `@`, a URI `URLComponents` can't read is split
+    /// only when what follows that `@` is the camera, as one it reads is: the `@` may be
+    /// in a query. With `?password=p@ss word` the split made `ss word`, the rest of the
+    /// password, the host the login went to.
     func testALoginURLComponentsCantReadIsTakenOutOnlyWhenTheRestIsTheCamera() {
-        let elsewhere = Self.target(Self.reportedURI, reportedBy: "porch-camera.local", saved: Self.savedLogin)
-        XCTAssertEqual(elsewhere.url, Self.reportedURI)
-        XCTAssertEqual(elsewhere.credentials, Self.savedLogin)
+        let elsewhere = Self.target("rtsp://viewer:p?ss@192.0.2.5:554/stream", reportedBy: "frontdoor.local")
+        XCTAssertEqual(elsewhere.url, "rtsp://viewer:p?ss@192.0.2.5:554/stream")
+        XCTAssertNil(elsewhere.credentials)
 
         // Whether `URLComponents` reads a space or a raw `%` depends on the macOS
         // version; the outcome must not. The last one it can't read on any.
@@ -141,9 +162,9 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
             // Ambiguous to IPCamKit too, but the `@` may well belong to the query:
             // split there, the saved login would go to host `ss`.
             "rtsp://192.0.2.5:554/stream?user=viewer&password=p@ss",
-            // Misread like the logins above, but what follows the `@` is not the
-            // camera that reported it.
-            "rtsp://viewer:1234#ab@192.0.2.99:554/stream"
+            // Misread like the logins above, with a `/` before the `@`, and what
+            // follows it is not the camera that reported it.
+            "rtsp://viewer:12/34@192.0.2.99:554/stream"
         ]
         for uri in uris {
             let target = Self.target(uri, saved: Self.savedLogin)
@@ -178,9 +199,9 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.savedLogin])
     }
 
-    /// A login `URLComponents` can't read, in a URI for a host other than the camera
-    /// that reported it, is left in the URI, and the saved credentials go with it.
-    func testAnUnreadableLoginForAnotherHostIsConnectedToAsReported() async throws {
+    /// The reported case: a camera saved by a name reports its IP address, with a `#`
+    /// in the password. The login is taken out and the saved credentials go with it.
+    func testAnUnreadableLoginForAnotherHostIsTakenOut() async throws {
         let harness = try makeHarness(
             cameraAt: "reports-another-host.test", credentials: Self.savedLogin, reporting: Self.reportedURI
         )
@@ -189,7 +210,23 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
 
         XCTAssertTrue(connected)
-        XCTAssertEqual(harness.pipeline.connectedURLs, [Self.reportedURI])
+        XCTAssertEqual(harness.pipeline.connectedURLs, [Self.addressOnly])
+        XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.savedLogin])
+    }
+
+    /// A login with a `?` in the URI of another host may be a query: it is used as
+    /// reported, with the saved credentials.
+    func testAnUnreadableLoginThatMayBeAQueryIsConnectedToAsReported() async throws {
+        let reported = "rtsp://viewer:p?ss@192.0.2.5:554/stream"
+        let harness = try makeHarness(
+            cameraAt: "reports-a-query.test", credentials: Self.savedLogin, reporting: reported
+        )
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
+
+        XCTAssertTrue(connected)
+        XCTAssertEqual(harness.pipeline.connectedURLs, [reported])
         XCTAssertEqual(harness.pipeline.connectedCredentials, [Self.savedLogin])
     }
 
