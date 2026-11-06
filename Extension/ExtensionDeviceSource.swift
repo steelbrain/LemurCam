@@ -35,10 +35,14 @@ internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource 
         createStreams(device: createdDevice, streamFormat: videoStreamFormat)
 
         if let sourceStream = _streamSource?.stream {
+            let placeholder = renderPlaceholder()
+            if placeholder == nil {
+                Log.ext.error("Placeholder render failed; consumers see only live frames")
+            }
             runtime.configure(
                 sourceStream: sourceStream,
                 videoDescription: videoDescription,
-                placeholderBuffer: renderPlaceholder()
+                placeholderBuffer: placeholder
             )
         }
         observeSinkClients()
@@ -70,8 +74,10 @@ internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource 
     }
 
     func startStreaming() {
+        // The consumer is counted and announced even without a placeholder, so the
+        // app starts feeding frames and they are forwarded; only the placeholder
+        // timer needs the rendered placeholder.
         let result = runtime.startStreaming(timerQueue: _timerQueue)
-        guard result.didStart else { return }
         LemurCamConfig.sharedDefaults?.set(true, forKey: LemurCamConfig.hasExternalConsumersKey)
         postConsumerNotification(started: true)
         result.timer?.resume()

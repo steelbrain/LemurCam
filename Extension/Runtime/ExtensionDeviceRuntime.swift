@@ -4,14 +4,18 @@ import CoreVideo
 import Foundation
 import os
 
+/// Lock-protected runtime state for `ExtensionDeviceSource`. The counting and
+/// sink/placeholder decisions live in the pure `ExtensionStreamingState` (Shared/,
+/// unit-tested); this type adds the CMIO stream, placeholder buffer and timer.
 internal final class ExtensionDeviceRuntime: Sendable {
     internal struct StartResult: Sendable {
-        let didStart: Bool
+        /// A newly created placeholder timer the caller must resume, if any.
         let timer: DispatchSourceTimer?
     }
 
     internal struct StopResult: Sendable {
         let hasConsumers: Bool
+        /// The placeholder timer the caller must cancel, if it was running.
         let timer: DispatchSourceTimer?
     }
 
@@ -19,8 +23,7 @@ internal final class ExtensionDeviceRuntime: Sendable {
         var sourceStream: SendableRetainedReference<CMIOExtensionStream>?
         var videoDescription: CMFormatDescription?
         var placeholderBuffer: SendableRetainedReference<CVPixelBuffer>?
-        var sinking = false
-        var streamingCounter: UInt32 = 0
+        var streaming = ExtensionStreamingState()
         var timer: DispatchSourceTimer?
     }
 
@@ -40,15 +43,13 @@ internal final class ExtensionDeviceRuntime: Sendable {
         }
     }
 
+    /// Count a new source-stream consumer. Always counts it, so live sink frames
+    /// are forwarded even when the placeholder failed to render; only the
+    /// placeholder timer depends on having a placeholder.
     func startStreaming(timerQueue: DispatchQueue) -> StartResult {
         state.withLock { state in
-            guard state.placeholderBuffer != nil else {
-                return StartResult(didStart: false, timer: nil)
-            }
-
-            state.streamingCounter += 1
-            guard state.timer == nil else {
-                return StartResult(didStart: true, timer: nil)
+            guard state.streaming.consumerStarted(hasPlaceholder: state.placeholderBuffer != nil) else {
+                return StartResult(timer: nil)
             }
 
             let timer = DispatchSource.makeTimerSource(flags: .strict, queue: timerQueue)
@@ -61,41 +62,35 @@ internal final class ExtensionDeviceRuntime: Sendable {
                 self?.emitPlaceholderFrame()
             }
             state.timer = timer
-            return StartResult(didStart: true, timer: timer)
+            return StartResult(timer: timer)
         }
     }
 
     func stopStreaming() -> StopResult {
         state.withLock { state in
-            if state.streamingCounter > 1 {
-                state.streamingCounter -= 1
-                return StopResult(hasConsumers: true, timer: nil)
+            let outcome = state.streaming.consumerStopped()
+            guard outcome.cancelPlaceholderTimer else {
+                return StopResult(hasConsumers: outcome.hasConsumers, timer: nil)
             }
-
-            state.streamingCounter = 0
             let timer = state.timer
             state.timer = nil
-            return StopResult(hasConsumers: false, timer: timer)
+            return StopResult(hasConsumers: outcome.hasConsumers, timer: timer)
         }
     }
 
     func startSinking() {
         state.withLock {
-            $0.sinking = true
+            $0.streaming.startSinking()
         }
     }
 
     func stopSinking() -> Bool {
-        state.withLock { state in
-            guard state.sinking else { return false }
-            state.sinking = false
-            return true
-        }
+        state.withLock { $0.streaming.stopSinking() }
     }
 
     func forwardSinkFrame(_ buffer: CMSampleBuffer) {
         let sourceStream = state.withLock { state -> SendableRetainedReference<CMIOExtensionStream>? in
-            guard state.streamingCounter > 0 else { return nil }
+            guard state.streaming.forwardsSinkFrames else { return nil }
             return state.sourceStream
         }
         guard let sourceStream else { return }
@@ -109,14 +104,14 @@ internal final class ExtensionDeviceRuntime: Sendable {
     func emitPlaceholderFrame() {
         let frameState = state.withLock {
             (
-                sinking: $0.sinking,
+                emitsPlaceholder: $0.streaming.emitsPlaceholder,
                 sourceStream: $0.sourceStream,
                 videoDescription: $0.videoDescription,
                 placeholderBuffer: $0.placeholderBuffer
             )
         }
 
-        guard !frameState.sinking,
+        guard frameState.emitsPlaceholder,
               let sourceStream = frameState.sourceStream,
               let videoDescription = frameState.videoDescription,
               let placeholderBuffer = frameState.placeholderBuffer else {
