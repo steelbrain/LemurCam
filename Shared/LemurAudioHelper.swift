@@ -69,6 +69,9 @@ internal enum LemurAudioHelper {
         "identifier \"cam.lemur.app.audio\" and anchor apple generic and " +
         "certificate leaf[subject.OU] = \"\(teamIdentifier)\""
 
+    /// launchd service target for the system audio daemon, used to restart it.
+    static let coreAudioServiceTarget = "system/com.apple.audio.coreaudiod"
+
     // MARK: - Driver signature
 
     /// Static validation flags for the staged driver: every architecture and nested
@@ -99,20 +102,29 @@ internal enum LemurAudioHelper {
         return nil
     }
 
-    /// launchd service target for the system audio daemon, used to restart it and to
-    /// re-query whether it came back.
-    static let coreAudioServiceTarget = "system/com.apple.audio.coreaudiod"
+    // MARK: - coreaudiod restart
 
-    /// Decides whether the coreaudiod restart succeeded from the *status check* exit
-    /// code, NOT from the restart command's own exit code. `launchctl kickstart -k`
-    /// frequently reports a non-zero status even when the restart took, which is what
-    /// produced the spurious "install/remove failed" reports. So the caller ignores
-    /// kickstart's outcome and instead re-queries the service: `launchctl print`
-    /// exits 0 when coreaudiod is known to launchd and running, non-zero only when it
-    /// genuinely isn't — the meaningful end state to report.
-    static func coreAudioRestartResult(statusCheckExitCode: Int32) -> String? {
-        statusCheckExitCode == 0
-            ? nil
-            : "coreaudiod is not running (launchctl print exited with status \(statusCheckExitCode))"
+    /// Decides whether a coreaudiod restart took. A restart is proven only by a *new*
+    /// coreaudiod process: `launchctl print` exits 0 for any registered job, running
+    /// or not, so its status says nothing, and `launchctl kickstart -k` has been seen
+    /// to exit non-zero after a restart that worked. So a changed PID is success
+    /// whatever kickstart returned; otherwise the kickstart status goes in the error.
+    /// - Parameters:
+    ///   - kickstartStatus: exit status of `launchctl kickstart -k`, or -1 if it
+    ///     could not be launched.
+    ///   - pidBefore: coreaudiod's PID before the kickstart, nil if not running.
+    ///   - pidAfter: coreaudiod's PID once the restart settled, nil if not running.
+    static func coreAudioRestartResult(kickstartStatus: Int32, pidBefore: pid_t?, pidAfter: pid_t?) -> String? {
+        if kickstartStatus == -1 {
+            return "launchctl could not be run"
+        }
+        guard let pidAfter else {
+            return "coreaudiod is not running (launchctl kickstart exited with status \(kickstartStatus))"
+        }
+        if let pidBefore, pidBefore == pidAfter {
+            return "coreaudiod did not restart (still pid \(pidAfter); " +
+                "launchctl kickstart exited with status \(kickstartStatus))"
+        }
+        return nil
     }
 }

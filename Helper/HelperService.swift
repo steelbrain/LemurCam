@@ -82,21 +82,25 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
         (error as? DriverBundleFiles.Failure)?.description ?? error.localizedDescription
     }
 
-    /// Restarts coreaudiod so a freshly installed/removed HAL plug-in is picked up.
-    /// `launchctl kickstart -k` reports an unreliable exit code (often non-zero even
-    /// when the restart took), so its outcome is ignored; success is decided by
-    /// re-querying the service afterwards. Returns nil if coreaudiod is running, or
-    /// an error string otherwise.
+    /// Restarts coreaudiod so a freshly installed/removed HAL plug-in is picked up,
+    /// waiting up to 5 s for the new instance. Returns nil once it is running.
     private func restartCoreAudio() -> String? {
-        runLaunchctl(["kickstart", "-k", LemurAudioHelper.coreAudioServiceTarget])
-        let statusCode = runLaunchctl(["print", LemurAudioHelper.coreAudioServiceTarget])
-        return LemurAudioHelper.coreAudioRestartResult(statusCheckExitCode: statusCode)
+        let restarter = CoreAudioRestarter(
+            runLaunchctl: { [log] arguments in Self.runLaunchctl(arguments, log: log) },
+            coreAudioPID: CoreAudioProcess.currentPID,
+            pause: { usleep(200_000) },
+            maxChecks: 25
+        )
+        let failure = restarter.restart()
+        if let failure {
+            log.error("coreaudiod restart failed: \(failure, privacy: .public)")
+        }
+        return failure
     }
 
     /// Runs a `launchctl` invocation, discarding its output, and returns its exit
     /// status (or -1 if the process could not be launched).
-    @discardableResult
-    private func runLaunchctl(_ arguments: [String]) -> Int32 {
+    private static func runLaunchctl(_ arguments: [String], log: Logger) -> Int32 {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         task.arguments = arguments

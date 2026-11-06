@@ -1,23 +1,35 @@
 @testable import LemurCam
 import XCTest
 
-/// Covers the coreaudiod-restart result policy: the install/uninstall outcome is
-/// decided by a status check (does coreaudiod come back?), not by the unreliable
-/// exit code of `launchctl kickstart -k`. Regression test for spurious
-/// "install/remove failed" reports.
+/// Covers the coreaudiod-restart result policy. A restart is proven only by a new
+/// coreaudiod PID: `launchctl print` exits 0 for any registered job (running or
+/// not), so the old status check could never fail, and `launchctl kickstart -k`'s
+/// own exit code is not trusted alone (it has been seen non-zero after a restart
+/// that worked, the cause of spurious "install/remove failed" reports).
 internal final class LemurAudioHelperReplyTests: XCTestCase {
-    func testStatusCheckSuccessReportsNoError() {
-        XCTAssertNil(LemurAudioHelper.coreAudioRestartResult(statusCheckExitCode: 0))
+    func testNewPidIsSuccessEvenIfKickstartReportedFailure() {
+        XCTAssertNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 0, pidBefore: 100, pidAfter: 200))
+        XCTAssertNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 37, pidBefore: 100, pidAfter: 200))
     }
 
-    func testStatusCheckFailureReportsError() {
-        let result = LemurAudioHelper.coreAudioRestartResult(statusCheckExitCode: 113)
+    func testStartingAStoppedCoreAudioIsSuccess() {
+        XCTAssertNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 0, pidBefore: nil, pidAfter: 300))
+    }
+
+    func testSamePidMeansNoRestartAndReportsKickstartStatus() {
+        let result = LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 113, pidBefore: 100, pidAfter: 100)
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.contains("113"), true)
+        XCTAssertNotNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 0, pidBefore: 100, pidAfter: 100))
+    }
+
+    func testNotRunningAfterwardsIsFailure() {
+        XCTAssertNotNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 0, pidBefore: 100, pidAfter: nil))
+        XCTAssertNotNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: 0, pidBefore: nil, pidAfter: nil))
     }
 
     func testProcessSpawnFailureReportsError() {
         // -1 is the helper's sentinel for "launchctl could not be launched".
-        XCTAssertNotNil(LemurAudioHelper.coreAudioRestartResult(statusCheckExitCode: -1))
+        XCTAssertNotNil(LemurAudioHelper.coreAudioRestartResult(kickstartStatus: -1, pidBefore: 100, pidAfter: 100))
     }
 }
