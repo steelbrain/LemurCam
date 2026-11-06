@@ -44,6 +44,14 @@ Package.resolved
 # Code signing
 *.mobileprovision
 *.provisionprofile
+*.p12
+*.cer
+*.certSigningRequest
+
+# Release artifacts
+*.dmg
+*.pkg
+*.zip
 
 # Misc
 xcuserdata/
