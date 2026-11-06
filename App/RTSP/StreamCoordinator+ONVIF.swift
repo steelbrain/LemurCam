@@ -1,7 +1,8 @@
 import Foundation
 
 /// What resolving an ONVIF camera's stream URI produced: the URI, or the error that
-/// explains why there is none. The error is shown when there is no stored URI to try.
+/// explains why there is none. The error is shown when there is no stored URI to try,
+/// or the error rules it out (`mayFallBackToStoredURI`).
 internal typealias ONVIFStreamURIResult = Result<String, any Error>
 
 /// The network operations the ONVIF resolve performs. Tests replace them so the
@@ -65,6 +66,24 @@ extension StreamCoordinator {
         }
         let split = SourceCredentials.extractingFromRTSPURL(uri)
         return (split.url, savedCredentials ?? split.credentials)
+    }
+
+    /// Whether a camera whose stream URI could not be resolved may still be connected
+    /// to at its stored stream URI. When nothing answered, or what answered was not a
+    /// working ONVIF service, the stored URI is how a camera with a broken ONVIF
+    /// service but working RTSP still streams. A refused login or a SOAP fault is an
+    /// ONVIF device's answer, and not necessarily this camera's: after two cameras
+    /// swap addresses the stored URI's address belongs to the other one, and
+    /// connecting there sent it an RTSP login on every retry. When it is this camera
+    /// refusing the login, the RTSP connect would send the same credentials again.
+    nonisolated static func mayFallBackToStoredURI(after error: any Error) -> Bool {
+        guard let onvifError = error as? ONVIFError else { return true }
+        switch onvifError {
+        case .authenticationFailed, .soapFault:
+            return false
+        case .invalidURL, .networkError, .httpStatus, .parseError, .timedOut:
+            return true
+        }
     }
 
     /// The message shown for a camera whose stream URI could not be resolved. ONVIF

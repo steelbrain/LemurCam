@@ -359,7 +359,7 @@ private extension StreamCoordinator {
             Log.rtsp.info("Connecting with resolved URI\(target.url == resolved ? "" : ", its login taken out")")
             connectPipeline(url: target.url, credentials: target.credentials)
         case .failure(let error):
-            if let storedURI = info.streamURI {
+            if let storedURI = info.streamURI, Self.mayFallBackToStoredURI(after: error) {
                 Log.rtsp.info("Falling back to stored URI")
                 connectPipeline(url: storedURI, credentials: credentials)
                 return
