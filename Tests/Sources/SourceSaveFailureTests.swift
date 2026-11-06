@@ -5,7 +5,8 @@ import XCTest
 /// permission the file looked missing, so the app showed no cameras and the next
 /// save could overwrite the intact file once permission came back; it now counts as
 /// unreadable. And a save that failed (disk full, folder not writable) was only
-/// logged; it is now shown in Settings → Cameras until a save works.
+/// logged; it is now shown in Settings → Cameras until a save works, or, for a camera
+/// added, edited or removed, undone with an error.
 @MainActor
 internal final class SourceSaveFailureTests: XCTestCase {
     private var directory: URL?
@@ -78,27 +79,37 @@ internal final class SourceSaveFailureTests: XCTestCase {
         }
     }
 
+    /// Reordering the cameras is kept until the app quits when it can't be saved, so the
+    /// banner shows. An add, edit or removal is undone instead (see
+    /// `SourceChangeWriteFailureTests`), and leaves the banner as it was.
     func testAFailedSaveIsShownUntilASaveWorks() throws {
         let url = try write(savedCamera)
         let manager = SourceManager(storage: SourceStorage(fileURL: url), keychain: InMemoryCredentialStore())
         manager.load()
+        try manager.addSource(name: "New", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.2/s")))
         XCTAssertNil(manager.saveProblemMessage)
 
         try setFolderPermissions(0o555)
-        try manager.addSource(name: "New", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.2/s")))
+        manager.moveSource(from: IndexSet(integer: 1), to: 0)
 
         XCTAssertTrue(manager.lastSaveFailed)
         XCTAssertNil(manager.saveRefusal, "a failed save refuses nothing")
         XCTAssertEqual(manager.saveProblemMessage, SourceStorage.saveFailureMessage)
-        XCTAssertEqual(manager.sources.map(\.name), ["Saved", "New"])
-        XCTAssertEqual(try savedNames(in: url), ["Saved"])
+        XCTAssertEqual(manager.sources.map(\.name), ["New", "Saved"])
+        XCTAssertEqual(try savedNames(in: url), ["Saved", "New"])
+
+        XCTAssertThrowsError(
+            try manager.addSource(name: "Refused", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.4/s")))
+        )
+        XCTAssertEqual(manager.sources.map(\.name), ["New", "Saved"])
+        XCTAssertEqual(manager.saveProblemMessage, SourceStorage.saveFailureMessage, "the order is still unsaved")
 
         try setFolderPermissions(0o755)
         try manager.addSource(name: "Later", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.3/s")))
 
         XCTAssertFalse(manager.lastSaveFailed)
         XCTAssertNil(manager.saveProblemMessage)
-        XCTAssertEqual(try savedNames(in: url), ["Saved", "New", "Later"])
+        XCTAssertEqual(try savedNames(in: url), ["New", "Saved", "Later"])
     }
 
     /// The message says what happened and what it means, and names no file path.

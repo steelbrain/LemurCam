@@ -27,6 +27,8 @@ internal final class SourceStorage {
         + "lost when you quit. It tries again the next time you change a camera."
 
     private let fileURL: URL
+    /// Writes the encoded cameras to the file. Tests pass one that fails.
+    private let writeFile: (Data, URL) throws -> Void
 
     /// Set when the sources file could not be read, or was damaged and could not be
     /// moved or copied aside. Saving is refused for the rest of the session so the
@@ -41,7 +43,11 @@ internal final class SourceStorage {
     /// holds what was saved before, every save tries again, and one that works clears it.
     private(set) var lastSaveFailed = false
 
-    init(fileURL: URL? = nil) {
+    init(
+        fileURL: URL? = nil,
+        writeFile: @escaping (Data, URL) throws -> Void = { data, url in try data.write(to: url, options: .atomic) }
+    ) {
+        self.writeFile = writeFile
         if let fileURL {
             self.fileURL = fileURL
         } else {
@@ -99,10 +105,14 @@ internal final class SourceStorage {
         return sources
     }
 
-    func save(_ sources: [CameraSource]) {
+    /// Writes `sources` to the file, and returns whether the file now holds them. Not
+    /// while saving is refused. When the file can't be written it keeps what it held,
+    /// since the write is atomic, and `lastSaveFailed` is set.
+    @discardableResult
+    func save(_ sources: [CameraSource]) -> Bool {
         guard saveRefusal == nil else {
             Log.app.error("Not saving cameras: the sources file could not be read or moved aside")
-            return
+            return false
         }
         do {
             let dir = fileURL.deletingLastPathComponent()
@@ -112,11 +122,13 @@ internal final class SourceStorage {
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(sources)
-            try data.write(to: fileURL, options: .atomic)
+            try writeFile(data, fileURL)
             lastSaveFailed = false
+            return true
         } catch {
             Log.app.error("Failed to save sources (\(Self.describe(error)))")
             lastSaveFailed = true
+            return false
         }
     }
 

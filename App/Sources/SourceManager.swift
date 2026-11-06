@@ -19,6 +19,16 @@ internal struct SaveRefusedError: LocalizedError {
     var errorDescription: String? { refusal.message }
 }
 
+/// The cameras file could not be written, so a camera was not added, edited or
+/// removed. The change is undone in the app and in the Keychain: kept only until the
+/// app quits, a removed camera came back after a restart without its password, and an
+/// edited one with its old address and its new password.
+internal struct SourceFileSaveError: LocalizedError {
+    var errorDescription: String? {
+        "LemurCam couldn't save your cameras, so the change wasn't made. Try again."
+    }
+}
+
 @MainActor @Observable
 internal final class SourceManager {
     private(set) var sources: [CameraSource] = []
@@ -71,7 +81,10 @@ internal final class SourceManager {
     }
 
     /// Adds a camera. Throws, adding nothing, `SaveRefusedError` while saving is
-    /// refused, and `CredentialSaveError` when its credentials can't be stored.
+    /// refused, `CredentialSaveError` when its credentials can't be stored, and
+    /// `SourceFileSaveError` when the file can't be written. The credentials are stored
+    /// first and deleted again when the write fails; were that to fail too, they belong
+    /// to no saved camera.
     func addSource(name: String, sourceType: SourceType, credentials: SourceCredentials? = nil) throws {
         try checkChangesAllowed()
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
@@ -82,35 +95,41 @@ internal final class SourceManager {
             try storeCredentials(resolvedCredentials, for: source.id, sourceName: name)
         }
 
+        let previous = sources
+        let previousActiveID = activeSourceID
         sources.append(source)
-        connectionStatuses[source.id] = .disconnected
         if activeSourceID == nil {
             activeSourceID = source.id
         }
+        do {
+            try saveChange(undoingTo: previous, activeSourceID: previousActiveID)
+        } catch {
+            if resolvedCredentials != nil { deleteCredentials(for: source.id) }
+            throw error
+        }
 
-        persist()
+        connectionStatuses[source.id] = .disconnected
         Log.app.info("Added source '\(name)'")
         onSourceConfigChanged?()
     }
 
-    /// Removes a camera and its stored credentials. Throws `SaveRefusedError`,
-    /// removing nothing, while saving is refused.
+    /// Removes a camera and its stored credentials. Throws, removing nothing,
+    /// `SaveRefusedError` while saving is refused, and `SourceFileSaveError` when the
+    /// file can't be written. The file is written first, so a camera a failed write
+    /// keeps also keeps its credentials.
     func removeSource(id: UUID) throws {
         try checkChangesAllowed()
+        let previous = sources
+        let previousActiveID = activeSourceID
         sources.removeAll { $0.id == id }
-        connectionStatuses[id] = nil
-        updateErrorMessage(for: id, message: nil)
-        do {
-            try keychain.delete(for: id)
-        } catch {
-            Log.app.error("Failed to delete credentials for source \(id): \(error)")
-        }
-
         if activeSourceID == id {
             activeSourceID = sources.first?.id
         }
+        try saveChange(undoingTo: previous, activeSourceID: previousActiveID)
 
-        persist()
+        connectionStatuses[id] = nil
+        updateErrorMessage(for: id, message: nil)
+        deleteCredentials(for: id)
         Log.app.info("Removed source \(id)")
         onSourceConfigChanged?()
     }
@@ -119,24 +138,34 @@ internal final class SourceManager {
     /// credentials. Credentials embedded in an RTSP URL are moved to the Keychain and
     /// take precedence over `credentials`, even a `.set` of other ones, for the parts
     /// the URL holds (see `CredentialChange.merging`). Throws, changing nothing,
-    /// `SaveRefusedError` while saving is refused, and `CredentialSaveError` when new
+    /// `SaveRefusedError` while saving is refused, `CredentialSaveError` when new
     /// credentials can't be stored, or when the URL holds only part of a login and the
-    /// stored part it needs can't be read.
+    /// stored part it needs can't be read, and `SourceFileSaveError` when the file
+    /// can't be written. The file is written before the Keychain changes, so a failed
+    /// write leaves the stored credentials with the camera as saved; credentials that
+    /// then can't be stored put the file back as it was.
     func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) throws {
         try checkChangesAllowed()
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
         let (cleanType, _) = Self.sanitizingCredentials(from: sourceType)
         let change = try credentialChange(credentials, mergingLoginFrom: sourceType, for: id, sourceName: name)
-        try apply(change, for: id, sourceName: name)
 
+        let previous = sources
         var updated = sources[index]
         updated.name = name
         updated.sourceType = cleanType
         updated.updatedAt = Date()
         sources[index] = updated
+        try saveChange(undoingTo: previous, activeSourceID: activeSourceID)
+        do {
+            try apply(change, for: id, sourceName: name)
+        } catch {
+            sources = previous
+            saveSources()
+            throw error
+        }
 
-        persist()
         Log.app.info("Updated source '\(name)'")
         onSourceConfigChanged?()
     }
@@ -177,11 +206,7 @@ internal final class SourceManager {
         case .set(let credentials):
             try storeCredentials(credentials, for: id, sourceName: sourceName)
         case .remove:
-            do {
-                try keychain.delete(for: id)
-            } catch {
-                Log.app.error("Failed to delete credentials for source \(id): \(error)")
-            }
+            deleteCredentials(for: id)
         }
     }
 
@@ -240,6 +265,45 @@ internal final class SourceManager {
         }
     }
 
+    private func persist() {
+        saveSources()
+        persistActiveSource()
+    }
+
+    private func saveSources() {
+        storage.save(sources)
+        lastSaveFailed = storage.lastSaveFailed
+    }
+
+    /// Not while saving is refused: the saved file lists last session's cameras, and
+    /// the camera picked now need not be one of them.
+    private func persistActiveSource() {
+        guard saveRefusal == nil else { return }
+        UserDefaults.standard.set(activeSourceID?.uuidString, forKey: LemurCamConfig.activeSourceKey)
+    }
+}
+
+private extension SourceManager {
+    func checkChangesAllowed() throws {
+        if let saveRefusal { throw SaveRefusedError(refusal: saveRefusal) }
+    }
+
+    /// Writes the cameras after an add, edit or removal made in `sources`. When the
+    /// file can't be written it still holds `previous`, so the cameras and the active
+    /// camera go back to `previous` and `previousActiveID`, and `SourceFileSaveError`
+    /// is thrown. `lastSaveFailed` stays as it was: what the app holds is again what it
+    /// held before the change.
+    func saveChange(undoingTo previous: [CameraSource], activeSourceID previousActiveID: UUID?) throws {
+        guard storage.save(sources) else {
+            sources = previous
+            activeSourceID = previousActiveID
+            Log.app.error("Undid a camera change: the cameras file could not be written")
+            throw SourceFileSaveError()
+        }
+        lastSaveFailed = false
+        persistActiveSource()
+    }
+
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an
     /// empty user name or with a `/`, `?`, `#` or `@` in its userinfo, or an ONVIF
     /// stream URI reported by the camera). Moves them out once on load: RTSP
@@ -253,7 +317,7 @@ internal final class SourceManager {
     /// the query (`rtsp://192.168.1.5:554/user=admin&password=p@ss`) would be split at
     /// the `@` in its password and the address lost. IPCamKit refuses such a URL with a
     /// message saying how to write the `@`, and the edit form asks for the same fix.
-    private func moveEmbeddedCredentialsToKeychain() {
+    func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {
             let source = sources[index]
@@ -285,27 +349,14 @@ internal final class SourceManager {
         Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
     }
 
-    private func persist() {
-        saveSources()
-        persistActiveSource()
-    }
-
-    private func saveSources() {
-        storage.save(sources)
-        lastSaveFailed = storage.lastSaveFailed
-    }
-
-    /// Not while saving is refused: the saved file lists last session's cameras, and
-    /// the camera picked now need not be one of them.
-    private func persistActiveSource() {
-        guard saveRefusal == nil else { return }
-        UserDefaults.standard.set(activeSourceID?.uuidString, forKey: LemurCamConfig.activeSourceKey)
-    }
-}
-
-private extension SourceManager {
-    func checkChangesAllowed() throws {
-        if let saveRefusal { throw SaveRefusedError(refusal: saveRefusal) }
+    /// A failed delete leaves credentials that no saved camera uses, or a camera's old
+    /// ones, which loses nothing.
+    func deleteCredentials(for id: UUID) {
+        do {
+            try keychain.delete(for: id)
+        } catch {
+            Log.app.error("Failed to delete credentials for source \(id): \(error)")
+        }
     }
 
     /// `change` with the login an edited RTSP URL holds. A stored part that can't be
