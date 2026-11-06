@@ -188,22 +188,11 @@ internal final class RTSPStreamPipeline: Sendable {
     private func connectWithTimeout(
         session: RTSPClientSession
     ) async throws -> SessionDescription {
-        try await withThrowingTaskGroup(
-            of: SessionDescription.self
-        ) { group -> SessionDescription in
-            group.addTask {
-                try await session.start()
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: Tuning.connectionTimeoutNs)
-                throw TimeoutError()
-            }
-            guard let result = try await group.next() else {
-                throw TimeoutError()
-            }
-            group.cancelAll()
-            return result
-        }
+        try await Self.withConnectTimeout(
+            nanoseconds: Tuning.connectionTimeoutNs,
+            start: { try await session.start() },
+            abort: { await session.stop() }
+        )
     }
 
     private func publishStreamInfo(_ video: VideoStream) {
@@ -317,6 +306,48 @@ private extension RTSPStreamPipeline {
         default:
             return
         }
+    }
+}
+
+// MARK: - Connect Timeout
+
+extension RTSPStreamPipeline {
+    /// Run `start`, failing with `TimeoutError` once `timeoutNs` passes. IPCamKit's
+    /// `RTSPClientSession.start()` ignores task cancellation, so cancelling it would
+    /// leave the task group waiting for it past the timeout. `abort` ends it instead:
+    /// the session's `stop()` during `start()` closes the connection at once and makes
+    /// `start()` throw. A cancelled caller aborts the same way. After a timeout the
+    /// result is `TimeoutError`, whatever `start` returns or throws afterwards.
+    static func withConnectTimeout<Value: Sendable>(
+        nanoseconds timeoutNs: UInt64,
+        start: @escaping @Sendable () async throws -> Value,
+        abort: @escaping @Sendable () async -> Void
+    ) async throws -> Value {
+        let timedOut = OSAllocatedUnfairLock(initialState: false)
+        let outcome: Result<Value, any Error>
+        do {
+            let value = try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: Value.self) { group -> Value in
+                    group.addTask { try await start() }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: timeoutNs)
+                        timedOut.withLock { $0 = true }
+                        await abort()
+                        throw TimeoutError()
+                    }
+                    guard let value = try await group.next() else { throw TimeoutError() }
+                    group.cancelAll()
+                    return value
+                }
+            } onCancel: {
+                Task { await abort() }
+            }
+            outcome = .success(value)
+        } catch {
+            outcome = .failure(error)
+        }
+        if timedOut.withLock({ $0 }) { throw TimeoutError() }
+        return try outcome.get()
     }
 }
 

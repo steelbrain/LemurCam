@@ -14,7 +14,6 @@ internal final class StreamCoordinator {
     private var currentSourceUpdatedAt: Date?
     private var retryTask: Task<Void, Never>?
     private var onvifTask: Task<Void, Never>?
-    private var connectionWatchdogTask: Task<Void, Never>?
     private var retryCount: Int = 0
     private var _hasConsumers: Bool = false
     private var _hasAudioConsumers: Bool = false
@@ -247,8 +246,6 @@ private extension StreamCoordinator {
         retryTask = nil
         onvifTask?.cancel()
         onvifTask = nil
-        connectionWatchdogTask?.cancel()
-        connectionWatchdogTask = nil
     }
 }
 
@@ -342,14 +339,10 @@ private extension StreamCoordinator {
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
             sourceManager.updateErrorMessage(for: sourceID, message: "Could not reach camera")
             fallbackGenerator.start()
-            return
         }
-        scheduleConnectionWatchdog()
     }
 
     func handlePipelineStateChanged(_ state: RTSPStreamPipeline.State) {
-        connectionWatchdogTask?.cancel()
-        connectionWatchdogTask = nil
         if state != .streaming {
             frameDispatcher.reset()
         }
@@ -383,19 +376,6 @@ private extension StreamCoordinator {
             scheduleRetry()
         } else if case .disconnected = state {
             scheduleRetry()
-        }
-    }
-
-    func scheduleConnectionWatchdog() {
-        connectionWatchdogTask?.cancel()
-        let timeout = Tuning.connectionTimeoutNs
-        connectionWatchdogTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: timeout + 5_000_000_000)
-            } catch { return }
-            guard let self, !Task.isCancelled else { return }
-            Log.rtsp.warning("Connection watchdog fired — pipeline unresponsive, forcing retry")
-            self.scheduleRetry()
         }
     }
 
