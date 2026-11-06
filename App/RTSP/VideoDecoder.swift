@@ -10,6 +10,10 @@ internal final class VideoDecoder {
     }
 
     private let deliveryGate = VideoDecoderDeliveryGate()
+    /// One per error source: the output handler reports per-frame decode results on
+    /// VideoToolbox's thread, and the submit call can fail synchronously on its own.
+    private let outputErrors = DecodeErrorDeduper()
+    private let submitErrors = DecodeErrorDeduper()
     private var session: VTDecompressionSession?
     private var currentFormatDescription: CMVideoFormatDescription?
 
@@ -40,18 +44,16 @@ internal final class VideoDecoder {
             sampleBuffer: sampleBuffer,
             flags: decodeFlags,
             infoFlagsOut: nil,
-            outputHandler: { [deliveryGate] status, _, imageBuffer, _, _ in
-                guard status == noErr, let pixelBuffer = imageBuffer else {
-                    if status != noErr {
-                        Log.rtsp.error("Decode frame error: \(status)")
-                    }
-                    return
+            outputHandler: { [deliveryGate, outputErrors] status, _, imageBuffer, _, _ in
+                if outputErrors.shouldLog(status) {
+                    Log.rtsp.error("Decode frame error: \(status)")
                 }
+                guard status == noErr, let pixelBuffer = imageBuffer else { return }
                 deliveryGate.deliverIfActive(pixelBuffer)
             }
         )
 
-        if decodeStatus != noErr {
+        if submitErrors.shouldLog(decodeStatus) {
             Log.rtsp.error("VTDecompressionSessionDecodeFrame failed: \(decodeStatus)")
         }
     }
@@ -155,6 +157,10 @@ internal final class VideoDecoder {
 
         VTSessionSetProperty(newSession, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
         session = newSession
+        // A new session (format change) starts fresh, so its first error is logged
+        // even if the old session's last frame failed the same way.
+        outputErrors.reset()
+        submitErrors.reset()
         // Re-enable delivery: `updateFormatDescription` tears the old session down
         // (clearing `isActive`) before creating this one on a mid-stream format change.
         deliveryGate.activate()
@@ -198,5 +204,35 @@ private final class VideoDecoderDeliveryGate: Sendable {
             $0.isActive ? $0.onDecodedFrame : nil
         }
         callback?(pixelBuffer)
+    }
+}
+
+/// Collapses a run of identical per-frame decode errors into one log line. After
+/// packet loss every frame until the next keyframe can fail with the same status
+/// (`kVTVideoDecoderBadDataErr` on an H.265 stream), which would otherwise log one
+/// line per frame. An error is logged when it starts a run: the first error, or one
+/// whose status differs from the error just before it. A successful decode ends
+/// the run, so the same error recurring later is logged again. Called from
+/// VideoToolbox's output thread and the decode loop, hence the lock.
+internal final class DecodeErrorDeduper: Sendable {
+    private let lastLoggedStatus = OSAllocatedUnfairLock<OSStatus?>(initialState: nil)
+
+    /// Records one frame's decode status and returns whether to log it.
+    func shouldLog(_ status: OSStatus) -> Bool {
+        lastLoggedStatus.withLock { last in
+            guard status != noErr else {
+                last = nil
+                return false
+            }
+            guard status != last else { return false }
+            last = status
+            return true
+        }
+    }
+
+    func reset() {
+        lastLoggedStatus.withLock {
+            $0 = nil
+        }
     }
 }
