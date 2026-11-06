@@ -45,6 +45,25 @@ done
 # Run from the repo root no matter where the script is invoked from.
 cd "$(dirname "$0")/.."
 
+# .swiftlint.yml pins the SwiftLint version, and any other version makes the
+# lint exit 2 with only a one-line warning. Check it before doing any work.
+REQUIRED_SWIFTLINT="$(awk '$1 == "swiftlint_version:" { gsub(/["'\'']/, "", $2); print $2; exit }' .swiftlint.yml)"
+if [[ -z "$REQUIRED_SWIFTLINT" ]]; then
+  echo "error: could not read swiftlint_version from .swiftlint.yml." >&2
+  exit 1
+fi
+if ! command -v swiftlint >/dev/null 2>&1; then
+  echo "error: SwiftLint ${REQUIRED_SWIFTLINT} is required (swiftlint_version in .swiftlint.yml), but swiftlint is not on PATH." >&2
+  echo "See \"Building From Source\" in README.md for how to install it." >&2
+  exit 1
+fi
+INSTALLED_SWIFTLINT="$(swiftlint version 2>/dev/null || echo unknown)"
+if [[ "$INSTALLED_SWIFTLINT" != "$REQUIRED_SWIFTLINT" ]]; then
+  echo "error: SwiftLint ${REQUIRED_SWIFTLINT} is required (swiftlint_version in .swiftlint.yml), but $(command -v swiftlint) is ${INSTALLED_SWIFTLINT}." >&2
+  echo "Put SwiftLint ${REQUIRED_SWIFTLINT} first on PATH; see \"Building From Source\" in README.md." >&2
+  exit 1
+fi
+
 if [[ "$UNSIGNED" -eq 1 ]]; then
   echo "==> Code signing disabled (CODE_SIGNING_ALLOWED=NO)."
   BUILD_ARGS=(CODE_SIGNING_ALLOWED=NO)

@@ -1,6 +1,8 @@
-# The exact SwiftLint version CI installs (.github/workflows/ci.yml). With
-# --strict, running any other version fails the lint, so a new SwiftLint
-# release cannot change results without a commit. Bump both together.
+# The exact SwiftLint version CI installs (.github/workflows/ci.yml). Running
+# any other version fails the lint (exit 2), so a new SwiftLint release cannot
+# change results without a commit. scripts/ci.sh reads this value to check the
+# installed version. Bump it and the workflow's SWIFTLINT_VERSION together,
+# along with the version README.md and AGENTS.md name.
 swiftlint_version: 0.65.1
 
 included:
