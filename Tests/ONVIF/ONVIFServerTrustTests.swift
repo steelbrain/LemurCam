@@ -47,29 +47,27 @@ internal final class ONVIFServerTrustTests: XCTestCase {
     // MARK: - With a real certificate
 
     func testASelfSignedCertificateIsNotTrustedByMacOS() throws {
-        let trust = try TestCertificate.serverTrust()
         let leaf = CertificateFingerprint(certificateData: TestCertificate.der)
-        XCTAssertEqual(Trust.decision(for: trust, pin: nil), .refused(.untrusted, fingerprint: leaf))
+        XCTAssertEqual(try TestCertificate.decision(pin: nil), .refused(.untrusted, fingerprint: leaf))
     }
 
     func testTheSelfSignedCertificateIsAcceptedOncePinnedWhateverTheHost() throws {
         let pin = try XCTUnwrap(CertificateFingerprint(TestCertificate.opensslFingerprint))
         // The certificate names camera.test; the camera is reached by its IP address.
-        let trust = try TestCertificate.serverTrust(host: "192.0.2.10")
-        XCTAssertEqual(Trust.decision(for: trust, pin: pin), .matchesPin)
+        XCTAssertEqual(try TestCertificate.decision(pin: pin, host: "192.0.2.10"), .matchesPin)
     }
 
     func testTheSelfSignedCertificateIsRefusedAsChangedWhenAnotherIsPinned() throws {
-        let trust = try TestCertificate.serverTrust()
         XCTAssertEqual(
-            Trust.decision(for: trust, pin: TestCertificate.otherFingerprint),
+            try TestCertificate.decision(pin: TestCertificate.otherFingerprint),
             .refused(.changed, fingerprint: CertificateFingerprint(certificateData: TestCertificate.der))
         )
     }
 
     func testACertificateThatChainsToATrustedAnchorIsTrustedBySystem() throws {
-        let trust = try TestCertificate.serverTrust(anchored: true)
-        XCTAssertEqual(Trust.decision(for: trust, pin: TestCertificate.otherFingerprint), .trustedBySystem)
+        XCTAssertEqual(
+            try TestCertificate.decision(pin: TestCertificate.otherFingerprint, anchored: true), .trustedBySystem
+        )
     }
 
     // MARK: - The session delegate

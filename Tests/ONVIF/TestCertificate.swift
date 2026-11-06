@@ -1,5 +1,6 @@
 import Foundation
 @testable import LemurCam
+import os
 import Security
 import XCTest
 
@@ -54,19 +55,52 @@ internal enum TestCertificate {
         )
     }
 
-    /// Has `client`'s delegate meet the certificate, as a connection to the camera
-    /// would, and returns how it answered. A stub `URLProtocol` can't present one:
-    /// the session hands its delegate a copy of the protection space without the trust.
+    /// `ONVIFServerTrust.decision(for:pin:)` for a connection to `host` presenting
+    /// the certificate (see `serverTrust(host:anchored:)`).
+    static func decision(
+        pin: CertificateFingerprint?, host: String = "camera.test", anchored: Bool = false
+    ) throws -> ONVIFServerTrust.Decision {
+        let shared = SendableTrust(trust: try serverTrust(host: host, anchored: anchored))
+        return try XCTUnwrap(offMainThread { ONVIFServerTrust.decision(for: shared.trust, pin: pin) })
+    }
+
+    /// Has `delegate` meet the certificate, as a connection to the camera would, and
+    /// returns how it answered. A stub `URLProtocol` can't present one: the session
+    /// hands its delegate a copy of the protection space without the trust.
     @discardableResult
     static func present(
         _ trust: SecTrust, to delegate: ONVIFServerTrustDelegate
-    ) -> URLSession.AuthChallengeDisposition {
-        let answer = DispositionBox()
-        delegate.urlSession(URLSession.shared, didReceive: challenge(trust)) { disposition, _ in
-            answer.set(disposition)
+    ) -> URLSession.AuthChallengeDisposition? {
+        let shared = SendableTrust(trust: trust)
+        return offMainThread {
+            let answer = OSAllocatedUnfairLock<URLSession.AuthChallengeDisposition?>(initialState: nil)
+            delegate.urlSession(URLSession.shared, didReceive: challenge(shared.trust)) { disposition, _ in
+                answer.withLock { $0 = disposition }
+            }
+            return answer.withLock { $0 }
         }
-        return answer.value
     }
+
+    /// Runs `work` on a thread of its own and waits for it. macOS warns when a trust is
+    /// evaluated on the main thread, where tests run; the session's delegate queue,
+    /// where the app evaluates them, never is.
+    private static func offMainThread<Value: Sendable>(_ work: @escaping @Sendable () -> Value?) -> Value? {
+        let result = OSAllocatedUnfairLock<Value?>(initialState: nil)
+        let done = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let value = work()
+            result.withLock { $0 = value }
+            done.signal()
+        }
+        thread.start()
+        done.wait()
+        return result.withLock { $0 }
+    }
+}
+
+/// A `SecTrust` handed to another thread. It is only read.
+internal struct SendableTrust: @unchecked Sendable {
+    let trust: SecTrust
 }
 
 /// A protection space that carries `trust`, as one for a TLS connection does.
@@ -93,12 +127,4 @@ private final class IgnoredChallengeSender: NSObject, URLAuthenticationChallenge
     func use(_: URLCredential, for _: URLAuthenticationChallenge) {}
     func continueWithoutCredential(for _: URLAuthenticationChallenge) {}
     func cancel(_: URLAuthenticationChallenge) {}
-}
-
-private final class DispositionBox: @unchecked Sendable {
-    private(set) var value = URLSession.AuthChallengeDisposition.rejectProtectionSpace
-
-    func set(_ disposition: URLSession.AuthChallengeDisposition) {
-        value = disposition
-    }
 }
