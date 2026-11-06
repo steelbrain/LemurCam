@@ -79,15 +79,14 @@ internal final class SourceManager {
 
     /// Replaces a source's name and type and applies `credentials` to its stored
     /// credentials. Credentials embedded in an RTSP URL are moved to the Keychain and
-    /// take precedence over `.keep` and `.remove`, since they are the newest input.
+    /// take precedence over `credentials`, even a `.set` of other ones: the edit form
+    /// shows the saved URL without credentials and fills the fields with the saved
+    /// ones, so a login in the URL was just typed or pasted and is the newest input.
     func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) {
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
-        var change = credentials
-        if let urlCredentials, credentials == .keep || credentials == .remove {
-            change = .set(urlCredentials)
-        }
+        let change = urlCredentials.map(CredentialChange.set) ?? credentials
 
         var updated = sources[index]
         updated.name = name

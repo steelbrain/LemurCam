@@ -108,6 +108,34 @@ internal final class SourceCredentialReadFailureTests: XCTestCase {
         XCTAssertEqual(credentialStore.stored[id], SourceCredentials(username: "bob", password: "pa55"))
     }
 
+    /// The edit form fills its fields with the saved login and passes it back as
+    /// `.set`. A new password pasted into the URL lost to it and was silently dropped;
+    /// the URL's login is the newest input and now wins.
+    func testURLCredentialsOverrideTheFormsSavedOnes() throws {
+        let (sourceManager, credentialStore, id) = try addCamera()
+        let shownInForm = try XCTUnwrap(credentialStore.stored[id])
+
+        sourceManager.updateSource(
+            id: id, name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://viewer:n3w-pw@192.0.2.5/s")),
+            credentials: .set(shownInForm)
+        )
+
+        XCTAssertEqual(credentialStore.stored[id], SourceCredentials(username: "viewer", password: "n3w-pw"))
+        XCTAssertEqual(sourceManager.sources.first?.sourceType, .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s")))
+    }
+
+    /// Without a login in the URL the form's change applies as before.
+    func testFormCredentialsApplyWhenTheURLHasNone() throws {
+        let (sourceManager, credentialStore, id) = try addCamera()
+        let typed = SourceCredentials(username: "admin", password: "typed")
+
+        sourceManager.updateSource(
+            id: id, name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.5/s")), credentials: .set(typed)
+        )
+
+        XCTAssertEqual(credentialStore.stored[id], typed)
+    }
+
     // MARK: - Form decision
 
     func testFormDecision() {
