@@ -8,6 +8,9 @@ import XMLKit
 /// safe to pass into tasks.
 internal final class ONVIFClient: Sendable {
     static let deviceServicePath = "/onvif/device_service"
+    /// Where most cameras serve the media service; used when GetCapabilities does
+    /// not say otherwise.
+    static let defaultMediaServicePath = "/onvif/media"
 
     private let host: String
     private let port: Int
@@ -20,6 +23,9 @@ internal final class ONVIFClient: Sendable {
     /// Seconds to add to the Mac's clock to get the device's, measured once per
     /// client with GetSystemDateAndTime before the first signed request.
     private let clockOffset = OSAllocatedUnfairLock<TimeInterval?>(initialState: nil)
+
+    /// Path of the media service, read once per client from GetCapabilities.
+    private let mediaPath = OSAllocatedUnfairLock<String?>(initialState: nil)
 
     /// `configuration` exists so tests can install a stub `URLProtocol`; the app
     /// always uses the default configuration.
@@ -45,7 +51,7 @@ internal final class ONVIFClient: Sendable {
     // MARK: - Public
 
     func getProfiles() async throws -> [ONVIFProfile] {
-        let data = try await post(path: "/onvif/media", body: ONVIFSOAP.getProfiles())
+        let data = try await post(path: mediaServicePath(), body: ONVIFSOAP.getProfiles())
         return try parseProfiles(data)
     }
 
@@ -55,8 +61,40 @@ internal final class ONVIFClient: Sendable {
     }
 
     func getStreamURI(profileToken: String) async throws -> String {
-        let data = try await post(path: "/onvif/media", body: ONVIFSOAP.getStreamURI(profileToken: profileToken))
+        let data = try await post(path: mediaServicePath(), body: ONVIFSOAP.getStreamURI(profileToken: profileToken))
         return try parseStreamURI(data)
+    }
+
+    // MARK: - Service discovery
+
+    /// Cameras serve the media service at vendor-specific paths (`/onvif/Media`,
+    /// `/onvif/media_service`, ...), so the client asks the device service where it
+    /// is. Only the path of the returned address is used: requests stay on the host
+    /// and port the user configured, so a device cannot point signed requests at
+    /// another host, and cameras behind port forwarding (which report their internal
+    /// address) keep working. GetCapabilities needs no authentication and is sent
+    /// unsigned, so a wrong password does not add a failed login.
+    private func mediaServicePath() async throws -> String {
+        if let cached = mediaPath.withLock({ $0 }) { return cached }
+        let resolved = try await resolveMediaServicePath()
+        mediaPath.withLock { $0 = resolved }
+        return resolved
+    }
+
+    private func resolveMediaServicePath() async throws -> String {
+        let fallback = Self.defaultMediaServicePath
+        do {
+            let data = try await post(
+                path: Self.deviceServicePath, body: ONVIFSOAP.getMediaCapabilities(), signed: false
+            )
+            if let path = Self.parseMediaServicePath(data) { return path }
+            Log.app.info("ONVIF device listed no media service; using \(fallback)")
+        } catch let error as ONVIFError where error.isTransportFailure {
+            throw error
+        } catch {
+            Log.app.info("ONVIF GetCapabilities failed (\(error.localizedDescription)); using \(fallback)")
+        }
+        return Self.defaultMediaServicePath
     }
 
     // MARK: - SOAP

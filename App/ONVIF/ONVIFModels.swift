@@ -8,6 +8,11 @@ internal struct DiscoveredDevice: Identifiable {
     let model: String?       // From scopes
     let host: String         // Extracted from endpoint URL
     let port: Int            // Extracted from endpoint URL
+
+    /// Whether the device service URL is HTTPS.
+    var useHTTPS: Bool {
+        URLComponents(string: endpointURL)?.scheme?.lowercased() == "https"
+    }
 }
 
 internal struct ONVIFDeviceInfo {

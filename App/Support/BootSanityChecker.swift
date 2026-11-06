@@ -64,7 +64,8 @@ internal final class BootSanityChecker {
         let client = ONVIFClient(
             host: info.host, port: info.port,
             username: credentials?.username,
-            password: credentials?.password
+            password: credentials?.password,
+            useHTTPS: info.useHTTPS
         )
         do {
             _ = try await ONVIFTimeout.run(seconds: ONVIFTimeout.launchProbe) {

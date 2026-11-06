@@ -108,7 +108,8 @@ internal final class ONVIFClockTests: XCTestCase {
         )
         _ = try await client.getProfiles()
         _ = try await client.getProfiles()
-        return try captured.all.map(Self.exchange)
+        // The unsigned media-service lookup is covered by ONVIFServiceAddressTests.
+        return try captured.all.map(Self.exchange).filter { $0.operation != "GetCapabilities" }
     }
 
     private static func exchange(_ body: Data) throws -> Exchange {

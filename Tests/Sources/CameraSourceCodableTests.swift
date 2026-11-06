@@ -86,6 +86,17 @@ internal final class CameraSourceCodableTests: XCTestCase {
         XCTAssertNil(info.deviceUUID)
         XCTAssertNil(info.selectedProfileToken)
         XCTAssertNil(info.streamURI)
+        // Sources saved before HTTPS support carry no scheme and keep using HTTP.
+        XCTAssertFalse(info.useHTTPS)
+    }
+
+    func testONVIFHTTPSRoundTrips() throws {
+        let source = CameraSource(
+            name: "TLS Cam",
+            sourceType: .onvif(ONVIFSourceInfo(host: "192.0.2.4", port: 443, useHTTPS: true))
+        )
+        let decoded = try decoder.decode(CameraSource.self, from: try encoder.encode(source))
+        XCTAssertEqual(decoded.sourceType, source.sourceType)
     }
 
     /// `ONVIFSourceInfo.port` carries a `= 80` default in its declaration, but Swift's

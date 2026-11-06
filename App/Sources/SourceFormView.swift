@@ -18,6 +18,7 @@ internal struct SourceFormView: View {
     @State private var streamURI: String?
     @State private var onvifHost: String = ""
     @State private var onvifPort: Int = Tuning.defaultHTTPPort
+    @State private var onvifUseHTTPS = false
     @State private var deviceUUID: String?
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
@@ -134,6 +135,7 @@ internal struct SourceFormView: View {
                 TextField("Port", value: $onvifPort, format: .number.grouping(.never))
                     .multilineTextAlignment(.trailing)
             }
+            Toggle("Use HTTPS", isOn: $onvifUseHTTPS)
             Button {
                 fetchProfiles()
             } label: {
@@ -217,7 +219,8 @@ private extension SourceFormView {
         ONVIFClient(
             host: onvifHost, port: onvifPort,
             username: hasCredentials ? username : nil,
-            password: hasCredentials ? password : nil
+            password: hasCredentials ? password : nil,
+            useHTTPS: onvifUseHTTPS
         )
     }
 
@@ -260,8 +263,8 @@ private extension SourceFormView {
             return
         }
         onvifHost = host
-        onvifPort = components.port
-            ?? (components.scheme == "https" ? Tuning.defaultHTTPSPort : Tuning.defaultHTTPPort)
+        onvifUseHTTPS = components.scheme?.lowercased() == "https"
+        onvifPort = components.port ?? (onvifUseHTTPS ? Tuning.defaultHTTPSPort : Tuning.defaultHTTPPort)
         fetchProfiles()
     }
 
@@ -331,7 +334,7 @@ private extension SourceFormView {
         }
         return .onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: onvifHost, port: onvifPort,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI
+            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: onvifUseHTTPS
         ))
     }
 
@@ -358,6 +361,7 @@ private extension SourceFormView {
             editSourceType = .onvif
             onvifHost = info.host
             onvifPort = info.port
+            onvifUseHTTPS = info.useHTTPS
             selectedProfileToken = info.selectedProfileToken
             streamURI = info.streamURI
             deviceUUID = info.deviceUUID

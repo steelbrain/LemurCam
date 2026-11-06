@@ -31,13 +31,16 @@ extension StreamCoordinator {
         }
     }
 
-    static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> String? {
-        let client = ONVIFClient(
-            host: params.info.host, port: params.info.port,
-            username: params.credentials?.username,
-            password: params.credentials?.password
+    static func makeONVIFClient(for info: ONVIFSourceInfo, credentials: SourceCredentials?) -> ONVIFClient {
+        ONVIFClient(
+            host: info.host, port: info.port,
+            username: credentials?.username, password: credentials?.password,
+            useHTTPS: info.useHTTPS
         )
+    }
 
+    static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> String? {
+        let client = makeONVIFClient(for: params.info, credentials: params.credentials)
         do {
             return try await client.getStreamURI(profileToken: params.token)
         } catch {
@@ -54,22 +57,19 @@ extension StreamCoordinator {
         guard let match = devices.first(where: { $0.id == uuid }) else { return nil }
         Log.rtsp.info("Found device at \(match.host):\(match.port)")
 
-        await MainActor.run {
+        var updated = params.info
+        updated.host = match.host
+        updated.port = match.port
+        updated.useHTTPS = match.useHTTPS
+        await MainActor.run { [updated] in
             guard let sourceManager = params.sourceManager else { return }
-            var updated = params.info
-            updated.host = match.host
-            updated.port = match.port
             sourceManager.updateSource(
                 id: params.sourceID, name: params.sourceName,
                 sourceType: .onvif(updated), credentials: params.credentials
             )
         }
 
-        let newClient = ONVIFClient(
-            host: match.host, port: match.port,
-            username: params.credentials?.username,
-            password: params.credentials?.password
-        )
+        let newClient = makeONVIFClient(for: updated, credentials: params.credentials)
         do {
             return try await newClient.getStreamURI(profileToken: params.token)
         } catch {

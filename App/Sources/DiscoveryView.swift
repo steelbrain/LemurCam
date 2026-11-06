@@ -275,7 +275,8 @@ private extension DiscoveryView {
         ONVIFClient(
             host: device.host, port: device.port,
             username: hasCredentials ? username : nil,
-            password: hasCredentials ? password : nil
+            password: hasCredentials ? password : nil,
+            useHTTPS: device.useHTTPS
         )
     }
 
@@ -340,7 +341,7 @@ private extension DiscoveryView {
         guard let device = selectedDevice else { return }
         let sourceType = SourceType.onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: device.host, port: device.port,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI
+            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: device.useHTTPS
         ))
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty
