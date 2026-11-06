@@ -38,6 +38,12 @@ internal final class CMIOStreamQueueResources: Sendable {
     }
 }
 
+/// Lock-protected discovery and sink-stream state for `LemurCamModel`. The cached
+/// CMIO device/stream IDs are only valid for one registration of the LemurCam
+/// device: when the extension is disabled, re-enabled, repaired, replaced or
+/// crashes, the device goes away and comes back as a new CMIO object. So the
+/// cache is dropped whenever the device list no longer shows the cached device
+/// (`deviceListChanged`) and whenever a re-run discovery finds different IDs.
 internal final class LemurCamStreamState: Sendable {
     internal struct StartSnapshot: Sendable {
         let deviceID: CMIODeviceID
@@ -50,16 +56,29 @@ internal final class LemurCamStreamState: Sendable {
         let streamID: CMIOStreamID
     }
 
-    internal enum RetryAction {
+    internal enum RetryAction: Equatable {
         case idle
         case failed
         case discover(attempt: Int)
     }
 
     internal enum DiscoveryResultAction: Equatable {
+        /// Discovery found the cached device again (same IDs), or failed while a
+        /// device is still cached: keep the current sink stream as it is.
         case alreadyReady
         case retry
+        /// A new or replaced device is cached; state tied to an older one is gone.
         case ready(deviceID: CMIODeviceID)
+    }
+
+    internal enum DeviceListChangeAction: Equatable {
+        /// The cached device is still there, or discovery isn't wanted yet.
+        case unchanged
+        /// The cached device went away. Its IDs and sink stream are dropped; wait
+        /// for the device to come back.
+        case deviceLost
+        /// The device appeared, or replaced the cached one: run discovery.
+        case rediscover
     }
 
     private struct State: Sendable {
@@ -68,10 +87,35 @@ internal final class LemurCamStreamState: Sendable {
         var isStarting = false
         var deviceID: CMIODeviceID?
         var streamID: CMIOStreamID?
-        var isReady = false
         var hasConnectedOnce = false
         var setupRetries = 0
         var isDiscovering = false
+        /// A discovery pass is wanted and hasn't succeeded yet.
+        var discoveryPending = false
+        /// `requestDiscovery()` ran at least once (setup reported the camera ready),
+        /// so device-list changes may start discovery on their own.
+        var discoveryRequested = false
+        /// A retry timer is armed; keeps duplicate timers from stacking up.
+        var retryScheduled = false
+
+        var isReady: Bool { deviceID != nil && streamID != nil }
+
+        /// Forget the cached device and everything tied to it, including a sink
+        /// stream that is stuck "streaming" because the extension died without
+        /// posting `consumerStopped`.
+        mutating func dropDevice() {
+            streamResources = nil
+            isStreaming = false
+            isStarting = false
+            deviceID = nil
+            streamID = nil
+            hasConnectedOnce = false
+        }
+
+        mutating func armDiscovery() {
+            discoveryPending = true
+            setupRetries = 0
+        }
     }
 
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
@@ -86,44 +130,6 @@ internal final class LemurCamStreamState: Sendable {
 
     var hasStreamResources: Bool {
         state.withLock { $0.streamResources != nil }
-    }
-
-    func resetSetupRetries() {
-        state.withLock {
-            $0.setupRetries = 0
-        }
-    }
-
-    func prepareRetry(maxRetries: Int) -> RetryAction {
-        state.withLock { state -> RetryAction in
-            if state.isReady || state.isDiscovering {
-                return .idle
-            }
-            guard state.setupRetries < maxRetries else {
-                return .failed
-            }
-            state.setupRetries += 1
-            state.isDiscovering = true
-            return .discover(attempt: state.setupRetries)
-        }
-    }
-
-    func applyDiscoveryResult(
-        _ result: (deviceID: CMIODeviceID, streamID: CMIOStreamID)?
-    ) -> DiscoveryResultAction {
-        state.withLock { state in
-            state.isDiscovering = false
-            if state.isReady {
-                return .alreadyReady
-            }
-            guard let result else {
-                return .retry
-            }
-            state.deviceID = result.deviceID
-            state.streamID = result.streamID
-            state.isReady = true
-            return .ready(deviceID: result.deviceID)
-        }
     }
 
     func beginStarting() -> StartSnapshot? {
@@ -196,5 +202,97 @@ internal final class LemurCamStreamState: Sendable {
             retainedBuffer.release()
         }
         return wasEnqueued
+    }
+}
+
+// MARK: - Discovery
+
+extension LemurCamStreamState {
+    /// Ask for a discovery pass with a fresh retry budget. Called on every
+    /// `onCameraReady`, including when a device is already cached: after the
+    /// extension was disabled and re-enabled or repaired, the device may be a new
+    /// CMIO object. A pass that finds the same IDs keeps the current sink stream.
+    func requestDiscovery() {
+        state.withLock {
+            $0.discoveryRequested = true
+            $0.armDiscovery()
+        }
+    }
+
+    /// Claim the single retry timer. Returns false when one is already armed.
+    func claimRetrySchedule() -> Bool {
+        state.withLock { state in
+            guard !state.retryScheduled else { return false }
+            state.retryScheduled = true
+            return true
+        }
+    }
+
+    func prepareRetry(maxRetries: Int) -> RetryAction {
+        state.withLock { state -> RetryAction in
+            state.retryScheduled = false
+            guard state.discoveryPending, !state.isDiscovering else {
+                return .idle
+            }
+            guard state.setupRetries < maxRetries else {
+                state.discoveryPending = false
+                return .failed
+            }
+            state.setupRetries += 1
+            state.isDiscovering = true
+            return .discover(attempt: state.setupRetries)
+        }
+    }
+
+    func applyDiscoveryResult(
+        _ result: (deviceID: CMIODeviceID, streamID: CMIOStreamID)?
+    ) -> DiscoveryResultAction {
+        state.withLock { state in
+            state.isDiscovering = false
+            guard let result else {
+                // A re-run that missed while a device is cached: had the device gone,
+                // `deviceListChanged` would have dropped it, so keep it and stop.
+                guard !state.isReady else {
+                    state.discoveryPending = false
+                    return .alreadyReady
+                }
+                return .retry
+            }
+            state.discoveryPending = false
+            if state.deviceID == result.deviceID, state.streamID == result.streamID {
+                return .alreadyReady
+            }
+            state.dropDevice()
+            state.deviceID = result.deviceID
+            state.streamID = result.streamID
+            return .ready(deviceID: result.deviceID)
+        }
+    }
+
+    /// The CMIO device list changed; `lemurDeviceID` is the LemurCam device's ID
+    /// in the new list, or nil when it is absent. Drops the cache when the cached
+    /// device is gone or was replaced, and arms discovery when a device is there
+    /// to find. Device-list changes start discovery only after setup has asked for
+    /// it once (`requestDiscovery`), and not while a pass is already in flight: that
+    /// pass starts after this lookup (both run on the same serial queue), so its
+    /// result is at least as fresh.
+    func deviceListChanged(lemurDeviceID: CMIODeviceID?) -> DeviceListChangeAction {
+        state.withLock { state in
+            if let cachedDeviceID = state.deviceID {
+                guard cachedDeviceID != lemurDeviceID else { return .unchanged }
+                state.dropDevice()
+                guard lemurDeviceID != nil else {
+                    state.discoveryPending = false
+                    return .deviceLost
+                }
+                state.armDiscovery()
+                return .rediscover
+            }
+            guard state.discoveryRequested, lemurDeviceID != nil, !state.isDiscovering else {
+                return .unchanged
+            }
+            state.armDiscovery()
+            return .rediscover
+        }
     }
 }

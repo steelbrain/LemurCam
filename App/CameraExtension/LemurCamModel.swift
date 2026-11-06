@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMediaIO
 import Foundation
+import os
 
 internal final class LemurCamModel: Sendable {
     private let streamState = LemurCamStreamState()
@@ -21,6 +22,10 @@ internal final class LemurCamModel: Sendable {
     /// succeeds, before this app starts its own sink stream. Injected for testability.
     private let consumerProbe: @Sendable (CMIODeviceID) -> Bool
 
+    /// CMIO device-list listener, installed by the first `beginDiscovery()`. Its
+    /// callbacks run on `discoveryQueue`, serialized with discovery itself.
+    private let deviceListObserver = OSAllocatedUnfairLock<CMIODeviceListObserver?>(uncheckedState: nil)
+
     init(
         consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
@@ -36,11 +41,14 @@ internal final class LemurCamModel: Sendable {
         streamState.clearStreamResources()
     }
 
-    /// Begin (or restart) CMIO device discovery. Driven by `SetupCoordinator`'s
-    /// `onCameraReady` callback once the camera extension is installed and the
-    /// virtual camera device is live. Idempotent: a no-op once discovery succeeds.
+    /// Begin (or re-run) CMIO device discovery. Driven by `SetupCoordinator`'s
+    /// `onCameraReady` callback each time the camera extension becomes ready, which
+    /// after a disable/re-enable or Repair can mean a new device. A pass that finds
+    /// the cached device again leaves a live sink stream alone. From the first call
+    /// on, device-list changes also drop stale IDs and rediscover on their own.
     func beginDiscovery() {
-        streamState.resetSetupRetries()
+        streamState.requestDiscovery()
+        observeDeviceListIfNeeded()
         scheduleRetry()
     }
 
@@ -129,8 +137,47 @@ internal final class LemurCamModel: Sendable {
     }
 
     private func scheduleRetry() {
+        // One armed timer at a time, however many triggers (onCameraReady, a missed
+        // discovery, device-list changes) ask for a pass.
+        guard streamState.claimRetrySchedule() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Tuning.setupRetryDelay) { [weak self] in
             self?.retrySetup()
+        }
+    }
+
+    // MARK: - Device-list changes
+
+    private func observeDeviceListIfNeeded() {
+        let isObserving = deviceListObserver.withLockUnchecked { $0 != nil }
+        guard !isObserving else { return }
+        // Called on the main thread only, so no second observer can race this one in.
+        let observer = CMIODeviceListObserver(queue: discoveryQueue) { [weak self] in
+            self?.deviceListChanged()
+        }
+        deviceListObserver.withLockUnchecked { $0 = observer }
+    }
+
+    /// Runs on `discoveryQueue`, so the lookup is ordered with discovery passes:
+    /// a discovery result applied after this change is never older than it.
+    private func deviceListChanged() {
+        let lemurDeviceID = CoreMediaIOUtil.lemurDeviceID()
+        DispatchQueue.main.async { [weak self] in
+            self?.applyDeviceListChange(lemurDeviceID)
+        }
+    }
+
+    /// The extension was disabled, re-enabled, repaired, replaced or crashed: the
+    /// cached device/stream IDs (and a sink stream stuck "streaming" because no
+    /// `consumerStopped` arrived) belong to a device that no longer exists.
+    private func applyDeviceListChange(_ lemurDeviceID: CMIODeviceID?) {
+        switch streamState.deviceListChanged(lemurDeviceID: lemurDeviceID) {
+        case .unchanged:
+            return
+        case .deviceLost:
+            Log.ipc.info("Virtual camera device went away; dropped its cached CMIO IDs and sink stream")
+        case .rediscover:
+            Log.ipc.info("Virtual camera device appeared or changed; re-running discovery")
+            scheduleRetry()
         }
     }
 
