@@ -3,7 +3,21 @@ import Foundation
 import IPCamKit
 import os
 
-internal final class RTSPStreamPipeline: Sendable {
+/// The pipeline surface `StreamCoordinator` drives. `RTSPStreamPipeline` is the
+/// production conformer; tests substitute a recording fake to exercise retry and
+/// demand handling without a camera.
+internal protocol StreamPipeline: AnyObject, Sendable {
+    var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? { get set }
+    var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)? { get set }
+    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)? { get set }
+    var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? { get set }
+
+    func connect(url: String, credentials: SourceCredentials?)
+    func disconnect()
+    func cancelSilently()
+}
+
+internal final class RTSPStreamPipeline: StreamPipeline {
     enum State: Equatable, Sendable {
         case idle
         case connecting

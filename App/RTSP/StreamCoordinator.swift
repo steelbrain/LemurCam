@@ -7,7 +7,7 @@ internal final class StreamCoordinator {
     let previewStore: PreviewStore
 
     private let sourceManager: SourceManager
-    private let pipeline = RTSPStreamPipeline()
+    private let pipeline: any StreamPipeline
     private let fallbackGenerator: FrameGenerator
     private let frameDispatcher: StreamFrameDispatcher
     private var currentSourceID: UUID?
@@ -38,7 +38,8 @@ internal final class StreamCoordinator {
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
-        cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() }
+        cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
+        pipeline: any StreamPipeline = RTSPStreamPipeline()
     ) {
         let streamModel = LemurCamModel()
         let previews = PreviewStore()
@@ -46,6 +47,7 @@ internal final class StreamCoordinator {
         self.model = streamModel
         self.previewStore = previews
         self.sourceManager = sourceManager
+        self.pipeline = pipeline
         self.audioConsumerProbe = audioConsumerProbe
         self.cameraConsumerProbe = cameraConsumerProbe
         self.fallbackGenerator = FrameGenerator(model: streamModel)
@@ -253,14 +255,16 @@ private extension StreamCoordinator {
 
 private extension StreamCoordinator {
     func syncToActiveSource() {
-        cancelAllTasks()
-
         let activeID = sourceManager.activeSourceID
         let activeSource = activeID.flatMap { id in
             sourceManager.sources.first(where: { $0.id == id })
         }
 
+        // Any source's add/remove/edit lands here. When the active source itself is
+        // unchanged, leave its tasks alone: cancelling first used to kill a pending
+        // reconnect or ONVIF resolve, leaving the status at "Reconnecting" for good.
         if activeID == currentSourceID, activeSource?.updatedAt == currentSourceUpdatedAt { return }
+        cancelAllTasks()
         currentSourceID = activeID
         currentSourceUpdatedAt = activeSource?.updatedAt
 
@@ -401,5 +405,22 @@ private extension StreamCoordinator {
             sourceManager.updateConnectionStatus(for: sourceID, status: .reconnecting)
             fallbackGenerator.start(message: "Reconnecting in LemurCam")
         }
+    }
+}
+
+// MARK: - Test Support
+
+extension StreamCoordinator {
+    /// Whether a reconnect is scheduled and not yet run or cancelled.
+    var hasPendingRetry: Bool {
+        retryTask != nil
+    }
+
+    /// Apply a microphone consumer edge the way `observeAudioConsumers`' Darwin
+    /// observers do. Tests call this instead of posting the system-wide
+    /// notification, which every other LemurCam process would also receive.
+    func simulateAudioConsumerChange(active: Bool) {
+        _hasAudioConsumers = active
+        audioDemandChanged()
     }
 }

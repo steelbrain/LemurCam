@@ -1,3 +1,4 @@
+import CoreVideo
 import Foundation
 @testable import LemurCam
 import os
@@ -26,6 +27,79 @@ internal enum H264TestStream {
     }
 }
 
+/// A `StreamPipeline` that records what `StreamCoordinator` asks of it and lets a
+/// test drive the state callbacks the real pipeline would fire. Like the real one,
+/// `connect` reports `.connecting` straight away.
+internal final class FakeStreamPipeline: StreamPipeline {
+    private struct State {
+        var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)?
+        var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)?
+        var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)?
+        var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
+        var connectedURLs: [String] = []
+        var silentCancels = 0
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? {
+        get { state.withLock { $0.onPixelBuffer } }
+        set { state.withLock { $0.onPixelBuffer = newValue } }
+    }
+
+    var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)? {
+        get { state.withLock { $0.onStateChanged } }
+        set { state.withLock { $0.onStateChanged = newValue } }
+    }
+
+    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)? {
+        get { state.withLock { $0.onStreamInfo } }
+        set { state.withLock { $0.onStreamInfo = newValue } }
+    }
+
+    var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? {
+        get { state.withLock { $0.onAudioPCM } }
+        set { state.withLock { $0.onAudioPCM = newValue } }
+    }
+
+    /// Every URL passed to `connect`, in order.
+    var connectedURLs: [String] {
+        state.withLock { $0.connectedURLs }
+    }
+
+    var silentCancels: Int {
+        state.withLock { $0.silentCancels }
+    }
+
+    func connect(url: String, credentials _: SourceCredentials?) {
+        state.withLock { $0.connectedURLs.append(url) }
+        emit(.connecting)
+    }
+
+    func disconnect() {}
+
+    func cancelSilently() {
+        state.withLock { $0.silentCancels += 1 }
+    }
+
+    /// Fire `onStateChanged` as the real pipeline would from its stream task.
+    func emit(_ newState: RTSPStreamPipeline.State) {
+        onStateChanged?(newState)
+    }
+}
+
+/// Polls `condition` on the main actor until it holds or `timeout` passes, and
+/// returns whether it held. Lets the coordinator's main-actor tasks run in between.
+@MainActor
+internal func waitUntil(timeout: TimeInterval = 2, _ condition: () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        if Date() >= deadline { return false }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return true
+}
+
 /// Captures `DualLogger` lines through its process-wide `onEmit` sink. Install it in
 /// `setUp` and call `uninstall()` in `tearDown`, which restores the previous sink so
 /// a running host app keeps its log view.
@@ -50,5 +124,50 @@ internal final class LogLineRecorder: Sendable {
     /// The number of captured lines that start with `prefix`.
     func count(startingWith prefix: String) -> Int {
         lines.withLock { $0.filter { $0.hasPrefix(prefix) }.count }
+    }
+}
+
+/// A `StreamCoordinator` wired to a `FakeStreamPipeline` and a `SourceManager` with
+/// throwaway storage. `SourceManager` persists the active source in the host app's
+/// standard defaults, so `cleanUp()` restores that value.
+@MainActor
+internal final class CoordinatorHarness {
+    let manager: SourceManager
+    let pipeline: FakeStreamPipeline
+    let coordinator: StreamCoordinator
+    private let directory: URL
+    private let savedActiveID: String?
+
+    init() {
+        savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let storage = SourceStorage(fileURL: directory.appendingPathComponent("sources.json"))
+        let sourceManager = SourceManager(storage: storage, keychain: KeychainService())
+        let fakePipeline = FakeStreamPipeline()
+        manager = sourceManager
+        pipeline = fakePipeline
+        coordinator = StreamCoordinator(
+            sourceManager: sourceManager, audioConsumerProbe: { false }, cameraConsumerProbe: { false },
+            pipeline: fakePipeline
+        )
+    }
+
+    func cleanUp() {
+        if let savedActiveID {
+            UserDefaults.standard.set(savedActiveID, forKey: LemurCamConfig.activeSourceKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: LemurCamConfig.activeSourceKey)
+        }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    /// Add an RTSP source at `rtsp://<name>` and return its ID.
+    func addRTSP(_ name: String) -> UUID? {
+        manager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
+        return manager.sources.last?.id
+    }
+
+    func status(_ id: UUID) -> ConnectionStatus? {
+        manager.connectionStatuses[id]
     }
 }
