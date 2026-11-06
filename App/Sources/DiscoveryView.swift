@@ -298,15 +298,12 @@ private extension DiscoveryView {
         let client = makeClient(for: device)
         Task {
             do {
-                let (fetchedProfiles, info) = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
-                    async let profilesResult = client.getProfiles()
-                    async let deviceInfoResult: ONVIFDeviceInfo? = {
-                        try? await client.getDeviceInformation()
-                    }()
-                    return try await (profilesResult, deviceInfoResult)
+                // Discovery already gave the device's endpoint UUID.
+                let fetched = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                    try await client.fetchDeviceDetails(includingEndpointReference: false)
                 }
                 await MainActor.run {
-                    profiles = fetchedProfiles; deviceInfo = info; isFetchingProfiles = false
+                    profiles = fetched.profiles; deviceInfo = fetched.info; isFetchingProfiles = false
                 }
             } catch {
                 await MainActor.run { fetchError = error.localizedDescription; isFetchingProfiles = false }

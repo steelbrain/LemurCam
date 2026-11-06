@@ -217,12 +217,6 @@ private extension SourceFormView {
     enum ResolvedType { case rtsp, onvif }
     enum EditSourceType { case rtsp, onvif }
 
-    struct FetchedDevice: Sendable {
-        let profiles: [ONVIFProfile]
-        let info: ONVIFDeviceInfo?
-        let endpointReference: String?
-    }
-
     var isValid: Bool {
         guard !name.isEmpty else { return false }
         if editing != nil {
@@ -308,15 +302,7 @@ private extension SourceFormView {
         Task {
             do {
                 let fetched = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
-                    async let profilesResult = client.getProfiles()
-                    async let deviceInfoResult: ONVIFDeviceInfo? = {
-                        try? await client.getDeviceInformation()
-                    }()
-                    let (profiles, info) = try await (profilesResult, deviceInfoResult)
-                    // Asked only once GetProfiles proved the credentials, so an
-                    // unsupported operation can't add a failed login.
-                    let reference = try? await client.getEndpointReference()
-                    return FetchedDevice(profiles: profiles, info: info, endpointReference: reference)
+                    try await client.fetchDeviceDetails(includingEndpointReference: true)
                 }
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
