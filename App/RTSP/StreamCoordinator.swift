@@ -336,20 +336,23 @@ private extension StreamCoordinator {
     }
 
     func handleONVIFResolution(
-        uri: String?, info: ONVIFSourceInfo, sourceID: UUID, credentials: SourceCredentials?
+        uri: ONVIFStreamURIResult, info: ONVIFSourceInfo, sourceID: UUID, credentials: SourceCredentials?
     ) {
         guard currentSourceID == sourceID else { return }
-        if let uri {
+        switch uri {
+        case .success(let resolved):
             Log.rtsp.info("Connecting with resolved URI")
-            pipeline.connect(url: uri, credentials: credentials)
-        } else if let storedURI = info.streamURI {
-            Log.rtsp.info("Falling back to stored URI")
-            pipeline.connect(url: storedURI, credentials: credentials)
-        } else {
+            pipeline.connect(url: resolved, credentials: credentials)
+        case .failure(let error):
+            if let storedURI = info.streamURI {
+                Log.rtsp.info("Falling back to stored URI")
+                pipeline.connect(url: storedURI, credentials: credentials)
+                return
+            }
             // Retry like any failed connect, so a camera that was offline when we
             // tried is picked up once it is back instead of staying in error.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
-            sourceManager.updateErrorMessage(for: sourceID, message: "Could not reach camera")
+            sourceManager.updateErrorMessage(for: sourceID, message: Self.onvifResolveFailureMessage(for: error))
             scheduleRetry()
         }
     }

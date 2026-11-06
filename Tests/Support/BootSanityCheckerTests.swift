@@ -2,10 +2,10 @@
 import XCTest
 
 /// Covers the synchronous decision `BootSanityChecker.run()` makes before its
-/// async reachability probes: it marks every non-active source `.pending` and
-/// leaves the active source alone, and does nothing when there are no other
-/// sources. The probe outcomes themselves are network-dependent and out of scope;
-/// unreachable loopback hosts keep the spawned probe task short-lived.
+/// async reachability probes (it marks every non-active source `.pending`, leaves
+/// the active source alone, and does nothing when there are no other sources) and
+/// what a finished probe records. Probes only reach loopback hosts that refuse at
+/// once, which keeps the spawned probe task short-lived.
 @MainActor
 internal final class BootSanityCheckerTests: XCTestCase {
     private var tempURL: URL?
@@ -19,13 +19,10 @@ internal final class BootSanityCheckerTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("sources.json")
         guard let tempURL else { return }
-        manager = SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: KeychainService())
+        manager = SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: InMemoryCredentialStore())
     }
 
     override func tearDown() async throws {
-        if let sourceManager = manager {
-            for source in sourceManager.sources { try? KeychainService().delete(for: source.id) }
-        }
         if let savedActiveID {
             UserDefaults.standard.set(savedActiveID, forKey: LemurCamConfig.activeSourceKey)
         } else {
@@ -75,10 +72,10 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
         let checker = BootSanityChecker(sourceManager: sourceManager)
 
-        checker.recordProbeResult(reachable: false, for: otherID)
+        checker.recordProbeResult(failure: "Authentication failed", for: otherID)
 
         XCTAssertEqual(sourceManager.connectionStatuses[otherID], .error)
-        XCTAssertEqual(sourceManager.errorMessages[otherID], "Unreachable")
+        XCTAssertEqual(sourceManager.errorMessages[otherID], "Authentication failed")
     }
 
     /// A probe that finishes after the user switched to that camera must not
@@ -92,7 +89,7 @@ internal final class BootSanityCheckerTests: XCTestCase {
         sourceManager.setActiveSource(id: otherID)
         sourceManager.updateConnectionStatus(for: otherID, status: .connected)
 
-        checker.recordProbeResult(reachable: false, for: otherID)
+        checker.recordProbeResult(failure: "Authentication failed", for: otherID)
 
         XCTAssertEqual(sourceManager.connectionStatuses[otherID], .connected)
         XCTAssertNil(sourceManager.errorMessages[otherID])
@@ -106,8 +103,41 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let checker = BootSanityChecker(sourceManager: sourceManager)
         sourceManager.removeSource(id: otherID)
 
-        checker.recordProbeResult(reachable: true, for: otherID)
+        checker.recordProbeResult(failure: nil, for: otherID)
 
         XCTAssertNil(sourceManager.connectionStatuses[otherID])
+    }
+
+    // MARK: - Failure messages
+
+    /// Every failed probe used to read "Unreachable", even a camera that answered and
+    /// rejected the saved login. The message now says what went wrong.
+    func testProbeFailureMessageNamesTheCause() {
+        struct UndescribedError: Error {}
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: ONVIFError.authenticationFailed),
+                       "Authentication failed")
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: ONVIFError.soapFault("Sender not Authorized")),
+                       "ONVIF error: Sender not Authorized")
+        let timedOut = ONVIFError.timedOut.localizedDescription
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: ONVIFError.timedOut), timedOut)
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: RTSPStreamPipeline.TimeoutError()), timedOut)
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: CancellationError()), timedOut)
+        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: UndescribedError()), "Unreachable")
+    }
+
+    /// End to end on loopback: the probe of a camera that refuses the connection
+    /// records the ONVIF network error, not a generic word.
+    func testFailedProbeRecordsItsError() async throws {
+        let sourceManager = try XCTUnwrap(manager)
+        sourceManager.addSource(name: "active", sourceType: unreachableONVIF())
+        sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
+        let otherID = try XCTUnwrap(sourceManager.sources.last).id
+
+        BootSanityChecker(sourceManager: sourceManager).run()
+
+        let failed = await waitUntil(timeout: 10) { sourceManager.connectionStatuses[otherID] == .error }
+        XCTAssertTrue(failed)
+        let message = try XCTUnwrap(sourceManager.errorMessages[otherID])
+        XCTAssertTrue(message.hasPrefix("Network error:"), message)
     }
 }

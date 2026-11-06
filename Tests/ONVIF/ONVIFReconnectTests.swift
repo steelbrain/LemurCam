@@ -13,7 +13,7 @@ internal final class ONVIFReconnectTests: XCTestCase {
             sourceName: "Test", sourceManager: nil
         )
         let result = try await StreamCoordinator.attemptONVIFResolve(params: params)
-        XCTAssertNil(result)
+        XCTAssertNil(try? result.get())
     }
 
     func testAttemptResolveSkipsDiscoveryWhenNoUUID() async throws {
@@ -24,7 +24,7 @@ internal final class ONVIFReconnectTests: XCTestCase {
             sourceName: "Test", sourceManager: nil
         )
         let result = try await StreamCoordinator.attemptONVIFResolve(params: params)
-        XCTAssertNil(result)
+        XCTAssertNil(try? result.get())
     }
 
     func testAttemptResolveSkipsDiscoveryWhenUUIDEmpty() async throws {
@@ -35,7 +35,7 @@ internal final class ONVIFReconnectTests: XCTestCase {
             sourceName: "Test", sourceManager: nil
         )
         let result = try await StreamCoordinator.attemptONVIFResolve(params: params)
-        XCTAssertNil(result)
+        XCTAssertNil(try? result.get())
     }
 
     // MARK: - resolveONVIFStreamURI (timeout)
@@ -51,7 +51,7 @@ internal final class ONVIFReconnectTests: XCTestCase {
         let result = await StreamCoordinator.resolveONVIFStreamURI(params: params, timeout: 0.5)
         let elapsed = Date().timeIntervalSince(start)
 
-        XCTAssertNil(result)
+        XCTAssertNil(try? result.get())
         XCTAssertLessThan(elapsed, 3.0)
     }
 
@@ -66,7 +66,7 @@ internal final class ONVIFReconnectTests: XCTestCase {
         let result = await StreamCoordinator.resolveONVIFStreamURI(params: params, timeout: 10.0)
         let elapsed = Date().timeIntervalSince(start)
 
-        XCTAssertNil(result)
+        XCTAssertNil(try? result.get())
         XCTAssertLessThan(elapsed, 5.0)
     }
 }

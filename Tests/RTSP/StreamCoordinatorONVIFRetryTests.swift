@@ -35,7 +35,9 @@ internal final class StreamCoordinatorONVIFRetryTests: XCTestCase {
         let reconnecting = await waitUntil(timeout: 8) { harness.status(camera) == .reconnecting }
         XCTAssertTrue(reconnecting, "a failed ONVIF resolve must schedule a reconnect")
         XCTAssertTrue(harness.coordinator.hasPendingRetry)
-        XCTAssertEqual(harness.manager.errorMessages[camera], "Could not reach camera")
+        // The resolve's own error is shown: loopback port 1 refuses the connection.
+        let message = try XCTUnwrap(harness.manager.errorMessages[camera])
+        XCTAssertTrue(message.hasPrefix("Network error:"), message)
         XCTAssertTrue(harness.pipeline.connectedURLs.isEmpty, "there is no URI to connect to")
     }
 }

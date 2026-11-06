@@ -150,6 +150,11 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         )
     }
 
+    private static func onvifError(in result: ONVIFStreamURIResult) -> ONVIFError? {
+        guard case .failure(let error) = result else { return nil }
+        return error as? ONVIFError
+    }
+
     /// A rejected login means the camera was reached: no scan, nothing saved.
     func testAuthenticationFailureDoesNotScan() async throws {
         let host = stubCamera(ONVIFStubURLProtocol.Reply(status: 401))
@@ -157,11 +162,14 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         let writesBefore = credentialStore.writes
         let counter = ScanCounter()
 
-        let uri = try await StreamCoordinator.attemptONVIFResolve(
+        let result = try await StreamCoordinator.attemptONVIFResolve(
             params: params(for: source, scanCounter: counter, scanResult: [device(host: "192.168.1.31")])
         )
 
-        XCTAssertNil(uri)
+        guard case .authenticationFailed? = Self.onvifError(in: result) else {
+            XCTFail("the camera's answer must be reported, got \(result)")
+            return
+        }
         XCTAssertEqual(counter.value, 0)
         XCTAssertEqual(sourceManager.sources.first, source)
         XCTAssertEqual(credentialStore.writes, writesBefore)
@@ -177,11 +185,11 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         let writesBefore = credentialStore.writes
         let counter = ScanCounter()
 
-        let uri = try await StreamCoordinator.attemptONVIFResolve(
+        let result = try await StreamCoordinator.attemptONVIFResolve(
             params: params(for: source, scanCounter: counter, scanResult: [device(host: host)])
         )
 
-        XCTAssertNil(uri)
+        XCTAssertTrue(Self.onvifError(in: result)?.isTransportFailure ?? false, "the saved address's error is kept")
         XCTAssertEqual(counter.value, 1)
         XCTAssertEqual(sourceManager.sources.first, source)
         XCTAssertEqual(configChanges, 0)
@@ -195,11 +203,11 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         let writesBefore = credentialStore.writes
         let counter = ScanCounter()
 
-        let uri = try await StreamCoordinator.attemptONVIFResolve(
+        let result = try await StreamCoordinator.attemptONVIFResolve(
             params: params(for: source, scanCounter: counter, scanResult: [device(host: newHost)])
         )
 
-        XCTAssertEqual(uri, "rtsp://192.0.2.31/main")
+        XCTAssertEqual(try result.get(), "rtsp://192.0.2.31/main")
         guard case .onvif(let info)? = sourceManager.sources.first?.sourceType else {
             XCTFail("expected ONVIF")
             return
