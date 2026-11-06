@@ -2,12 +2,36 @@ import Foundation
 import os
 
 internal final class SourceStorage {
+    /// Why saving is refused for the rest of the session.
+    enum SaveRefusal: Equatable {
+        /// The file could not be read (no permission, an I/O error). It may well be
+        /// intact, and the session started without the cameras in it.
+        case unreadable
+        /// The file is damaged and no copy of it could be kept.
+        case damagedAndNotCopied
+
+        /// Shown where the user manages cameras, for as long as saving is refused.
+        var message: String {
+            let consequence = "so changes won’t be saved until it restarts. "
+                + "Cameras you add or edit now will be lost when you quit."
+            switch self {
+            case .unreadable:
+                return "LemurCam couldn’t read your saved cameras, " + consequence
+            case .damagedAndNotCopied:
+                return "Your saved cameras file is damaged and LemurCam couldn’t keep a copy of it, " + consequence
+            }
+        }
+    }
+
     private let fileURL: URL
 
     /// Set when the sources file could not be read, or was damaged and could not be
-    /// moved aside. Saving is refused for the rest of the session so the only copy of
-    /// the user's cameras is kept.
-    private var mustNotOverwrite = false
+    /// moved or copied aside. Saving is refused for the rest of the session so the
+    /// only copy of the user's cameras is kept. It is never lifted early, not even if
+    /// the file becomes readable: after a failed read the session holds none of the
+    /// file's cameras, and after a failed copy the damaged entries exist nowhere else,
+    /// so any save would lose cameras.
+    private(set) var saveRefusal: SaveRefusal?
 
     init(fileURL: URL? = nil) {
         if let fileURL {
@@ -38,7 +62,7 @@ internal final class SourceStorage {
             data = try Data(contentsOf: fileURL)
         } catch {
             Log.app.error("Saved cameras could not be read (\(Self.describe(error))); leaving the file as it is")
-            mustNotOverwrite = true
+            saveRefusal = .unreadable
             return []
         }
         let entries: [LossyEntry]
@@ -68,7 +92,7 @@ internal final class SourceStorage {
     }
 
     func save(_ sources: [CameraSource]) {
-        guard !mustNotOverwrite else {
+        guard saveRefusal == nil else {
             Log.app.error("Not saving cameras: the sources file could not be read or moved aside")
             return
         }
@@ -116,7 +140,7 @@ internal final class SourceStorage {
             }
         }
         Log.app.error("Could not keep a copy of the damaged sources file")
-        mustNotOverwrite = true
+        saveRefusal = .damagedAndNotCopied
     }
 
     /// One array element, decoded without failing the whole array.

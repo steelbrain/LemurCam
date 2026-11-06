@@ -8,7 +8,11 @@ internal struct SourceListView: View {
     @State private var sourceToDelete: CameraSource?
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            if let saveRefusal = sourceManager.saveRefusal {
+                SaveRefusalBanner(message: saveRefusal.message)
+                Divider()
+            }
             if sourceManager.sources.isEmpty {
                 emptyState
             } else {
@@ -197,4 +201,24 @@ internal struct SourceListView: View {
         }
     }
 
+}
+
+/// Shown above the camera list for the whole session when saved cameras couldn't
+/// be read, so the user knows that changes made now won't be kept.
+private struct SaveRefusalBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+    }
 }

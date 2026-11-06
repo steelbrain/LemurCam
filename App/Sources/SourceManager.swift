@@ -16,6 +16,9 @@ internal final class SourceManager {
     private(set) var activeSourceID: UUID?
     private(set) var connectionStatuses: [UUID: ConnectionStatus] = [:]
     private(set) var errorMessages: [UUID: String] = [:]
+    /// Why camera changes are not being saved this session, or nil while saving
+    /// works. Set by `load()`; shown in Settings → Cameras.
+    private(set) var saveRefusal: SourceStorage.SaveRefusal?
 
     var onSourceConfigChanged: (() -> Void)?
 
@@ -29,6 +32,7 @@ internal final class SourceManager {
 
     func load() {
         sources = storage.load()
+        saveRefusal = storage.saveRefusal
         moveEmbeddedCredentialsToKeychain()
         for source in sources {
             connectionStatuses[source.id] = .disconnected
