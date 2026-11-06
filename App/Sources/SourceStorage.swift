@@ -9,10 +9,10 @@ internal final class SourceStorage {
         /// The file is damaged and no copy of it could be kept.
         case damagedAndNotCopied
 
-        /// Shown where the user manages cameras, for as long as saving is refused.
+        /// Shown where the user manages cameras for as long as saving is refused, and
+        /// when adding, editing or removing a camera is refused meanwhile.
         var message: String {
-            let consequence = "so changes won’t be saved until it restarts. "
-                + "Cameras you add or edit now will be lost when you quit."
+            let consequence = "so you can’t add, edit or remove cameras until it restarts."
             switch self {
             case .unreadable:
                 return "LemurCam couldn’t read your saved cameras, " + consequence

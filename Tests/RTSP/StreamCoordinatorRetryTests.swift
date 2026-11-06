@@ -60,7 +60,7 @@ internal final class StreamCoordinatorRetryTests: XCTestCase {
         )
         XCTAssertTrue(harness.coordinator.hasPendingRetry, "editing another source must not cancel the reconnect")
 
-        harness.manager.removeSource(id: cameraB)
+        try harness.manager.removeSource(id: cameraB)
         XCTAssertTrue(harness.coordinator.hasPendingRetry, "removing another source must not cancel the reconnect")
         XCTAssertEqual(harness.status(cameraA), .reconnecting)
         XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a"], "nothing reconnects early")

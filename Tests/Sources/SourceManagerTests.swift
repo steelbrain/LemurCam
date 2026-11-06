@@ -60,7 +60,7 @@ internal final class SourceManagerTests: XCTestCase {
         let firstID = manager.sources[0].id
         let secondID = manager.sources[1].id
 
-        manager.removeSource(id: firstID)
+        try manager.removeSource(id: firstID)
 
         XCTAssertEqual(manager.sources.count, 1)
         XCTAssertEqual(manager.activeSourceID, secondID)
@@ -71,7 +71,7 @@ internal final class SourceManagerTests: XCTestCase {
         try manager.addSource(name: "Camera 1", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
         let id = manager.sources[0].id
 
-        manager.removeSource(id: id)
+        try manager.removeSource(id: id)
 
         XCTAssertTrue(manager.sources.isEmpty)
         XCTAssertNil(manager.activeSourceID)
@@ -133,7 +133,7 @@ internal final class SourceManagerTests: XCTestCase {
                               credentials: creds)
         let id = manager.sources[0].id
 
-        manager.removeSource(id: id)
+        try manager.removeSource(id: id)
 
         let retrieved = manager.credentials(for: id)
         XCTAssertNil(retrieved)

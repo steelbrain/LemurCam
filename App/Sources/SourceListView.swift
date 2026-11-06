@@ -6,6 +6,11 @@ internal struct SourceListView: View {
     @State private var showingDiscoverySheet = false
     @State private var editingSource: CameraSource?
     @State private var sourceToDelete: CameraSource?
+    @State private var removeError: String?
+
+    /// While saving is refused, cameras can't be added, edited or removed (the banner
+    /// says why), so the actions that would are disabled.
+    private var changesRefused: Bool { sourceManager.saveRefusal != nil }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +40,11 @@ internal struct SourceListView: View {
             Button("Cancel", role: .cancel) { sourceToDelete = nil }
             Button("Delete", role: .destructive) {
                 if let source = sourceToDelete {
-                    sourceManager.removeSource(id: source.id)
+                    do {
+                        try sourceManager.removeSource(id: source.id)
+                    } catch {
+                        removeError = error.localizedDescription
+                    }
                     sourceToDelete = nil
                 }
             }
@@ -43,6 +52,14 @@ internal struct SourceListView: View {
             if let source = sourceToDelete {
                 Text("Are you sure you want to delete \"\(source.name)\"?")
             }
+        }
+        .alert("Camera Not Deleted", isPresented: Binding(
+            get: { removeError != nil },
+            set: { if !$0 { removeError = nil } }
+        )) {
+            Button("OK") { removeError = nil }
+        } message: {
+            Text(removeError ?? "")
         }
     }
 
@@ -67,6 +84,7 @@ internal struct SourceListView: View {
                 }
                 .controlSize(.large)
             }
+            .disabled(changesRefused)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -82,10 +100,13 @@ internal struct SourceListView: View {
                     sourceRow(source)
                         .contextMenu {
                             Button("Edit") { editingSource = source }
+                                .disabled(changesRefused)
                             Button("Delete", role: .destructive) {
                                 sourceToDelete = source
                             }
+                            .disabled(changesRefused)
                         }
+                        .moveDisabled(changesRefused)
                 }
                 .onMove { from, to in
                     sourceManager.moveSource(from: from, to: to)
@@ -110,6 +131,7 @@ internal struct SourceListView: View {
 
                 Spacer()
             }
+            .disabled(changesRefused)
             .padding(8)
         }
     }
@@ -143,7 +165,7 @@ internal struct SourceListView: View {
             .onEnded { gesture in
                 switch gesture {
                 case .first:
-                    editingSource = source
+                    if !changesRefused { editingSource = source }
                 case .second:
                     sourceManager.setActiveSource(id: source.id)
                 }
@@ -180,8 +202,10 @@ internal struct SourceListView: View {
                 .clipShape(Capsule())
         }
     }
+}
 
-    private func sourceSubtitle(_ source: CameraSource) -> String {
+private extension SourceListView {
+    func sourceSubtitle(_ source: CameraSource) -> String {
         switch source.sourceType {
         case .rtsp(let info):
             return DisplayedURL.redacted(info.url)
@@ -190,7 +214,7 @@ internal struct SourceListView: View {
         }
     }
 
-    private func statusBadge(_ status: ConnectionStatus) -> some View {
+    func statusBadge(_ status: ConnectionStatus) -> some View {
         HStack(spacing: 4) {
             Circle()
                 .fill(connectionStatusColor(status))
@@ -200,7 +224,6 @@ internal struct SourceListView: View {
                 .foregroundStyle(.secondary)
         }
     }
-
 }
 
 /// Shown above the camera list while cameras aren't being saved: for the whole

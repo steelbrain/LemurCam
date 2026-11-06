@@ -140,7 +140,7 @@ internal final class BootSanityCheckerTests: XCTestCase {
         try sourceManager.addSource(name: "other", sourceType: unreachableONVIF())
         let otherID = try XCTUnwrap(sourceManager.sources.last).id
         let checker = BootSanityChecker(sourceManager: sourceManager)
-        sourceManager.removeSource(id: otherID)
+        try sourceManager.removeSource(id: otherID)
 
         checker.recordProbeResult(failure: nil, for: otherID)
 

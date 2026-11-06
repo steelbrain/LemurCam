@@ -71,7 +71,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
         let id = try XCTUnwrap(sourceManager.sources.first).id
         configChangeCount = 0
 
-        sourceManager.removeSource(id: id)
+        try sourceManager.removeSource(id: id)
 
         XCTAssertEqual(configChangeCount, 1)
     }
@@ -143,7 +143,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
         sourceManager.updateConnectionStatus(for: id, status: .connected)
         sourceManager.updateErrorMessage(for: id, message: "x")
 
-        sourceManager.removeSource(id: id)
+        try sourceManager.removeSource(id: id)
 
         XCTAssertNil(sourceManager.connectionStatuses[id])
         XCTAssertNil(sourceManager.errorMessages[id])

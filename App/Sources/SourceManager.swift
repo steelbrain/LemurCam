@@ -9,6 +9,16 @@ internal struct CredentialSaveError: LocalizedError {
     }
 }
 
+/// Saving is refused for the session (`SourceStorage.SaveRefusal`), so no camera is
+/// added, edited or removed. The Keychain would change while the saved file can't: a
+/// removed camera would come back after a restart without its password, and an edited
+/// one with its old one.
+internal struct SaveRefusedError: LocalizedError {
+    let refusal: SourceStorage.SaveRefusal
+
+    var errorDescription: String? { refusal.message }
+}
+
 @MainActor @Observable
 internal final class SourceManager {
     private(set) var sources: [CameraSource] = []
@@ -16,7 +26,8 @@ internal final class SourceManager {
     private(set) var connectionStatuses: [UUID: ConnectionStatus] = [:]
     private(set) var errorMessages: [UUID: String] = [:]
     /// Why camera changes are not being saved this session, or nil while saving
-    /// works. Set by `load()`; shown in Settings → Cameras.
+    /// works. Set by `load()`; shown in Settings → Cameras. Meanwhile adding, editing
+    /// and removing cameras throws `SaveRefusedError`, and the active camera is not saved.
     private(set) var saveRefusal: SourceStorage.SaveRefusal?
     /// Whether the last save of the cameras failed (`SourceStorage.lastSaveFailed`).
     /// Cleared by the next save that works.
@@ -55,9 +66,10 @@ internal final class SourceManager {
         Log.app.info("Loaded \(self.sources.count) source(s)")
     }
 
-    /// Adds a camera. Throws `CredentialSaveError`, adding nothing, when its
-    /// credentials can't be stored.
+    /// Adds a camera. Throws, adding nothing, `SaveRefusedError` while saving is
+    /// refused, and `CredentialSaveError` when its credentials can't be stored.
     func addSource(name: String, sourceType: SourceType, credentials: SourceCredentials? = nil) throws {
+        try checkChangesAllowed()
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
         let resolvedCredentials = credentials ?? urlCredentials
         let source = CameraSource(name: name, sourceType: cleanType)
@@ -77,7 +89,10 @@ internal final class SourceManager {
         onSourceConfigChanged?()
     }
 
-    func removeSource(id: UUID) {
+    /// Removes a camera and its stored credentials. Throws `SaveRefusedError`,
+    /// removing nothing, while saving is refused.
+    func removeSource(id: UUID) throws {
+        try checkChangesAllowed()
         sources.removeAll { $0.id == id }
         connectionStatuses[id] = nil
         errorMessages[id] = nil
@@ -99,10 +114,12 @@ internal final class SourceManager {
     /// Replaces a source's name and type and applies `credentials` to its stored
     /// credentials. Credentials embedded in an RTSP URL are moved to the Keychain and
     /// take precedence over `credentials`, even a `.set` of other ones, for the parts
-    /// the URL holds (see `CredentialChange.merging`). Throws `CredentialSaveError`,
-    /// changing nothing, when new credentials can't be stored, or when the URL holds
-    /// only part of a login and the stored part it needs can't be read.
+    /// the URL holds (see `CredentialChange.merging`). Throws, changing nothing,
+    /// `SaveRefusedError` while saving is refused, and `CredentialSaveError` when new
+    /// credentials can't be stored, or when the URL holds only part of a login and the
+    /// stored part it needs can't be read.
     func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) throws {
+        try checkChangesAllowed()
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
         let (cleanType, _) = Self.sanitizingCredentials(from: sourceType)
@@ -267,12 +284,19 @@ internal final class SourceManager {
         lastSaveFailed = storage.lastSaveFailed
     }
 
+    /// Not while saving is refused: the saved file lists last session's cameras, and
+    /// the camera picked now need not be one of them.
     private func persistActiveSource() {
+        guard saveRefusal == nil else { return }
         UserDefaults.standard.set(activeSourceID?.uuidString, forKey: LemurCamConfig.activeSourceKey)
     }
 }
 
 private extension SourceManager {
+    func checkChangesAllowed() throws {
+        if let saveRefusal { throw SaveRefusedError(refusal: saveRefusal) }
+    }
+
     /// `change` with the login an edited RTSP URL holds. A stored part that can't be
     /// read throws `CredentialSaveError`: saving without it would replace it with an
     /// empty one.
