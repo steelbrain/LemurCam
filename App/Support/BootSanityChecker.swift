@@ -53,7 +53,7 @@ internal final class BootSanityChecker {
     /// the camera's answer without its address or credentials, and IPCamKit redacts
     /// credentials from the URLs in its messages. A probe that ran out of time says so.
     static func probeFailureMessage(for error: any Error) -> String {
-        if error is CancellationError || error is RTSPStreamPipeline.TimeoutError {
+        if error is RTSPStreamPipeline.TimeoutError {
             return ONVIFError.timedOut.localizedDescription
         }
         guard let described = (error as? LocalizedError)?.errorDescription, !described.isEmpty else {
@@ -98,27 +98,29 @@ internal final class BootSanityChecker {
             Credentials(username: $0.username, password: $0.password)
         }
         let session = RTSPClientSession(url: info.url, credentials: rtspCredentials)
+        try await probeRTSPStart(
+            timeoutNs: Tuning.streamStallTimeoutNs,
+            start: { _ = try await session.start() },
+            stop: { await session.stop() }
+        )
+    }
+
+    /// Runs `start` within `timeoutNs`, then `stop`. IPCamKit's `start()` ignores task
+    /// cancellation, so cancelling it at the timeout left the probe waiting for as long
+    /// as `start()` took. As in the stream pipeline, the timeout calls `stop`, which
+    /// makes a running `start()` throw at once, and the probe fails with
+    /// `RTSPStreamPipeline.TimeoutError`.
+    nonisolated static func probeRTSPStart(
+        timeoutNs: UInt64,
+        start: @escaping @Sendable () async throws -> Void,
+        stop: @escaping @Sendable () async -> Void
+    ) async throws {
         do {
-            _ = try await withThrowingTaskGroup(
-                of: SessionDescription.self
-            ) { group -> SessionDescription in
-                group.addTask {
-                    try await session.start()
-                }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: Tuning.streamStallTimeoutNs)
-                    throw CancellationError()
-                }
-                guard let result = try await group.next() else {
-                    throw CancellationError()
-                }
-                group.cancelAll()
-                return result
-            }
-            await session.stop()
+            try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: timeoutNs, start: start, abort: stop)
         } catch {
-            await session.stop()
+            await stop()
             throw error
         }
+        await stop()
     }
 }

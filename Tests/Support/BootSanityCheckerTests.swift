@@ -1,5 +1,44 @@
 @testable import LemurCam
+import os
 import XCTest
+
+/// Stands in for IPCamKit's `RTSPClientSession`: `start()` ignores task
+/// cancellation and returns only once `stop()` is called.
+private final class StubRTSPSession: Sendable {
+    private struct State {
+        var stopped = false
+        var stops = 0
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+
+    struct Stopped: Error {}
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    var stopCount: Int { state.withLock { $0.stops } }
+
+    func start() async throws {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeNow = state.withLock { state -> Bool in
+                if state.stopped { return true }
+                state.waiter = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        throw Stopped()
+    }
+
+    func stop() {
+        let waiter = state.withLock { state -> CheckedContinuation<Void, Never>? in
+            state.stopped = true
+            state.stops += 1
+            defer { state.waiter = nil }
+            return state.waiter
+        }
+        waiter?.resume()
+    }
+}
 
 /// Covers the synchronous decision `BootSanityChecker.run()` makes before its
 /// async reachability probes (it marks every non-active source `.pending`, leaves
@@ -121,7 +160,6 @@ internal final class BootSanityCheckerTests: XCTestCase {
         let timedOut = ONVIFError.timedOut.localizedDescription
         XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: ONVIFError.timedOut), timedOut)
         XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: RTSPStreamPipeline.TimeoutError()), timedOut)
-        XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: CancellationError()), timedOut)
         XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: UndescribedError()), "Unreachable")
     }
 
@@ -139,5 +177,38 @@ internal final class BootSanityCheckerTests: XCTestCase {
         XCTAssertTrue(failed)
         let message = try XCTUnwrap(sourceManager.errorMessages[otherID])
         XCTAssertTrue(message.hasPrefix("Network error:"), message)
+    }
+
+    // MARK: - RTSP probe timeout
+
+    /// IPCamKit's `start()` ignores cancellation, so the probe's timeout used to wait
+    /// for it to finish on its own. The timeout now stops the session.
+    func testRTSPProbeTimeoutStopsAStartThatIgnoresCancellation() async {
+        let session = StubRTSPSession()
+        // Safety net so a regression fails on the elapsed-time check instead of hanging.
+        let safety = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            session.stop()
+        }
+        defer { safety.cancel() }
+
+        let started = Date()
+        do {
+            try await BootSanityChecker.probeRTSPStart(
+                timeoutNs: 50_000_000, start: { try await session.start() }, stop: { session.stop() }
+            )
+            XCTFail("expected a timeout")
+        } catch {
+            XCTAssertTrue(error is RTSPStreamPipeline.TimeoutError, "\(error)")
+            XCTAssertEqual(BootSanityChecker.probeFailureMessage(for: error), ONVIFError.timedOut.localizedDescription)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    /// A session that started is stopped again; the probe only checks reachability.
+    func testRTSPProbeStopsTheSessionAfterAStart() async throws {
+        let session = StubRTSPSession()
+        try await BootSanityChecker.probeRTSPStart(timeoutNs: 2_000_000_000, start: {}, stop: { session.stop() })
+        XCTAssertEqual(session.stopCount, 1)
     }
 }
