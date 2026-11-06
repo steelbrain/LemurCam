@@ -30,6 +30,55 @@ internal extension SourceCredentials {
         if let split = AmbiguousUserInfo(urlString) {
             return (split.urlWithout, split.login)
         }
+        return extractingReadableLogin(from: urlString)
+    }
+
+    /// `urlString` without any userinfo, for display and for URLs whose embedded
+    /// credentials are not wanted.
+    static func strippingUserInfo(from urlString: String) -> String {
+        extractingFromRTSPURL(urlString).url
+    }
+
+    /// Whether a stream URI an ONVIF camera reported is split at its last `@`, as
+    /// `extractingFromRTSPURL` splits a URL with ambiguous userinfo (see
+    /// `hasAmbiguousUserInfo`). Always when `URLComponents` can't parse the URI (a `#`
+    /// or `?` in the password: `rtsp://user:p#ss@192.0.2.5/s`). When it can, only if
+    /// the host after the last `@` is `onvifHost`, the camera that reported the URI
+    /// (`rtsp://admin:1234/5@192.0.2.5/s`). Otherwise that `@` is part of the address,
+    /// as in a login in the query (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`),
+    /// and splitting there would leave the end of the password as the host. Hosts are
+    /// compared without case and without IPv6 brackets.
+    static func splitsAtLastAt(reportedURI uri: String, onvifHost: String) -> Bool {
+        guard let split = AmbiguousUserInfo(uri) else { return false }
+        guard URLComponents(string: uri) != nil else { return true }
+        guard let host = URLComponents(string: split.urlWithout)?.host else { return false }
+        return comparableHost(host) == comparableHost(onvifHost)
+    }
+
+    /// A stream URI an ONVIF camera at `onvifHost` reported, without the login some
+    /// cameras put in its userinfo, for saving as the camera's fallback URI. It is
+    /// split at its last `@` only when `splitsAtLastAt(reportedURI:onvifHost:)` says
+    /// so; otherwise only the userinfo `URLComponents` reads is removed, and an `@`
+    /// in the path or query stays where it is.
+    static func strippingUserInfo(fromReportedURI uri: String, onvifHost: String) -> String {
+        guard hasAmbiguousUserInfo(uri), !splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) else {
+            return strippingUserInfo(from: uri)
+        }
+        return extractingReadableLogin(from: uri).url
+    }
+
+    /// Whether `urlString` has an `@` after its host that may end a user name or
+    /// password, so `URLComponents` can't be trusted to find its host. IPCamKit refuses
+    /// to connect to such a URL (its `checkAmbiguousUserInfo`), and the add/edit form
+    /// rejects it with an explanation.
+    static func hasAmbiguousUserInfo(_ urlString: String) -> Bool {
+        AmbiguousUserInfo(urlString) != nil
+    }
+}
+
+private extension SourceCredentials {
+    /// The userinfo `URLComponents` reads, taken out of `urlString`.
+    static func extractingReadableLogin(from urlString: String) -> (url: String, login: URLLogin?) {
         guard var components = URLComponents(string: urlString),
               components.user != nil || components.password != nil else {
             return (urlString, nil)
@@ -40,18 +89,12 @@ internal extension SourceCredentials {
         return (components.string ?? urlString, login)
     }
 
-    /// `urlString` without any userinfo, for display and for URLs whose embedded
-    /// credentials are not wanted (such as a stream URI a camera reports).
-    static func strippingUserInfo(from urlString: String) -> String {
-        extractingFromRTSPURL(urlString).url
-    }
-
-    /// Whether `urlString` has an `@` after its host that may end a user name or
-    /// password, so `URLComponents` can't be trusted to find its host. IPCamKit refuses
-    /// to connect to such a URL (its `checkAmbiguousUserInfo`), and the add/edit form
-    /// rejects it with an explanation.
-    static func hasAmbiguousUserInfo(_ urlString: String) -> Bool {
-        AmbiguousUserInfo(urlString) != nil
+    static func comparableHost(_ host: String) -> String {
+        var trimmed = Substring(host)
+        if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+            trimmed = trimmed.dropFirst().dropLast()
+        }
+        return trimmed.lowercased()
     }
 }
 

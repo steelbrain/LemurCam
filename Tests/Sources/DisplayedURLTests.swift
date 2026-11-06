@@ -37,6 +37,37 @@ internal final class DisplayedURLTests: XCTestCase {
                        "rtsp://192.0.2.8/live?token=***")
     }
 
+    /// An `@` in a password in the query or path is not a userinfo `@`. The userinfo
+    /// used to be removed first, cut at that `@`, so with a port in the address the
+    /// label read `rtsp://2024`: the address gone and the end of the password shown.
+    func testAnAtSignInALoginParameterKeepsTheAddress() {
+        let cases = [
+            "rtsp://192.168.1.5:554/live?user=admin&password=Adm1n@2024":
+                "rtsp://192.168.1.5:554/live?user=***&password=***",
+            "rtsp://192.168.1.5/live?user=admin&password=Adm1n@2024":
+                "rtsp://192.168.1.5/live?user=***&password=***",
+            "rtsp://192.168.1.5:554/user=admin_password=Adm1n@2024_channel=1_stream=0.sdp?real_stream":
+                "rtsp://192.168.1.5:554/user=***?real_stream",
+            "rtsp://192.168.1.5/user=admin_password=Adm1n@2024_channel=1_stream=0.sdp":
+                "rtsp://192.168.1.5/user=***",
+            "rtsp://admin:s3cret@192.168.1.5:554/live?password=Adm1n@2024":
+                "rtsp://192.168.1.5:554/live?password=***"
+        ]
+        for (url, shown) in cases {
+            XCTAssertEqual(DisplayedURL.redacted(url), shown, url)
+        }
+    }
+
+    /// A login with a raw `/`, `#` or `?` still ends at the last `@`, whether or not
+    /// `URLComponents` can read the URL.
+    func testALoginWithRawDelimitersIsStillCutAtTheLastAtSign() {
+        XCTAssertEqual(DisplayedURL.redacted("rtsp://admin:1234/5@192.168.1.5/live"), "rtsp://192.168.1.5/live")
+        XCTAssertEqual(DisplayedURL.redacted("rtsp://admin:1234/5@192.168.1.5/live?pwd=x"),
+                       "rtsp://192.168.1.5/live?pwd=***")
+        XCTAssertEqual(DisplayedURL.redacted("rtsp://admin:Admin#123@192.168.1.5:554/live"),
+                       "rtsp://192.168.1.5:554/live")
+    }
+
     func testURLsWithoutCredentialsAreShownAsTheyAre() {
         for url in [
             "rtsp://192.0.2.8:554/Streaming/Channels/101?transportmode=unicast&profile=Profile_1",

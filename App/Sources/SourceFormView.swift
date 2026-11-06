@@ -374,7 +374,7 @@ private extension SourceFormView {
                 }
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
-                    streamURI = SourceCredentials.strippingUserInfo(from: uri)
+                    streamURI = uri
                 }
             } catch {
                 await MainActor.run {

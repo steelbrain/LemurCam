@@ -203,26 +203,6 @@ internal final class SourceManager {
         errorMessages[sourceID] = message
     }
 
-    /// Strip credentials embedded in source URLs so they are never written to the
-    /// persisted source JSON. Enforced here, at the persistence boundary, so every
-    /// caller (add, edit, load, future) is covered. Credentials from an `.rtsp` URL are
-    /// returned to be routed to the Keychain. An `.onvif` stream URI comes from the
-    /// camera, and some cameras put their RTSP login in it; that userinfo is dropped,
-    /// since the URI is re-fetched from the camera on every connect and the stored
-    /// copy is only a fallback.
-    private static func sanitizingCredentials(
-        from sourceType: SourceType
-    ) -> (SourceType, SourceCredentials?) {
-        switch sourceType {
-        case .rtsp(let info):
-            let (cleanedURL, credentials) = SourceCredentials.extractingFromRTSPURL(info.url)
-            return (.rtsp(RTSPSourceInfo(url: cleanedURL)), credentials)
-        case .onvif(var info):
-            info.streamURI = info.streamURI.map(SourceCredentials.strippingUserInfo(from:))
-            return (.onvif(info), nil)
-        }
-    }
-
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an
     /// empty user name or with a `/`, `?`, `#` or `@` in its userinfo, or an ONVIF
     /// stream URI reported by the camera). Moves them out once on load: RTSP
@@ -268,19 +248,6 @@ internal final class SourceManager {
         Log.app.info("Removed credentials from \(migrated) saved camera URL(s)")
     }
 
-    /// Whether the saved RTSP URL or ONVIF stream URI has ambiguous userinfo (see
-    /// `SourceCredentials.hasAmbiguousUserInfo`) yet parses as an address, so the part
-    /// before its last `@` may well be address rather than login.
-    private static func hasAmbiguousURLReadableAsAnAddress(_ sourceType: SourceType) -> Bool {
-        let url: String?
-        switch sourceType {
-        case .rtsp(let info): url = info.url
-        case .onvif(let info): url = info.streamURI
-        }
-        guard let url, SourceCredentials.hasAmbiguousUserInfo(url) else { return false }
-        return URLComponents(string: url) != nil
-    }
-
     private func persist() {
         storage.save(sources)
         persistActiveSource()
@@ -306,5 +273,43 @@ private extension SourceManager {
             Log.app.error("Not saving '\(sourceName)': its stored credentials could not be read (\(error))")
             throw CredentialSaveError()
         }
+    }
+
+    /// Strip credentials embedded in source URLs so they are never written to the
+    /// persisted source JSON. Enforced here, at the persistence boundary, so every
+    /// caller (add, edit, load, future) is covered. Credentials from an `.rtsp` URL are
+    /// returned to be routed to the Keychain. An `.onvif` stream URI comes from the
+    /// camera, and some cameras put their RTSP login in it; that userinfo is dropped,
+    /// since the URI is re-fetched from the camera on every connect and the stored
+    /// copy is only a fallback. It is split at its last `@` only when that `@` ends a
+    /// login (`SourceCredentials.strippingUserInfo(fromReportedURI:onvifHost:)`), so a
+    /// login in its query (`?password=Adm1n@2024`) doesn't cost the address.
+    static func sanitizingCredentials(
+        from sourceType: SourceType
+    ) -> (SourceType, SourceCredentials?) {
+        switch sourceType {
+        case .rtsp(let info):
+            let (cleanedURL, credentials) = SourceCredentials.extractingFromRTSPURL(info.url)
+            return (.rtsp(RTSPSourceInfo(url: cleanedURL)), credentials)
+        case .onvif(var info):
+            let host = info.host
+            info.streamURI = info.streamURI.map { uri in
+                SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: host)
+            }
+            return (.onvif(info), nil)
+        }
+    }
+
+    /// Whether the saved RTSP URL or ONVIF stream URI has ambiguous userinfo (see
+    /// `SourceCredentials.hasAmbiguousUserInfo`) yet parses as an address, so the part
+    /// before its last `@` may well be address rather than login.
+    static func hasAmbiguousURLReadableAsAnAddress(_ sourceType: SourceType) -> Bool {
+        let url: String?
+        switch sourceType {
+        case .rtsp(let info): url = info.url
+        case .onvif(let info): url = info.streamURI
+        }
+        guard let url, SourceCredentials.hasAmbiguousUserInfo(url) else { return false }
+        return URLComponents(string: url) != nil
     }
 }

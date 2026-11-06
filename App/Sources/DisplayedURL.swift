@@ -11,9 +11,18 @@ import Foundation
 /// values, and so does a field the user edits, where `***` would be saved.
 internal enum DisplayedURL {
     /// `url` without its userinfo, and with the values of credential-like parameters
-    /// replaced by `***`.
+    /// replaced by `***`. A URL `URLComponents` reads, but with an `@` after its host
+    /// (see `SourceCredentials.hasAmbiguousUserInfo`), has its parameters hidden
+    /// first: that `@` may be inside a login in the query or path
+    /// (`?user=admin&password=Adm1n@2024`), where the hidden value takes it along, and
+    /// cutting at it would show the end of the password in place of the address.
+    /// Any other URL loses its userinfo first, split at its last `@` when
+    /// `URLComponents` can't read it.
     static func redacted(_ url: String) -> String {
-        redactingCredentialParameters(SourceCredentials.strippingUserInfo(from: url))
+        guard URLComponents(string: url) != nil, SourceCredentials.hasAmbiguousUserInfo(url) else {
+            return redactingCredentialParameters(SourceCredentials.strippingUserInfo(from: url))
+        }
+        return SourceCredentials.strippingUserInfo(from: redactingCredentialParameters(url))
     }
 
     /// Whether URL parameter name `raw` looks like it holds a credential: after
