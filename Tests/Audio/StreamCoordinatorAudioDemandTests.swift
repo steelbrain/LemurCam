@@ -8,18 +8,31 @@ import XCTest
 /// the virtual mic stayed silent until the consumer app toggled. The seeding is split
 /// into `recoverAudioDemandOnLaunch()` (driven by an injected probe) so it is unit
 /// testable without the CoreAudio HAL or the heavyweight `start()` (shm + discovery).
+/// The coordinator comes from `CoordinatorHarness`, so no real CMIO device, shared
+/// audio ring or camera stream is used.
 @MainActor
 internal final class StreamCoordinatorAudioDemandTests: XCTestCase {
+    private var fixture: CoordinatorHarness?
 
-    private func makeManager() -> SourceManager {
-        let tempURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathComponent("sources.json")
-        return SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: InMemoryCredentialStore())
+    override func setUp() async throws {
+        try await super.setUp()
+        fixture = nil
+    }
+
+    override func tearDown() async throws {
+        fixture?.cleanUp()
+        fixture = nil
+        try await super.tearDown()
+    }
+
+    private func makeCoordinator(micRunning: Bool) -> StreamCoordinator {
+        let harness = CoordinatorHarness(audioConsumerProbe: { micRunning })
+        fixture = harness
+        return harness.coordinator
     }
 
     func testRecoverAudioDemandSeedsWhenMicAlreadyRunning() async {
-        let coordinator = StreamCoordinator(sourceManager: makeManager(), audioConsumerProbe: { true })
+        let coordinator = makeCoordinator(micRunning: true)
         XCTAssertFalse(coordinator.hasDemand, "fresh coordinator should have no demand")
 
         await coordinator.recoverAudioDemandOnLaunch()
@@ -28,7 +41,7 @@ internal final class StreamCoordinatorAudioDemandTests: XCTestCase {
     }
 
     func testRecoverAudioDemandStaysClearWhenMicIdle() async {
-        let coordinator = StreamCoordinator(sourceManager: makeManager(), audioConsumerProbe: { false })
+        let coordinator = makeCoordinator(micRunning: false)
 
         await coordinator.recoverAudioDemandOnLaunch()
 

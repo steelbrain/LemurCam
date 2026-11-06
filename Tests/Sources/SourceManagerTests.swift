@@ -7,9 +7,13 @@ internal final class SourceManagerTests: XCTestCase {
     private var manager: SourceManager?
     /// Stands in for the Keychain, so the tests never read or write the real one.
     private let credentialStore = InMemoryCredentialStore()
+    /// `SourceManager` saves the active camera in the test host's standard defaults;
+    /// `tearDown` puts back what was there.
+    private var savedActiveID: String?
 
     override func setUp() async throws {
         try await super.setUp()
+        savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("sources.json")
@@ -19,6 +23,11 @@ internal final class SourceManagerTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        if let savedActiveID {
+            UserDefaults.standard.set(savedActiveID, forKey: LemurCamConfig.activeSourceKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: LemurCamConfig.activeSourceKey)
+        }
         if let tempURL {
             try? FileManager.default.removeItem(at: tempURL.deletingLastPathComponent())
         }
