@@ -50,6 +50,10 @@ internal enum ONVIFSOAP {
         element(Prefix.device, "GetSystemDateAndTime")
     }
 
+    static func getEndpointReference() -> XMLKit.XMLElement {
+        element(Prefix.device, "GetEndpointReference")
+    }
+
     static func getMediaCapabilities() -> XMLKit.XMLElement {
         element(Prefix.device, "GetCapabilities") {
             element(Prefix.device, "Category") { "Media" }

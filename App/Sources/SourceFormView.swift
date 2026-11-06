@@ -23,6 +23,7 @@ internal struct SourceFormView: View {
     @State private var onvifPort: Int = Tuning.defaultHTTPPort
     @State private var onvifUseHTTPS = false
     @State private var deviceUUID: String?
+    @State private var serialNumber: String?
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
 
@@ -199,6 +200,12 @@ private extension SourceFormView {
     enum ResolvedType { case rtsp, onvif }
     enum EditSourceType { case rtsp, onvif }
 
+    struct FetchedDevice: Sendable {
+        let profiles: [ONVIFProfile]
+        let info: ONVIFDeviceInfo?
+        let endpointReference: String?
+    }
+
     var isValid: Bool {
         guard !name.isEmpty else { return false }
         if editing != nil {
@@ -284,18 +291,26 @@ private extension SourceFormView {
         let client = makeONVIFClient()
         Task {
             do {
-                let (profiles, info) = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
+                let fetched = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     async let profilesResult = client.getProfiles()
                     async let deviceInfoResult: ONVIFDeviceInfo? = {
                         try? await client.getDeviceInformation()
                     }()
-                    return try await (profilesResult, deviceInfoResult)
+                    let (profiles, info) = try await (profilesResult, deviceInfoResult)
+                    // Asked only once GetProfiles proved the credentials, so an
+                    // unsupported operation can't add a failed login.
+                    let reference = try? await client.getEndpointReference()
+                    return FetchedDevice(profiles: profiles, info: info, endpointReference: reference)
                 }
                 await MainActor.run {
-                    onvifProfiles = profiles
+                    onvifProfiles = fetched.profiles
                     isProbing = false
                     resolvedType = .onvif
-                    if let serial = info?.serialNumber, !serial.isEmpty { deviceUUID = serial }
+                    let serial = fetched.info?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
+                    if let serial { serialNumber = serial }
+                    deviceUUID = ONVIFSourceInfo.resolvedDeviceUUID(
+                        current: deviceUUID, serialNumber: serial, endpointReference: fetched.endpointReference
+                    )
                 }
             } catch {
                 await MainActor.run { probeError = error.localizedDescription; isProbing = false }
@@ -341,7 +356,8 @@ private extension SourceFormView {
         }
         return .onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: onvifHost, port: onvifPort,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: onvifUseHTTPS
+            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: onvifUseHTTPS,
+            serialNumber: serialNumber
         ))
     }
 
@@ -373,6 +389,7 @@ private extension SourceFormView {
             selectedProfileToken = info.selectedProfileToken
             streamURI = info.streamURI
             deviceUUID = info.deviceUUID
+            serialNumber = info.serialNumber
         }
         do {
             if let creds = try sourceManager.loadCredentials(for: source.id) {

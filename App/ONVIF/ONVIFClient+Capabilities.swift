@@ -15,6 +15,19 @@ internal extension ONVIFClient {
         return xaddr.flatMap(servicePath(fromXAddr:))
     }
 
+    /// The GUID from a GetEndpointReference response, without a `urn:uuid:` prefix,
+    /// in the form `ONVIFDiscovery` uses for endpoint UUIDs.
+    static func parseEndpointReference(_ data: Data) -> String? {
+        guard let root = try? ONVIFXML.parse(data) else { return nil }
+        var guid: String?
+        root.findElements(named: "GUID") { element in
+            if guid == nil { guid = element.getText() }
+        }
+        let cleaned = guid?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "urn:uuid:", with: "")
+        return cleaned.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// `/onvif/Media` from `http://192.0.2.7:8080/onvif/Media`. Nil unless the
     /// address is an absolute URL with a path.
     static func servicePath(fromXAddr xaddr: String) -> String? {

@@ -341,7 +341,8 @@ private extension DiscoveryView {
         guard let device = selectedDevice else { return }
         let sourceType = SourceType.onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: device.host, port: device.port,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: device.useHTTPS
+            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: device.useHTTPS,
+            serialNumber: deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
         ))
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty

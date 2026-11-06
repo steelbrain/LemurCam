@@ -17,11 +17,15 @@ internal struct ONVIFSourceInfo: Codable, Equatable {
     var streamURI: String?
     /// Whether the device service is reached over HTTPS rather than HTTP.
     var useHTTPS = false
+    /// The serial number from GetDeviceInformation. Kept apart from `deviceUUID`,
+    /// which must be the WS-Discovery endpoint UUID for rediscovery to match.
+    var serialNumber: String?
 }
 
 extension ONVIFSourceInfo {
-    /// Decodes sources saved before a field existed: `useHTTPS` was added later and
-    /// defaults to HTTP when absent. `host` and `port` stay required.
+    /// Decodes sources saved before a field existed: `useHTTPS` and `serialNumber`
+    /// were added later and default to HTTP and nil when absent. `host` and `port`
+    /// stay required.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         deviceUUID = try container.decodeIfPresent(String.self, forKey: .deviceUUID)
@@ -30,6 +34,20 @@ extension ONVIFSourceInfo {
         selectedProfileToken = try container.decodeIfPresent(String.self, forKey: .selectedProfileToken)
         streamURI = try container.decodeIfPresent(String.self, forKey: .streamURI)
         useHTTPS = try container.decodeIfPresent(Bool.self, forKey: .useHTTPS) ?? false
+        serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
+    }
+
+    /// The device UUID to keep after the form fetches a camera's details.
+    ///
+    /// Earlier versions of the form stored the serial number here, which never matches
+    /// a WS-Discovery reply, and overwrote the real UUID of discovered cameras with it.
+    /// A UUID that is not the serial (for example one from discovery) is kept. Otherwise
+    /// the endpoint reference the device reports (GetEndpointReference, the same
+    /// address WS-Discovery uses) replaces it, when there is one.
+    static func resolvedDeviceUUID(current: String?, serialNumber: String?, endpointReference: String?) -> String? {
+        let existing = current.flatMap { $0.isEmpty ? nil : $0 }
+        if let existing, existing != serialNumber { return existing }
+        return endpointReference ?? existing
     }
 }
 

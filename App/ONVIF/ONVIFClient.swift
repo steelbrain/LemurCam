@@ -60,6 +60,13 @@ internal final class ONVIFClient: Sendable {
         return try parseDeviceInformation(data)
     }
 
+    /// The device's endpoint UUID, the same one its WS-Discovery replies carry, or
+    /// nil when the response has none.
+    func getEndpointReference() async throws -> String? {
+        let data = try await post(path: Self.deviceServicePath, body: ONVIFSOAP.getEndpointReference())
+        return Self.parseEndpointReference(data)
+    }
+
     func getStreamURI(profileToken: String) async throws -> String {
         let data = try await post(path: mediaServicePath(), body: ONVIFSOAP.getStreamURI(profileToken: profileToken))
         return try parseStreamURI(data)
