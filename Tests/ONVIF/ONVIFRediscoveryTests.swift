@@ -155,7 +155,8 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         return error as? ONVIFError
     }
 
-    /// A rejected login means the camera was reached: no scan, nothing saved.
+    /// A rejected login at a host name is that camera's answer: no scan, nothing saved.
+    /// (At a LAN IP address it leads to a scan; see ONVIFRediscoveryTriggerTests.)
     func testAuthenticationFailureDoesNotScan() async throws {
         let host = stubCamera(ONVIFStubURLProtocol.Reply(status: 401))
         let (sourceManager, credentialStore, source) = try addCamera(host: host)

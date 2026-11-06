@@ -21,19 +21,29 @@ internal enum ONVIFRediscovery {
         case moved(ONVIFSourceInfo)
     }
 
-    /// Whether the saved address may no longer be the camera's. After a DHCP change it
-    /// can answer nothing at all (a transport failure), or belong to another device
-    /// that answers with something other than this camera's ONVIF service: an HTTP
-    /// error status, or a reply that is not a usable ONVIF document (a web page, an
-    /// oversized or malformed body). A rejected login or a SOAP fault is the camera
-    /// itself answering, so its address is right and no scan is made.
-    static func shouldRediscover(after error: Error) -> Bool {
+    /// Whether the saved address `info` may no longer be the camera's. After a DHCP
+    /// change it can answer nothing at all (a transport failure), or belong to another
+    /// device that answers with something other than this camera's ONVIF service: an
+    /// HTTP error status, or a reply that is not a usable ONVIF document (a web page, an
+    /// oversized or malformed body).
+    ///
+    /// A rejected login or a SOAP fault can come from the camera itself, but also from
+    /// another ONVIF camera: after a router reset two cameras can swap addresses, and
+    /// this camera's login then went to the other one on every retry (which can lock
+    /// its account) and was never looked for again. So these lead to a scan too when
+    /// the camera can be looked for (it has a device UUID) and is saved by its LAN IP
+    /// address, the kind DHCP reassigns. A scan sends no login, and a camera it finds
+    /// at the saved address leaves everything as it is.
+    static func shouldRediscover(after error: Error, at info: ONVIFSourceInfo) -> Bool {
         if error is ONVIFXML.Rejection { return true }
         guard let onvifError = error as? ONVIFError else { return false }
         switch onvifError {
         case .networkError, .timedOut, .httpStatus, .parseError:
             return true
-        case .invalidURL, .soapFault, .authenticationFailed:
+        case .soapFault, .authenticationFailed:
+            guard let uuid = info.deviceUUID, !uuid.isEmpty else { return false }
+            return isLANAddress(info.host)
+        case .invalidURL:
             return false
         }
     }

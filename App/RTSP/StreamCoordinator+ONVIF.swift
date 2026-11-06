@@ -86,9 +86,11 @@ extension StreamCoordinator {
     }
 
     /// Asks the camera for the stream URI at its saved address. Only when the address
-    /// gives no answer, or an answer that is not this camera's ONVIF service, does it
-    /// look for the camera with WS-Discovery. An address the scan reports is saved only
-    /// when it differs from the saved one and `ONVIFRediscovery.shouldSave` allows it;
+    /// gives no answer, or an answer that may not be this camera's ONVIF service (see
+    /// `ONVIFRediscovery.shouldRediscover`), does it look for the camera with
+    /// WS-Discovery, and it asks again only where the scan finds the camera moved to.
+    /// An address the scan reports is saved only when it differs from the saved one and
+    /// `ONVIFRediscovery.shouldSave` allows it;
     /// otherwise it is used for this connection only. A failure carries the error from
     /// the saved address, unless the camera was found elsewhere and failed there.
     /// Throws only when cancelled.
@@ -99,7 +101,7 @@ extension StreamCoordinator {
         } catch {
             try Task.checkCancellation()
             Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error.localizedDescription)")
-            guard ONVIFRediscovery.shouldRediscover(after: error) else { return .failure(error) }
+            guard ONVIFRediscovery.shouldRediscover(after: error, at: params.info) else { return .failure(error) }
             savedAddressError = error
         }
 

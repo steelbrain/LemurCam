@@ -15,19 +15,48 @@ internal final class ONVIFRediscoveryDecisionTests: XCTestCase {
     }
 
     /// No answer, or an answer that is not this camera's ONVIF service (another device
-    /// now at the address), triggers a scan. The camera's own refusals do not.
+    /// now at the address), triggers a scan wherever the camera is saved.
     func testWhichFailuresTriggerRediscovery() {
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.networkError("refused")))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.timedOut))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(404)))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(500)))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.parseError))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.malformed))
-        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.tooDeep))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.authenticationFailed))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.soapFault("Sender not authorized")))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.invalidURL))
-        XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: CancellationError()))
+        let named = ONVIFSourceInfo(deviceUUID: Self.uuid, host: "porch-cam.local", port: 80)
+        for info in [named, ONVIFSourceInfo(deviceUUID: Self.uuid, host: "192.168.1.20", port: 80)] {
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.networkError("refused"), at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.timedOut, at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(404), at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.httpStatus(500), at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFError.parseError, at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.malformed, at: info))
+            XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: ONVIFXML.Rejection.tooDeep, at: info))
+            XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: ONVIFError.invalidURL, at: info))
+            XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: CancellationError(), at: info))
+        }
+    }
+
+    /// A rejected login or a SOAP fault may come from another camera that now has this
+    /// camera's address (two cameras can swap addresses after a router reset). It
+    /// leads to a scan only for a camera that a scan can find (it has a device UUID)
+    /// and that is saved by its LAN IP address, which DHCP can hand to another device.
+    func testRefusalsTriggerRediscoveryOnlyAtALANAddressWithADeviceUUID() {
+        let refusals: [Error] = [ONVIFError.authenticationFailed, ONVIFError.soapFault("Sender not authorized")]
+        let canMove = [
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "192.168.1.20", port: 80),
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "10.0.0.7", port: 8080, useHTTPS: true),
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "[fe80::1%en0]", port: 80)
+        ]
+        let stays = [
+            ONVIFSourceInfo(deviceUUID: nil, host: "192.168.1.20", port: 80),
+            ONVIFSourceInfo(deviceUUID: "", host: "192.168.1.20", port: 80),
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "porch-cam.local", port: 80),
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "203.0.113.5", port: 8080),
+            ONVIFSourceInfo(deviceUUID: Self.uuid, host: "127.0.0.1", port: 8080)
+        ]
+        for error in refusals {
+            for info in canMove {
+                XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: error, at: info), "\(error) at \(info.host)")
+            }
+            for info in stays {
+                XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: error, at: info), "\(error) at \(info.host)")
+            }
+        }
     }
 
     func testOutcomeUnchangedWhenDeviceStillAtSavedAddress() {
