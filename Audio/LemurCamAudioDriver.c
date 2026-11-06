@@ -29,6 +29,7 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <string.h>
 #include <os/log.h>
@@ -118,6 +119,17 @@ static Boolean EnsureRingMapped(void) {
     if (fd < 0) {
         os_log_error(gLog, "shm_open(%{public}s) failed: %d — emitting silence",
                      LEMUR_AUDIO_SHM_NAME, errno);
+        return false;
+    }
+    // Anyone can create this name, so never map more than the object holds: a
+    // short object would fault (SIGBUS) the first time the IO thread touches the
+    // ring's tail, taking the driver host down.
+    struct stat info;
+    memset(&info, 0, sizeof(info));
+    if (fstat(fd, &info) != 0 || info.st_size < (off_t)sizeof(LemurAudioRing)) {
+        os_log_error(gLog, "audio ring region is smaller than the ring (%lld bytes) — emitting silence",
+                     (long long)info.st_size);
+        close(fd);
         return false;
     }
     void *p = mmap(NULL, sizeof(LemurAudioRing), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);

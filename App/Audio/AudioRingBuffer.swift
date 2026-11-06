@@ -48,14 +48,21 @@ internal final class AudioRingBuffer: Sendable {
     }
 
     /// Map (creating if necessary) and initialise the shared region. Idempotent.
+    /// Refuses (logs, maps nothing) a region owned by another user or of the wrong
+    /// size: anyone can create the name first, and mapping a short object would
+    /// fault past its end.
     @discardableResult
     func open() -> Bool {
         guard !isOpen else { return true }
-        // The shim creates + sizes the region once and chmods it so the driver in
+        // The shim creates + sizes the region once with mode 0666 so the driver in
         // coreaudiod (a different uid) can map it read-write; see the bridging header.
         let descriptor = lemur_shm_open_create(name)
         guard descriptor >= 0 else {
             log.error("shm_open/ftruncate failed: \(errno)")
+            return false
+        }
+        guard regionIsUsable(descriptor) else {
+            close(descriptor)
             return false
         }
         let mapped = mmap(nil, mapSize, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0)
@@ -138,6 +145,44 @@ internal final class AudioRingBuffer: Sendable {
             }
             lemur_ring_write(ring, inputSamples, UInt32(clamping: frames), mach_absolute_time())
         }
+    }
+
+    /// `fstat` the opened region and apply `lemur_shm_check_stat`. Logs why a region
+    /// is refused; a region the driver cannot open is still used (after one repair
+    /// attempt) because that only silences the mic.
+    private func regionIsUsable(_ descriptor: Int32) -> Bool {
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else {
+            log.error("fstat of audio ring failed: \(errno)")
+            return false
+        }
+        var verdict = lemur_shm_check_stat(&info, geteuid(), mapSize)
+        if verdict == LEMUR_SHM_REGION_DRIVER_CANNOT_OPEN {
+            // Some systems may honour fchmod on shm; macOS 27 rejects it (EINVAL).
+            let chmodResult = fchmod(descriptor, 0o666)
+            let chmodErrno = chmodResult == 0 ? 0 : errno
+            if fstat(descriptor, &info) == 0 {
+                verdict = lemur_shm_check_stat(&info, geteuid(), mapSize)
+            }
+            if verdict == LEMUR_SHM_REGION_DRIVER_CANNOT_OPEN {
+                let mode = String(info.st_mode & 0o777, radix: 8)
+                log.error(
+                    "audio ring mode \(mode, privacy: .public) blocks the driver (fchmod errno \(chmodErrno))"
+                )
+                return true
+            }
+        }
+        switch verdict {
+        case LEMUR_SHM_REGION_OK:
+            return true
+        case LEMUR_SHM_REGION_FOREIGN_OWNER:
+            log.error("refusing audio ring owned by uid \(info.st_uid), not \(geteuid())")
+        case LEMUR_SHM_REGION_BAD_SIZE:
+            log.error("refusing audio ring of \(info.st_size) bytes (ring needs \(self.mapSize))")
+        default:
+            log.error("refusing audio ring (check \(verdict))")
+        }
+        return false
     }
 
     private static func ringPointer(from address: UInt) -> UnsafeMutablePointer<LemurAudioRing> {
