@@ -12,6 +12,10 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
     /// installs and removals share the HAL directory and the coreaudiod restart.
     private static let operations = DispatchQueue(label: "cam.lemur.app.helper.operations")
 
+    /// Longest a `launchctl` run may take before it is killed, so a hung one cannot
+    /// hold up the operations queue (and every request behind it) for good.
+    private static let launchctlTimeout: TimeInterval = 10
+
     private let log = Logger(subsystem: LemurAudioHelper.machServiceName, category: "service")
     /// Held busy while an operation runs, so the helper never exits in the middle
     /// of one, even if the client has disconnected.
@@ -113,20 +117,12 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
     }
 
     /// Runs a `launchctl` invocation, discarding its output, and returns its exit
-    /// status (or -1 if the process could not be launched).
+    /// status (or -1 if the process could not be launched or would not end).
     private static func runLaunchctl(_ arguments: [String], log: Logger) -> Int32 {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        task.arguments = arguments
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            log.error("launchctl failed to run: \(error.localizedDescription, privacy: .public)")
-            return -1
+        let status = BoundedProcess.run("/bin/launchctl", arguments, timeout: launchctlTimeout)
+        if status == -1 {
+            log.error("launchctl \(arguments.first ?? "", privacy: .public) could not be run or did not end")
         }
-        return task.terminationStatus
+        return status
     }
 }
