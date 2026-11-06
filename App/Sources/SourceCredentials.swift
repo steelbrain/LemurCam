@@ -39,6 +39,22 @@ internal extension SourceCredentials {
         extractingFromRTSPURL(urlString).url
     }
 
+    /// The stored stream URI of an ONVIF camera whose saved address moved from
+    /// `oldHost` to `newHost`. A URI naming the old host names the new one: the camera
+    /// left that address and another device may answer there, and the stored URI is
+    /// what is connected to, with the saved login, when a later resolve fails. A URI
+    /// naming another host (a recorder serving the stream, say) is kept. Nil when the
+    /// URI's host can't be read or the new host can't be put in it.
+    static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
+        guard var components = URLComponents(string: uri), let host = components.host else { return nil }
+        guard comparableHost(host) == comparableHost(oldHost) else { return uri }
+        let encoded = newHost.contains(":") && !newHost.hasPrefix("[") ? "[\(newHost)]" : newHost
+        // Setting a host URLComponents would not read back raises an exception.
+        guard URLComponents(string: "rtsp://\(encoded)/")?.encodedHost == encoded else { return nil }
+        components.encodedHost = encoded
+        return components.string
+    }
+
     /// Whether a stream URI an ONVIF camera reported is split at its last `@`, as
     /// `extractingFromRTSPURL` splits a URL with ambiguous userinfo (see
     /// `hasAmbiguousUserInfo`), leaving a host after it. That `@` ends the login when

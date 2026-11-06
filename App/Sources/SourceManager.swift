@@ -184,10 +184,11 @@ internal final class SourceManager {
     /// WS-Discovery), as long as it is still saved at the address of `previous`, the one
     /// the resolve that found it started from. An address saved since, by an edit or by
     /// another resolve, is kept: the move was found for the address it replaced. Only
-    /// the address changes: name, profile and credentials are left alone, nothing is
-    /// written when the address is the same, and no config change is signalled, because
-    /// the resolve that found the address goes on to connect there. `updatedAt` marks
-    /// user edits and stays as it is.
+    /// the address changes, with a stored stream URI that named the old one
+    /// (`SourceCredentials.storedStreamURI(_:movedFrom:to:)`): name, profile and
+    /// credentials are left alone, nothing is written when the address is the same,
+    /// and no config change is signalled, because the resolve that found the address
+    /// goes on to connect there. `updatedAt` marks user edits and stays as it is.
     func updateONVIFAddress(id: UUID, from previous: ONVIFSourceInfo, to moved: ONVIFSourceInfo) {
         guard let index = sources.firstIndex(where: { $0.id == id }),
               case .onvif(var info) = sources[index].sourceType else { return }
@@ -196,6 +197,10 @@ internal final class SourceManager {
             return
         }
         guard info.host != moved.host || info.port != moved.port || info.useHTTPS != moved.useHTTPS else { return }
+        let oldHost = info.host
+        info.streamURI = info.streamURI.flatMap {
+            SourceCredentials.storedStreamURI($0, movedFrom: oldHost, to: moved.host)
+        }
         info.host = moved.host
         info.port = moved.port
         info.useHTTPS = moved.useHTTPS
