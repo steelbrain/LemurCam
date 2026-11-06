@@ -34,6 +34,9 @@ internal struct SourceFormView: View {
     @State private var editSourceType: SourceKind?
     /// A certificate a fetch met that macOS doesn't trust, while the user is asked.
     @State private var trustPrompt: CertificateTrustPrompt?
+    /// A device other than the camera being edited that Fetch Profiles reached, while
+    /// the user is asked whether to use it.
+    @State private var identityPrompt: DeviceIdentityPrompt?
 
     init(
         sourceManager: SourceManager, editing: CameraSource? = nil,
@@ -54,6 +57,7 @@ internal struct SourceFormView: View {
             if let source = editing { populateFrom(source) }
         }
         .certificateTrustDialog($trustPrompt, onTrust: trustCertificate)
+        .deviceIdentityDialog($identityPrompt, onUse: useDevice, onCancel: keepSavedDevice)
     }
 
     private var formContent: some View {
@@ -245,6 +249,7 @@ private extension SourceFormView {
 
 private extension SourceFormView {
     enum SourceKind { case rtsp, onvif }
+    typealias Address = SourceFormONVIFAddressEdits.Address
 
     /// The kind of camera the form saves: the edited camera's, or what Connect found.
     var sourceKind: SourceKind? {
@@ -268,7 +273,7 @@ private extension SourceFormView {
         RTSPURLInput.problem(with: RTSPURLInput.normalized(urlString)) == nil
     }
 
-    var onvifAddress: SourceFormONVIFAddressEdits.Address {
+    var onvifAddress: Address {
         .init(host: onvifHost, port: onvifPort, useHTTPS: onvifUseHTTPS)
     }
 
@@ -370,26 +375,50 @@ private extension SourceFormView {
         onvifDetails.startFetchingProfiles()
         let address = onvifAddress
         let client = makeONVIFClient()
-        Task {
-            do {
-                let fetched = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
-                    try await client.fetchDeviceDetails(includingEndpointReference: true)
-                }
-                await MainActor.run {
-                    guard fetchTickets.isCurrent(ticket) else { return }
-                    onvifAddressEdits.fetchSucceeded(at: address)
-                    onvifDetails.profilesFetched(fetched)
-                    isProbing = false
-                    resolvedType = .onvif
-                }
-            } catch {
-                await MainActor.run {
-                    guard fetchTickets.isCurrent(ticket) else { return }
-                    fetchFailed(error, ticket: ticket)
-                    isProbing = false
-                }
+        SourceFormFetch.run {
+            try await client.fetchDeviceDetails(includingEndpointReference: true)
+        } then: { result in
+            guard fetchTickets.isCurrent(ticket) else { return }
+            isProbing = false
+            switch result {
+            case .success(let fetched): profilesFetched(fetched, at: address, ticket: ticket)
+            case .failure(let error): fetchFailed(error, ticket: ticket)
             }
         }
+    }
+
+    /// Fetch Profiles worked. In the edit form, a device other than the camera being
+    /// edited is used only once the user says so (`DeviceIdentityPrompt`).
+    func profilesFetched(_ fetched: ONVIFDeviceDetails, at address: Address, ticket: Int) {
+        guard let saved = savedONVIFInfo, onvifDetails.identity(of: fetched, saved: saved) == .different else {
+            useFetchedDetails(fetched, at: address, adoptingIdentity: false)
+            return
+        }
+        let prompt = DeviceIdentityPrompt(
+            cameraName: name.isEmpty ? editing?.name ?? "" : name, address: address, fetched: fetched, ticket: ticket
+        )
+        probeError = prompt.notUsedMessage
+        identityPrompt = prompt
+    }
+
+    func useFetchedDetails(_ fetched: ONVIFDeviceDetails, at address: Address, adoptingIdentity: Bool) {
+        onvifAddressEdits.fetchSucceeded(at: address)
+        onvifDetails.profilesFetched(fetched, adoptingIdentity: adoptingIdentity)
+        resolvedType = .onvif
+    }
+
+    /// Use in the identity prompt: the device's profiles and identity, saved on Save.
+    func useDevice(_ prompt: DeviceIdentityPrompt) {
+        guard fetchTickets.isCurrent(prompt.ticket) else { return }
+        probeError = nil
+        useFetchedDetails(prompt.fetched, at: prompt.address, adoptingIdentity: true)
+    }
+
+    /// Cancel in the identity prompt: the camera as it was saved, at its saved address.
+    func keepSavedDevice(_ prompt: DeviceIdentityPrompt) {
+        guard fetchTickets.isCurrent(prompt.ticket), let saved = onvifAddressEdits.savedDetails(at: prompt.address)
+        else { return }
+        onvifDetails = SourceFormONVIFDetails(saved: saved)
     }
 
     func fetchStreamURI(profileToken: String) {
@@ -397,20 +426,13 @@ private extension SourceFormView {
         onvifDetails.startFetchingStreamURI()
         probeError = nil
         let client = makeONVIFClient()
-        Task {
-            do {
-                let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
-                    try await client.getStreamURI(profileToken: profileToken)
-                }
-                await MainActor.run {
-                    guard fetchTickets.isCurrent(ticket) else { return }
-                    onvifDetails.streamURIFetched(uri)
-                }
-            } catch {
-                await MainActor.run {
-                    guard fetchTickets.isCurrent(ticket) else { return }
-                    fetchFailed(error, ticket: ticket)
-                }
+        SourceFormFetch.run {
+            try await client.getStreamURI(profileToken: profileToken)
+        } then: { result in
+            guard fetchTickets.isCurrent(ticket) else { return }
+            switch result {
+            case .success(let uri): onvifDetails.streamURIFetched(uri)
+            case .failure(let error): fetchFailed(error, ticket: ticket)
             }
         }
     }
@@ -433,23 +455,7 @@ private extension SourceFormView {
             authenticationEnabled: hasCredentials, username: username, password: password,
             storedCredentialsUnreadable: credentialsUnreadable
         )
-        var failure: (any Error)?
-        do {
-            if let source = editing {
-                // What the form loaded, so a move WS-Discovery saved since is kept. The
-                // form closes once it saved the camera, so no save of its own came since.
-                try sourceManager.updateSource(
-                    id: source.id, name: name, sourceType: sourceType, credentials: change,
-                    editedFrom: source.sourceType
-                )
-            } else {
-                let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
-                try sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
-            }
-        } catch {
-            failure = error
-        }
-        let outcome = SourceFormSaveOutcome(error: failure)
+        let outcome = store(name: name, sourceType: sourceType, credentials: change)
         if case .notSaved(let message) = outcome { saveError = message }
         if case .savedWithProblem(let problem) = outcome { onSavedWithProblem?(problem) }
         return outcome.closesForm

@@ -77,10 +77,29 @@ internal struct SourceFormONVIFDetails {
         streamURI = nil
     }
 
-    /// The profiles and device information fetched from the camera.
-    mutating func profilesFetched(_ fetched: ONVIFDeviceDetails) {
+    /// How the device that sent `fetched` compares with the camera these details
+    /// name, or, when they name none (an address edit cleared them), with `saved`,
+    /// the camera as it was saved (`ONVIFDeviceIdentity`).
+    func identity(of fetched: ONVIFDeviceDetails, saved: ONVIFSourceInfo) -> ONVIFDeviceIdentity.Comparison {
+        let named = deviceUUID != nil
+        return ONVIFDeviceIdentity.compare(
+            savedUUID: named ? deviceUUID : saved.deviceUUID,
+            savedSerialNumber: named ? serialNumber : saved.serialNumber,
+            reportedEndpointReference: fetched.endpointReference, reportedSerialNumber: fetched.info?.serialNumber
+        )
+    }
+
+    /// The profiles and device information fetched from the camera. When
+    /// `adoptingIdentity` (the user chose to use another device for the camera), the
+    /// device's identity replaces the camera's: none of the old one's is kept.
+    mutating func profilesFetched(_ fetched: ONVIFDeviceDetails, adoptingIdentity: Bool = false) {
         profiles = fetched.profiles
         let serial = fetched.info?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
+        if adoptingIdentity {
+            serialNumber = serial
+            deviceUUID = fetched.endpointReference
+            return
+        }
         if let serial { serialNumber = serial }
         deviceUUID = ONVIFSourceInfo.resolvedDeviceUUID(
             current: deviceUUID, serialNumber: serial, endpointReference: fetched.endpointReference

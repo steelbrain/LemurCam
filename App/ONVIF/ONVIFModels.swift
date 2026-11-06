@@ -70,6 +70,9 @@ internal enum ONVIFError: LocalizedError {
     /// outside the local network, and the user has not allowed that for the camera
     /// (`ONVIFLocalNetwork`).
     case plainHTTPRefused(host: String)
+    /// Another device than the camera saved there answers at `host`
+    /// (`ONVIFClient.checkIdentity(of:)`). Nothing signed was sent to it.
+    case differentDevice(host: String)
 
     /// True when no answer came back from the device at all, as opposed to the
     /// device answering with an error. Not the same as the host being out of reach
@@ -79,7 +82,7 @@ internal enum ONVIFError: LocalizedError {
         case .networkError, .timedOut:
             return true
         case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed, .certificateNotTrusted,
-             .plainHTTPRefused:
+             .plainHTTPRefused, .differentDevice:
             return false
         }
     }
@@ -95,7 +98,7 @@ internal enum ONVIFError: LocalizedError {
     /// again, or looking for the camera elsewhere, would fail the same way.
     var needsUserDecision: Bool {
         switch self {
-        case .certificateNotTrusted, .plainHTTPRefused:
+        case .certificateNotTrusted, .plainHTTPRefused, .differentDevice:
             return true
         case .invalidURL, .networkError, .httpStatus, .soapFault, .parseError, .authenticationFailed, .timedOut:
             return false
@@ -145,7 +148,7 @@ internal enum ONVIFError: LocalizedError {
             return "Authentication failed"
         case .timedOut:
             return "The camera did not respond in time"
-        case .certificateNotTrusted, .plainHTTPRefused:
+        case .certificateNotTrusted, .plainHTTPRefused, .differentDevice:
             return userDecisionDescription
         }
     }
@@ -158,6 +161,8 @@ internal enum ONVIFError: LocalizedError {
         case .plainHTTPRefused(let host):
             return "\(host) is outside your local network. "
                 + "Use HTTPS, or turn on \(ONVIFLocalNetwork.allowanceName) for this camera."
+        case .differentDevice(let host):
+            return "A different device answered at \(host)."
         default:
             return nil
         }

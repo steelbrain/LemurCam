@@ -71,9 +71,10 @@ internal final class ONVIFClient: Sendable {
     }
 
     /// The device's endpoint UUID, the same one its WS-Discovery replies carry, or
-    /// nil when the response has none.
-    func getEndpointReference() async throws -> String? {
-        let data = try await post(path: Self.deviceServicePath, body: ONVIFSOAP.getEndpointReference())
+    /// nil when the response has none. Unless `signed`, it is asked without the
+    /// login (see `checkIdentity(of:)`).
+    func getEndpointReference(signed: Bool = true) async throws -> String? {
+        let data = try await post(path: Self.deviceServicePath, body: ONVIFSOAP.getEndpointReference(), signed: signed)
         return Self.parseEndpointReference(data)
     }
 

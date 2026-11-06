@@ -106,6 +106,16 @@ internal final class ONVIFResolveFixture {
         )
     }
 
+    /// A GetEndpointReference reply naming `guid`.
+    nonisolated static func endpointReferenceReply(_ guid: String) -> ONVIFStubURLProtocol.Reply {
+        ONVIFStubURLProtocol.Reply(body: Data("""
+            <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+                        xmlns:tds="http://www.onvif.org/ver10/device/wsdl"><s:Body>
+            <tds:GetEndpointReferenceResponse><tds:GUID>urn:uuid:\(guid)</tds:GUID></tds:GetEndpointReferenceResponse>
+            </s:Body></s:Envelope>
+            """.utf8))
+    }
+
     nonisolated static func streamURIReply(_ uri: String) -> ONVIFStubURLProtocol.Reply {
         ONVIFStubURLProtocol.Reply(body: Data("""
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>

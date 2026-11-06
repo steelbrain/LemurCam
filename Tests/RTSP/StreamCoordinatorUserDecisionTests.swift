@@ -5,8 +5,9 @@ import Security
 import XCTest
 
 /// What connecting does when what answers at a camera's saved address needs the
-/// user's decision: a certificate other than the one the user trusted, or an address
-/// outside the local network that plain HTTP isn't allowed to. Trying again,
+/// user's decision: a certificate other than the one the user trusted, an address
+/// outside the local network that plain HTTP isn't allowed to, or another device than
+/// the camera saved there. Trying again,
 /// looking for the camera with a scan, or falling back to the stored stream URI would
 /// not change the answer, and the last two may send the login to another device. The
 /// camera shows what to do, and nothing connects until the camera is edited.
@@ -97,7 +98,57 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(host):554/main"])
     }
 
+    /// After a DHCP change another camera answers at the saved address. It is asked
+    /// who it is without the login, and gets nothing more.
+    func testADifferentDeviceAtTheSavedAddressIsNeitherStreamedNorSentTheLogin() async throws {
+        let host = "192.168.79.50"
+        let requests = stubCamera(at: host, identity: "5f0c1d2e-0000-4000-8000-0000000000aa")
+        let (harness, camera) = try makeHarness(saving: Self.camera(at: host))
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let failed = await waitUntil(timeout: 5) { harness.status(camera) == .error }
+
+        XCTAssertTrue(failed)
+        XCTAssertEqual(harness.manager.errorMessages[camera], "A different device answered at 192.168.79.50.")
+        XCTAssertEqual(requests.all.count, 1)
+        let sent = requests.all.compactMap { String(bytes: $0, encoding: .utf8) }
+        XCTAssertFalse(sent.contains { $0.contains("UsernameToken") }, "the login must not go to another device")
+        assertWaitsForTheUser(harness)
+    }
+
+    /// The camera saved there answers: one unsigned question more, then as before.
+    func testTheCameraSavedAtTheAddressConnects() async throws {
+        let host = "192.168.79.51"
+        let requests = stubCamera(at: host, identity: ONVIFResolveFixture.deviceUUID.uppercased())
+        let (harness, camera) = try makeHarness(saving: Self.camera(at: host))
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
+
+        XCTAssertTrue(connected)
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(host):554/main"])
+        XCTAssertNil(harness.manager.errorMessages[camera])
+        let identityQuestions = requests.all.compactMap { String(bytes: $0, encoding: .utf8) }
+            .filter { $0.contains("GetEndpointReference") }
+        XCTAssertEqual(identityQuestions.count, 1)
+    }
+
     // MARK: - Helpers
+
+    /// A camera at `host` whose endpoint reference is `identity` and whose stream URI
+    /// is `rtsp://<host>:554/main`, and the request bodies it receives.
+    private func stubCamera(at host: String, identity: String) -> CapturedBodies {
+        let requests = CapturedBodies()
+        stubHosts.append(host)
+        let endpoint = ONVIFResolveFixture.endpointReferenceReply(identity)
+        let stream = ONVIFResolveFixture.streamURIReply("rtsp://\(host):554/main")
+        ONVIFStubURLProtocol.register(host: host) { _, body in
+            requests.append(body)
+            let isIdentityQuestion = String(bytes: body, encoding: .utf8)?.contains("GetEndpointReference") == true
+            return isIdentityQuestion ? endpoint : stream
+        }
+        return requests
+    }
 
     /// Nothing connected, nothing scanned, and no retry scheduled.
     private func assertWaitsForTheUser(
@@ -128,7 +179,7 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
         saving info: ONVIFSourceInfo, presenting trust: SecTrust? = nil
     ) throws -> (CoordinatorHarness, UUID) {
         let scanCounter = scans
-        let presented = trust.map(UncheckedTrust.init)
+        let presented = trust.map(SendableTrust.init)
         let harness = CoordinatorHarness(onvifEnvironment: ONVIFResolveEnvironment(
             scan: {
                 scanCounter.withLock { $0 += 1 }
@@ -148,9 +199,4 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
         )
         return (harness, try XCTUnwrap(harness.manager.sources.last?.id))
     }
-}
-
-/// A `SecTrust` the stub client factory captures. It is only read.
-private struct UncheckedTrust: @unchecked Sendable {
-    let trust: SecTrust
 }

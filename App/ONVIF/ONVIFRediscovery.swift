@@ -42,7 +42,7 @@ internal enum ONVIFRediscovery {
         case .soapFault, .authenticationFailed:
             guard let uuid = info.deviceUUID, !uuid.isEmpty else { return false }
             return isLANAddress(info.host)
-        case .invalidURL, .certificateNotTrusted, .plainHTTPRefused:
+        case .invalidURL, .certificateNotTrusted, .plainHTTPRefused, .differentDevice:
             return false
         }
     }
@@ -61,7 +61,7 @@ internal enum ONVIFRediscovery {
         case .soapFault, .authenticationFailed:
             return true
         case .networkError, .timedOut, .httpStatus, .parseError, .invalidURL, .certificateNotTrusted,
-             .plainHTTPRefused:
+             .plainHTTPRefused, .differentDevice:
             return false
         }
     }

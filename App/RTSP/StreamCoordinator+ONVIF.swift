@@ -151,11 +151,12 @@ extension StreamCoordinator {
     /// and connecting there sent it an RTSP login on every retry. When it is this
     /// camera refusing the login, the RTSP connect would send the same credentials again.
     /// An error only the user can clear (`ONVIFError.needsUserDecision`) rules it out
-    /// as well: a refused certificate may belong to another device.
+    /// as well: a refused certificate may belong to another device, and so does the
+    /// stored URI's address once another device answers there.
     nonisolated static func mayFallBackToStoredURI(after error: any Error) -> Bool {
         guard let onvifError = error as? ONVIFError else { return true }
         switch onvifError {
-        case .authenticationFailed, .soapFault, .certificateNotTrusted, .plainHTTPRefused:
+        case .authenticationFailed, .soapFault, .certificateNotTrusted, .plainHTTPRefused, .differentDevice:
             return false
         case .invalidURL, .networkError, .httpStatus, .parseError, .timedOut:
             return true
@@ -201,7 +202,7 @@ extension StreamCoordinator {
     ) async throws -> ONVIFStreamURIResult {
         let savedAddressError: any Error
         do {
-            return .success(try await fetchStreamURI(from: params.info, params: params))
+            return .success(try await fetchStreamURI(from: params.info, params: params, checkingIdentity: true))
         } catch {
             try Task.checkCancellation()
             Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error.localizedDescription)")
@@ -237,14 +238,18 @@ extension StreamCoordinator {
     /// GetStreamUri from the camera at `info`'s address, within
     /// `Tuning.onvifReconnectFetchTimeout`. Each fetch has its own limit so that the
     /// overall budget (`Tuning.onvifReconnectTimeout`) always leaves room for the scan
-    /// and the fetch from the address it finds.
+    /// and the fetch from the address it finds. When `checkingIdentity` (the saved
+    /// address), the device is checked first, within the same limit, to be the camera
+    /// saved there (`ONVIFClient.checkIdentity(of:)`); one the scan found claims the
+    /// camera's UUID already.
     private static func fetchStreamURI(
-        from info: ONVIFSourceInfo, params: ONVIFResolveParams
+        from info: ONVIFSourceInfo, params: ONVIFResolveParams, checkingIdentity: Bool = false
     ) async throws -> ResolvedONVIFStreamURI {
         let client = params.environment.makeClient(info, params.credentials)
         let token = params.token
         let uri = try await ONVIFTimeout.run(seconds: Tuning.onvifReconnectFetchTimeout) {
-            try await client.getStreamURI(profileToken: token)
+            if checkingIdentity { try await client.checkIdentity(of: info) }
+            return try await client.getStreamURI(profileToken: token)
         }
         return ResolvedONVIFStreamURI(uri: uri, onvifHost: info.host)
     }

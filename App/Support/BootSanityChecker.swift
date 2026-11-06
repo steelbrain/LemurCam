@@ -85,7 +85,9 @@ internal final class BootSanityChecker {
     ) async throws {
         let client = StreamCoordinator.makeONVIFClient(for: info, credentials: credentials)
         _ = try await ONVIFTimeout.run(seconds: ONVIFTimeout.launchProbe) {
-            try await client.getProfiles()
+            // The login goes only to the camera saved there.
+            try await client.checkIdentity(of: info)
+            return try await client.getProfiles()
         }
     }
 
