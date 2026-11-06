@@ -9,8 +9,8 @@ import XCTest
 /// no stub fails like an address where nothing answers.
 @MainActor
 internal final class ONVIFResolveFixture {
-    static let deviceUUID = "2b9c0b1e-0000-4000-8000-00000000c0de"
-    static let credentials = SourceCredentials(username: "viewer", password: "pw")
+    nonisolated static let deviceUUID = "2b9c0b1e-0000-4000-8000-00000000c0de"
+    nonisolated static let credentials = SourceCredentials(username: "viewer", password: "pw")
 
     let manager: SourceManager
     let store = InMemoryCredentialStore()
@@ -93,7 +93,7 @@ internal final class ONVIFResolveFixture {
         )
     }
 
-    static func device(host: String, port: Int = 80, useHTTPS: Bool = false) -> DiscoveredDevice {
+    nonisolated static func device(host: String, port: Int = 80, useHTTPS: Bool = false) -> DiscoveredDevice {
         DiscoveredDevice(
             endpointUUID: deviceUUID,
             endpointURL: "\(useHTTPS ? "https" : "http")://\(host):\(port)/onvif/device_service",
@@ -101,7 +101,7 @@ internal final class ONVIFResolveFixture {
         )
     }
 
-    static func streamURIReply(_ uri: String) -> ONVIFStubURLProtocol.Reply {
+    nonisolated static func streamURIReply(_ uri: String) -> ONVIFStubURLProtocol.Reply {
         ONVIFStubURLProtocol.Reply(body: Data("""
             <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>
             <GetStreamUriResponse xmlns="http://www.onvif.org/ver10/media/wsdl">

@@ -70,11 +70,11 @@ extension StreamCoordinator {
 
     /// Asks the camera for the stream URI at its saved address. Only when the address
     /// gives no answer, or an answer that is not this camera's ONVIF service, does it
-    /// look for the camera with WS-Discovery, and it saves the address the scan reports
-    /// only when that address differs from the saved one. See `ONVIFRediscovery`.
-    /// A failure carries the error from the saved address,
-    /// unless the camera was found elsewhere and failed there. Throws only when
-    /// cancelled.
+    /// look for the camera with WS-Discovery. An address the scan reports is saved only
+    /// when it differs from the saved one and `ONVIFRediscovery.shouldSave` allows it;
+    /// otherwise it is used for this connection only. A failure carries the error from
+    /// the saved address, unless the camera was found elsewhere and failed there.
+    /// Throws only when cancelled.
     static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> ONVIFStreamURIResult {
         let savedAddressError: any Error
         do {
@@ -121,10 +121,14 @@ extension StreamCoordinator {
     private static func connect(
         movedTo moved: ONVIFSourceInfo, params: ONVIFResolveParams
     ) async throws -> ONVIFStreamURIResult {
-        await MainActor.run {
-            params.sourceManager?.updateONVIFAddress(
-                id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
-            )
+        if ONVIFRediscovery.shouldSave(moved, replacing: params.info) {
+            await MainActor.run {
+                params.sourceManager?.updateONVIFAddress(
+                    id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
+                )
+            }
+        } else {
+            Log.rtsp.info("Using the address found for '\(params.sourceName)' for this connection only")
         }
         do {
             return .success(try await fetchStreamURI(from: moved, params: params))

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Decides when a saved ONVIF camera should be looked for again with WS-Discovery,
@@ -42,13 +43,56 @@ internal enum ONVIFRediscovery {
         let matches = devices.filter { $0.endpointUUID == uuid }
         guard let device = matches.first else { return .notFound }
         guard Set(matches.map(Address.init(device:))).count == 1 else { return .ambiguous }
-        guard Address(device: device) != Address(info: info) else { return .unchanged }
 
-        var moved = info
-        moved.host = device.host
-        moved.port = device.port
-        moved.useHTTPS = device.useHTTPS
-        return .moved(moved)
+        let found = settings(for: info, at: device)
+        guard Address(info: found) != Address(info: info) else { return .unchanged }
+        return .moved(found)
+    }
+
+    /// Whether a move is saved, or the found address is used for this connection
+    /// only. A camera saved by its LAN IP address moves when its DHCP lease changes, so
+    /// the new address is saved. A host name (`cam.local`, a DDNS name) or a public
+    /// address reached through port forwarding is what the user entered and keeps
+    /// working where the LAN address the scan found does not, so it is never
+    /// overwritten. Nor is HTTPS ever replaced by HTTP.
+    static func shouldSave(_ moved: ONVIFSourceInfo, replacing saved: ONVIFSourceInfo) -> Bool {
+        isLANAddress(saved.host) && (moved.useHTTPS || !saved.useHTTPS)
+    }
+
+    /// Whether `host` is an IP literal in a range that addresses a device on the local
+    /// network: private IPv4 (10/8, 172.16/12, 192.168/16), link-local (169.254/16,
+    /// fe80::/10), IPv6 unique local (fc00::/7) or loopback. Host names and every other
+    /// address, including carrier-grade NAT (100.64/10), are not.
+    static func isLANAddress(_ host: String) -> Bool {
+        guard let literal = ONVIFDiscovery.normalizedIPAddress(host) else { return false }
+        var ipv4 = in_addr()
+        if inet_pton(AF_INET, literal, &ipv4) == 1 {
+            let octets = withUnsafeBytes(of: ipv4) { Array($0) }
+            switch (octets[0], octets[1]) {
+            case (10, _), (127, _), (172, 16...31), (192, 168), (169, 254):
+                return true
+            default:
+                return false
+            }
+        }
+        var ipv6 = in6_addr()
+        guard inet_pton(AF_INET6, literal, &ipv6) == 1 else { return false }
+        let bytes = withUnsafeBytes(of: ipv6) { Array($0) }
+        let isLoopback = bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+        return bytes[0] & 0xFE == 0xFC || (bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80) || isLoopback
+    }
+
+    /// The saved settings with the address of `device`. A camera saved with HTTPS
+    /// keeps HTTPS and its saved port when the scan reports plain HTTP for it, so its
+    /// login never goes unencrypted.
+    private static func settings(for info: ONVIFSourceInfo, at device: DiscoveredDevice) -> ONVIFSourceInfo {
+        var found = info
+        found.host = device.host
+        if device.useHTTPS || !info.useHTTPS {
+            found.port = device.port
+            found.useHTTPS = device.useHTTPS
+        }
+        return found
     }
 
     private struct Address: Hashable {

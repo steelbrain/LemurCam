@@ -196,8 +196,10 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         XCTAssertEqual(credentialStore.writes, writesBefore)
     }
 
+    /// A camera saved by its LAN IP address (no stub answers there) moved: the new
+    /// address is saved. See ONVIFAddressPersistenceTests for addresses that are kept.
     func testMovedDeviceIsSavedAndQueriedAtItsNewAddress() async throws {
-        let oldHost = "onvif-rediscovery-unregistered-\(UUID().uuidString).invalid"
+        let oldHost = "192.168.77.60"
         let newHost = stubCamera(ONVIFStubURLProtocol.Reply(body: streamURIReply("rtsp://192.0.2.31/main")))
         let (sourceManager, credentialStore, source) = try addCamera(host: oldHost)
         let writesBefore = credentialStore.writes
