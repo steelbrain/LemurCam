@@ -171,13 +171,15 @@ internal final class SourceManager {
         updated.sourceType = cleanType
         updated.updatedAt = Date()
         sources[index] = updated
-        try saveChange(undoingTo: previous, activeSourceID: activeSourceID)
-        if id != activeSourceID {
-            // The launch check's status (only the active camera's is the stream's),
-            // about the camera as it was before this edit.
-            connectionStatuses[id] = .disconnected
-            updateErrorMessage(for: id, message: nil)
+        defer {
+            // Once the edit stands (it is not undone), the launch check's status (only
+            // the active camera's is the stream's) is about the camera before it.
+            if id != activeSourceID, sources != previous {
+                connectionStatuses[id] = .disconnected
+                updateErrorMessage(for: id, message: nil)
+            }
         }
+        try saveChange(undoingTo: previous, activeSourceID: activeSourceID)
         do {
             try apply(change, for: id, sourceName: name)
         } catch {

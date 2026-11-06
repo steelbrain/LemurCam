@@ -9,9 +9,24 @@ import XCTest
 /// was probed is dropped.
 @MainActor
 internal final class BootSanityCheckerEditTests: XCTestCase {
+    /// Lets a number of file writes work, then fails every one after.
+    private final class Writes {
+        var left = Int.max
+
+        func nextFails() -> Bool {
+            guard left > 0 else { return true }
+            left -= 1
+            return false
+        }
+    }
+
+    private struct WriteFailure: Error {}
+
     private var directory: URL?
     private var manager: SourceManager?
     private var savedActiveID: String?
+    private let keychain = InMemoryCredentialStore()
+    private let writes = Writes()
 
     private static let probedType = SourceType.rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.20:554/stream1"))
     private static let editedType = SourceType.rtsp(RTSPSourceInfo(url: "rtsp://192.0.2.21:554/stream1"))
@@ -21,10 +36,11 @@ internal final class BootSanityCheckerEditTests: XCTestCase {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         directory = folder
-        manager = SourceManager(
-            storage: SourceStorage(fileURL: folder.appendingPathComponent("sources.json")),
-            keychain: InMemoryCredentialStore()
-        )
+        let storage = SourceStorage(fileURL: folder.appendingPathComponent("sources.json")) { [writes] data, url in
+            if writes.nextFails() { throw WriteFailure() }
+            try data.write(to: url, options: .atomic)
+        }
+        manager = SourceManager(storage: storage, keychain: keychain)
     }
 
     override func tearDown() async throws {
@@ -64,6 +80,58 @@ internal final class BootSanityCheckerEditTests: XCTestCase {
         XCTAssertEqual(sourceManager.connectionStatuses[other.id], .disconnected)
         XCTAssertNil(sourceManager.errorMessages[other.id])
         XCTAssertFalse(sourceManager.unreachableSourceIDs.contains(other.id))
+    }
+
+    /// An edit that was undone leaves the camera as it was checked: its login couldn't
+    /// be stored, and the file was put back.
+    func testAnEditThatWasUndoneKeepsTheLaunchCheckStatus() throws {
+        let (sourceManager, _, other) = try makeCameras()
+        sourceManager.updateConnectionStatus(for: other.id, status: .error)
+        sourceManager.updateErrorMessage(for: other.id, message: "Authentication failed")
+        keychain.failSaves = true
+
+        XCTAssertThrowsError(try sourceManager.updateSource(
+            id: other.id, name: "Porch", sourceType: Self.probedType,
+            credentials: SourceCredentials(username: "viewer", password: "fixed")
+        )) { XCTAssertTrue($0 is CredentialSaveError, "\($0)") }
+
+        XCTAssertEqual(sourceManager.sources.first { $0.id == other.id }, other, "the edit was undone")
+        XCTAssertEqual(sourceManager.connectionStatuses[other.id], .error)
+        XCTAssertEqual(sourceManager.errorMessages[other.id], "Authentication failed")
+    }
+
+    /// Nor does an edit the cameras file couldn't take.
+    func testAnEditThatWasNotWrittenKeepsTheLaunchCheckStatus() throws {
+        let (sourceManager, _, other) = try makeCameras()
+        sourceManager.updateConnectionStatus(for: other.id, status: .error)
+        sourceManager.updateErrorMessage(for: other.id, message: "Authentication failed")
+        writes.left = 0
+
+        XCTAssertThrowsError(try sourceManager.updateSource(
+            id: other.id, name: "Porch", sourceType: Self.editedType, credentials: nil
+        )) { XCTAssertTrue($0 is SourceFileSaveError, "\($0)") }
+
+        XCTAssertEqual(sourceManager.connectionStatuses[other.id], .error)
+        XCTAssertEqual(sourceManager.errorMessages[other.id], "Authentication failed")
+    }
+
+    /// An edit that couldn't be undone stands, without its login: the status was about
+    /// the camera before it.
+    func testAnEditSavedWithoutItsLoginClearsTheLaunchCheckStatus() throws {
+        let (sourceManager, _, other) = try makeCameras()
+        sourceManager.updateConnectionStatus(for: other.id, status: .error)
+        sourceManager.updateErrorMessage(for: other.id, message: "Authentication failed")
+        keychain.failSaves = true
+        // The edit's own write works; the undo's fails.
+        writes.left = 1
+
+        XCTAssertThrowsError(try sourceManager.updateSource(
+            id: other.id, name: "Porch", sourceType: Self.editedType,
+            credentials: SourceCredentials(username: "viewer", password: "fixed")
+        )) { XCTAssertTrue($0 is EditSavedWithoutLoginError, "\($0)") }
+
+        XCTAssertEqual(sourceManager.connectionStatuses[other.id], .disconnected)
+        XCTAssertNil(sourceManager.errorMessages[other.id])
     }
 
     /// The active camera's status is the stream's, which an edit reconnects.
