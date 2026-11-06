@@ -30,14 +30,15 @@ internal enum H264TestStream {
 
 /// A `StreamPipeline` that records what `StreamCoordinator` asks of it and lets a
 /// test drive the state callbacks the real pipeline would fire. Like the real one,
-/// `connect` reports `.connecting` straight away.
+/// `connect` reports `.connecting` straight away, and numbers its connections.
 internal final class FakeStreamPipeline: StreamPipeline {
     private struct State {
         var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)?
-        var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)?
+        var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)?
         var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
         var connectedURLs: [String] = []
+        var latestConnection = StreamConnectionID.initial
         var silentCancels = 0
     }
 
@@ -48,7 +49,7 @@ internal final class FakeStreamPipeline: StreamPipeline {
         set { state.withLock { $0.onPixelBuffer = newValue } }
     }
 
-    var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)? {
+    var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)? {
         get { state.withLock { $0.onStateChanged } }
         set { state.withLock { $0.onStateChanged = newValue } }
     }
@@ -72,9 +73,19 @@ internal final class FakeStreamPipeline: StreamPipeline {
         state.withLock { $0.silentCancels }
     }
 
-    func connect(url: String, credentials _: SourceCredentials?) {
-        state.withLock { $0.connectedURLs.append(url) }
-        emit(.connecting)
+    /// The ID the last `connect` returned.
+    var latestConnection: StreamConnectionID {
+        state.withLock { $0.latestConnection }
+    }
+
+    func connect(url: String, credentials _: SourceCredentials?) -> StreamConnectionID {
+        let connection = state.withLock { state in
+            state.connectedURLs.append(url)
+            state.latestConnection = state.latestConnection.next()
+            return state.latestConnection
+        }
+        emit(.connecting, connection: connection)
+        return connection
     }
 
     func disconnect() {}
@@ -83,9 +94,15 @@ internal final class FakeStreamPipeline: StreamPipeline {
         state.withLock { $0.silentCancels += 1 }
     }
 
-    /// Fire `onStateChanged` as the real pipeline would from its stream task.
+    /// Fire `onStateChanged` as the real pipeline would from the stream task of
+    /// its latest connection.
     func emit(_ newState: RTSPStreamPipeline.State) {
-        onStateChanged?(newState)
+        emit(newState, connection: latestConnection)
+    }
+
+    /// Fire `onStateChanged` for `connection`, which may be an earlier one.
+    func emit(_ newState: RTSPStreamPipeline.State, connection: StreamConnectionID) {
+        onStateChanged?(newState, connection)
     }
 }
 

@@ -3,16 +3,33 @@ import Foundation
 import IPCamKit
 import os
 
+/// Names one `connect` call. State changes are reported with the connection they
+/// belong to, so a change from a connection that has since been cancelled or
+/// replaced can be told apart from one about the current connection.
+internal struct StreamConnectionID: Hashable, Sendable {
+    let rawValue: UInt64
+
+    /// Before the first `connect`.
+    static let initial = Self(rawValue: 0)
+
+    func next() -> Self {
+        Self(rawValue: rawValue &+ 1)
+    }
+}
+
 /// The pipeline surface `StreamCoordinator` drives. `RTSPStreamPipeline` is the
 /// production conformer; tests substitute a recording fake to exercise retry and
 /// demand handling without a camera.
 internal protocol StreamPipeline: AnyObject, Sendable {
     var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? { get set }
-    var onStateChanged: (@Sendable (RTSPStreamPipeline.State) -> Void)? { get set }
+    /// Called with each state change and the connection it belongs to: the ID the
+    /// `connect` call that started it returned.
+    var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)? { get set }
     var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)? { get set }
     var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? { get set }
 
-    func connect(url: String, credentials: SourceCredentials?)
+    /// Starts a new connection, replacing any current one, and returns its ID.
+    func connect(url: String, credentials: SourceCredentials?) -> StreamConnectionID
     func disconnect()
     func cancelSilently()
 }
@@ -62,7 +79,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         set { callbacks.withLock { $0.onPixelBuffer = newValue } }
     }
 
-    var onStateChanged: (@Sendable (State) -> Void)? {
+    var onStateChanged: (@Sendable (State, StreamConnectionID) -> Void)? {
         get { callbacks.withLock { $0.onStateChanged } }
         set { callbacks.withLock { $0.onStateChanged = newValue } }
     }
@@ -82,7 +99,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
     private struct Callbacks: Sendable {
         var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)?
-        var onStateChanged: (@Sendable (State) -> Void)?
+        var onStateChanged: (@Sendable (State, StreamConnectionID) -> Void)?
         var onStreamInfo: (@Sendable (StreamInfo) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
     }
@@ -90,16 +107,21 @@ internal final class RTSPStreamPipeline: StreamPipeline {
     private let callbacks = OSAllocatedUnfairLock<Callbacks>(initialState: Callbacks())
     private let pipelineState = OSAllocatedUnfairLock<State>(initialState: .idle)
     private let streamTask = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+    private let latestConnection = OSAllocatedUnfairLock(initialState: StreamConnectionID.initial)
 
     var state: State {
         pipelineState.withLock { $0 }
     }
 
-    func connect(url: String, credentials: SourceCredentials?) {
+    func connect(url: String, credentials: SourceCredentials?) -> StreamConnectionID {
         // Cancel previous task without firing state callbacks
         cancelStreamTask()
 
-        setState(.connecting)
+        let connection = latestConnection.withLock { latest in
+            latest = latest.next()
+            return latest
+        }
+        setState(.connecting, connection: connection)
 
         let rtspCredentials: Credentials? = credentials.map {
             Credentials(username: $0.username, password: $0.password)
@@ -107,18 +129,19 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.runStream(url: url, credentials: rtspCredentials)
+            await self.runStream(url: url, credentials: rtspCredentials, connection: connection)
         }
         streamTask.withLock {
             $0 = task
         }
+        return connection
     }
 
     /// Disconnect and transition to .disconnected state (fires onStateChanged).
     func disconnect() {
         cancelStreamTask()
         if state != .idle {
-            setState(.disconnected)
+            setState(.disconnected, connection: latestConnection.withLock { $0 })
         }
     }
 
@@ -130,7 +153,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
     // MARK: - Private
 
-    private func runStream(url: String, credentials: Credentials?) async {
+    private func runStream(url: String, credentials: Credentials?, connection: StreamConnectionID) async {
         let session = RTSPClientSession(url: url, credentials: credentials)
 
         do {
@@ -151,7 +174,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
             let audioDecoder = description.audio.map(makeAudioDecoder)
             defer { audioDecoder?.tearDown() }
 
-            setState(.streaming)
+            setState(.streaming, connection: connection)
             Log.rtsp.info("Stream connected: \(video.codec)")
             publishStreamInfo(video)
 
@@ -163,12 +186,12 @@ internal final class RTSPStreamPipeline: StreamPipeline {
             await session.stop()
 
             if !Task.isCancelled {
-                setState(.disconnected)
+                setState(.disconnected, connection: connection)
                 Log.rtsp.info("Stream ended normally")
             }
         } catch {
             if !Task.isCancelled {
-                setState(.error(error.localizedDescription))
+                setState(.error(error.localizedDescription), connection: connection)
                 Log.rtsp.error("Stream error: \(error)")
             }
             await session.stop()
@@ -231,11 +254,11 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         }
     }
 
-    private func setState(_ newValue: State) {
+    private func setState(_ newValue: State, connection: StreamConnectionID) {
         pipelineState.withLock {
             $0 = newValue
         }
-        callbacks.withLock { $0.onStateChanged }?(newValue)
+        callbacks.withLock { $0.onStateChanged }?(newValue, connection)
     }
 
     private func emitPixelBuffer(_ pixelBuffer: CVPixelBuffer) {

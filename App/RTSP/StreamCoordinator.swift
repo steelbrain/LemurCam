@@ -12,6 +12,9 @@ internal final class StreamCoordinator {
     private let frameDispatcher: StreamFrameDispatcher
     private var currentSourceID: UUID?
     private var currentSourceUpdatedAt: Date?
+    /// The pipeline connection this coordinator runs, as `connect` named it; nil
+    /// once it cancelled that connection and has not started another.
+    private var currentConnection: StreamConnectionID?
     private var retryTask: Task<Void, Never>?
     private var onvifTask: Task<Void, Never>?
     private var backoff = ReconnectBackoff()
@@ -130,11 +133,15 @@ internal final class StreamCoordinator {
             ringBuffer.write(samples, frames: frames)
         }
 
-        let handleStateChange: @MainActor @Sendable (RTSPStreamPipeline.State) -> Void = { [weak self] state in
-            self?.handlePipelineStateChanged(state)
+        let handleStateChange: @MainActor @Sendable (
+            RTSPStreamPipeline.State, StreamConnectionID
+        ) -> Void = { [weak self] state, connection in
+            self?.handlePipelineStateChanged(state, connection: connection)
         }
-        pipeline.onStateChanged = { state in
-            Task { @MainActor in handleStateChange(state) }
+        // Always hops, even when `connect` reports `.connecting` on the main thread:
+        // the change must land after `connect` returned the ID it is checked against.
+        pipeline.onStateChanged = { state, connection in
+            Task { @MainActor in handleStateChange(state, connection) }
         }
 
         let updateStreamInfo: @MainActor @Sendable (
@@ -236,7 +243,7 @@ private extension StreamCoordinator {
             Log.rtsp.info("No demand — pausing RTSP pipeline")
             frameDispatcher.reset()
             cancelAllTasks()
-            pipeline.cancelSilently()
+            cancelPipeline()
             fallbackGenerator.stop()
             showActiveSourceIdle()
         }
@@ -257,6 +264,18 @@ private extension StreamCoordinator {
         retryTask = nil
         onvifTask?.cancel()
         onvifTask = nil
+    }
+
+    /// Start a pipeline connection and record it as the current one.
+    func connectPipeline(url: String, credentials: SourceCredentials?) {
+        currentConnection = pipeline.connect(url: url, credentials: credentials)
+    }
+
+    /// Cancel the pipeline's connection without a state change. State changes it
+    /// already reported, still on their way to the main actor, are dropped.
+    func cancelPipeline() {
+        pipeline.cancelSilently()
+        currentConnection = nil
     }
 }
 
@@ -283,7 +302,7 @@ private extension StreamCoordinator {
             return
         }
 
-        pipeline.cancelSilently()
+        cancelPipeline()
         // A silent cancel fires no state change, so nothing else resets the jitter
         // buffer: its drain timer would keep re-sending the old camera's last frame.
         frameDispatcher.reset()
@@ -304,7 +323,7 @@ private extension StreamCoordinator {
         switch source.sourceType {
         case .rtsp(let info):
             Log.rtsp.info("Connecting to source '\(source.name)'")
-            pipeline.connect(url: info.url, credentials: credentials)
+            connectPipeline(url: info.url, credentials: credentials)
         case .onvif(let info):
             connectONVIFSource(info, sourceID: source.id, sourceName: source.name, credentials: credentials)
         }
@@ -316,7 +335,7 @@ private extension StreamCoordinator {
         guard let token = info.selectedProfileToken else {
             if let streamURI = info.streamURI {
                 Log.rtsp.info("Connecting to source '\(sourceName)'")
-                pipeline.connect(url: streamURI, credentials: credentials)
+                connectPipeline(url: streamURI, credentials: credentials)
             } else {
                 Log.rtsp.warning("ONVIF source has no stream URI, using fallback")
                 sourceManager.updateConnectionStatus(for: sourceID, status: .error)
@@ -352,11 +371,11 @@ private extension StreamCoordinator {
         switch uri {
         case .success(let resolved):
             Log.rtsp.info("Connecting with resolved URI")
-            pipeline.connect(url: resolved, credentials: credentials)
+            connectPipeline(url: resolved, credentials: credentials)
         case .failure(let error):
             if let storedURI = info.streamURI {
                 Log.rtsp.info("Falling back to stored URI")
-                pipeline.connect(url: storedURI, credentials: credentials)
+                connectPipeline(url: storedURI, credentials: credentials)
                 return
             }
             // Retry like any failed connect, so a camera that was offline when we
@@ -367,11 +386,12 @@ private extension StreamCoordinator {
         }
     }
 
-    func handlePipelineStateChanged(_ state: RTSPStreamPipeline.State) {
-        // State changes hop to the main actor, so one can arrive after a pause
-        // cancelled its stream. It is stale: it must not mark the paused source
-        // connected or failed, nor schedule a reconnect nothing needs.
-        guard lastDemand else { return }
+    func handlePipelineStateChanged(_ state: RTSPStreamPipeline.State, connection: StreamConnectionID) {
+        // State changes hop to the main actor, so one can arrive after its stream
+        // was cancelled: by a pause, or by a source switch or reconnect that may
+        // already have started the next connection. It is stale: it must not mark
+        // the source connected or failed, nor schedule a reconnect nothing needs.
+        guard connection == currentConnection, lastDemand else { return }
         if state != .streaming {
             frameDispatcher.reset()
             firstDecodedFrame.disarm()
