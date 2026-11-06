@@ -131,7 +131,11 @@ internal final class LogLineRecorder: Sendable {
 /// A `StreamCoordinator` wired to a `FakeStreamPipeline` and a `SourceManager` with
 /// throwaway storage. `SourceManager` persists the active source in the host app's
 /// standard defaults, so `cleanUp()` restores that value. Its `LemurCamModel`
-/// finds no consumer at discovery and never reads a real CMIO device.
+/// finds no consumer at discovery and never reads a real CMIO device, and its audio
+/// ring is a private shm region, never the one a live driver maps, so tests may
+/// call `start()`. The launch probes default to "no consumer". `rtspSources` are
+/// added before the coordinator exists, as the app loads saved cameras before
+/// creating it.
 @MainActor
 internal final class CoordinatorHarness {
     let manager: SourceManager
@@ -139,18 +143,30 @@ internal final class CoordinatorHarness {
     let coordinator: StreamCoordinator
     private let directory: URL
     private let savedActiveID: String?
+    private let ringName = "/lc-test-\(UUID().uuidString.prefix(8))"
 
-    init() {
+    init(
+        rtspSources: [String] = [],
+        cameraConsumerProbe: @escaping () -> Bool = { false },
+        audioConsumerProbe: @escaping @Sendable () -> Bool = { false }
+    ) {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let storage = SourceStorage(fileURL: directory.appendingPathComponent("sources.json"))
         let sourceManager = SourceManager(storage: storage, keychain: KeychainService())
+        for name in rtspSources {
+            sourceManager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
+        }
         let fakePipeline = FakeStreamPipeline()
         manager = sourceManager
         pipeline = fakePipeline
         coordinator = StreamCoordinator(
-            sourceManager: sourceManager, audioConsumerProbe: { false }, cameraConsumerProbe: { false },
-            model: LemurCamModel(consumerProbe: { _ in false }), pipeline: fakePipeline
+            sourceManager: sourceManager,
+            audioConsumerProbe: audioConsumerProbe,
+            cameraConsumerProbe: cameraConsumerProbe,
+            audioRing: AudioRingBuffer(name: ringName),
+            model: LemurCamModel(consumerProbe: { _ in false }),
+            pipeline: fakePipeline
         )
     }
 
@@ -161,6 +177,8 @@ internal final class CoordinatorHarness {
             UserDefaults.standard.removeObject(forKey: LemurCamConfig.activeSourceKey)
         }
         try? FileManager.default.removeItem(at: directory)
+        // Exists only if the test called `start()`; the mapping goes with the ring.
+        shm_unlink(ringName)
     }
 
     /// Add an RTSP source at `rtsp://<name>` and return its ID.

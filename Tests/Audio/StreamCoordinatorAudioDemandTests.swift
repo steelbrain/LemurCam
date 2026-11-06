@@ -18,19 +18,19 @@ internal final class StreamCoordinatorAudioDemandTests: XCTestCase {
         return SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: KeychainService())
     }
 
-    func testRecoverAudioDemandSeedsWhenMicAlreadyRunning() {
+    func testRecoverAudioDemandSeedsWhenMicAlreadyRunning() async {
         let coordinator = StreamCoordinator(sourceManager: makeManager(), audioConsumerProbe: { true })
         XCTAssertFalse(coordinator.hasDemand, "fresh coordinator should have no demand")
 
-        coordinator.recoverAudioDemandOnLaunch()
+        await coordinator.recoverAudioDemandOnLaunch()
 
         XCTAssertTrue(coordinator.hasDemand, "a mic running at launch must register audio demand")
     }
 
-    func testRecoverAudioDemandStaysClearWhenMicIdle() {
+    func testRecoverAudioDemandStaysClearWhenMicIdle() async {
         let coordinator = StreamCoordinator(sourceManager: makeManager(), audioConsumerProbe: { false })
 
-        coordinator.recoverAudioDemandOnLaunch()
+        await coordinator.recoverAudioDemandOnLaunch()
 
         XCTAssertFalse(coordinator.hasDemand, "an idle mic must not bring the pipeline up")
     }

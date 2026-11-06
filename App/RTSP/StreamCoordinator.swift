@@ -17,10 +17,8 @@ internal final class StreamCoordinator {
     private var backoff = ReconnectBackoff()
     private let firstDecodedFrame = FirstDecodedFrameSignal()
     private var _hasConsumers: Bool = false
-    private var _hasAudioConsumers: Bool = false
-    private let audioRing = AudioRingBuffer()
-    /// Whether the virtual mic is already running IO; injected for testability.
-    private let audioConsumerProbe: () -> Bool
+    private let micDemand: VirtualMicDemand
+    private let audioRing: AudioRingBuffer
     /// Whether an external app is already using the virtual camera; injected for testability.
     private let cameraConsumerProbe: () -> Bool
     /// The aggregate-demand value we last acted on. Demand changes that don't cross
@@ -29,7 +27,7 @@ internal final class StreamCoordinator {
     private var lastDemand = false
 
     var hasDemand: Bool {
-        _hasConsumers || _hasAudioConsumers || previewStore.isPreviewEnabled
+        _hasConsumers || micDemand.hasConsumers || previewStore.isPreviewEnabled
     }
 
     /// Whether an external app is consuming the virtual camera, as tracked in this
@@ -37,12 +35,14 @@ internal final class StreamCoordinator {
     /// `LemurCamModel` learns from CMIO (device loss, discovery). Read-only.
     var hasExternalConsumers: Bool { _hasConsumers }
 
-    /// `model` is injectable so tests can give it a consumer probe that never
-    /// reads a real CMIO device.
+    /// `audioConsumerProbe` (whether the virtual mic runs IO) is called off the main
+    /// thread. `audioRing` and `model` are injectable so tests can use a private shm
+    /// region and a consumer probe that never reads a real CMIO device.
     init(
         sourceManager: SourceManager,
-        audioConsumerProbe: @escaping () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
+        audioConsumerProbe: @escaping @Sendable () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
         cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
+        audioRing: AudioRingBuffer = AudioRingBuffer(),
         model streamModel: LemurCamModel = LemurCamModel(),
         pipeline: any StreamPipeline = RTSPStreamPipeline()
     ) {
@@ -52,7 +52,8 @@ internal final class StreamCoordinator {
         self.previewStore = previews
         self.sourceManager = sourceManager
         self.pipeline = pipeline
-        self.audioConsumerProbe = audioConsumerProbe
+        self.micDemand = VirtualMicDemand(probe: audioConsumerProbe)
+        self.audioRing = audioRing
         self.cameraConsumerProbe = cameraConsumerProbe
         self.fallbackGenerator = FrameGenerator(model: streamModel)
         self.frameDispatcher = StreamFrameDispatcher(
@@ -68,32 +69,27 @@ internal final class StreamCoordinator {
         wirePipelineCallbacks()
         wireSourceCallbacks()
         observeConsumerChanges()
-        observeAudioConsumers()
     }
 
     func start() {
         frameDispatcher.setPreviewEnabled(previewStore.isPreviewEnabled)
         audioRing.open()
         _hasConsumers = cameraConsumerProbe()
-        recoverAudioDemandOnLaunch()
         syncToActiveSource()
         // Record the demand state we just brought the pipeline into, so the first
         // consumer notification doesn't read as a spurious edge and reconnect.
         lastDemand = hasDemand
+        Task { [weak self] in await self?.recoverAudioDemandOnLaunch() }
     }
 
     /// Recover audio demand missed at launch: a `consumerStarted` Darwin notification
     /// that fired before observers registered is not replayed, so seed from the device's
-    /// running state and begin producing if in use. Split from `start()` for testability.
-    /// An idle probe explicitly ends production too: the shared region can outlive an
-    /// earlier app run that left it marked as producing.
-    func recoverAudioDemandOnLaunch() {
-        _hasAudioConsumers = audioConsumerProbe()
-        if _hasAudioConsumers {
-            audioRing.beginProducing()
-        } else {
-            audioRing.endProducing()
-        }
+    /// running state. Split from `start()` for testability. The device is read off the
+    /// main thread and its answer lands like a consumer notification: a mic in use
+    /// starts the stream, and an idle one explicitly ends production too, since the
+    /// shared region can outlive an earlier app run that left it marked as producing.
+    func recoverAudioDemandOnLaunch() async {
+        await micDemand.refreshFromDevice()
     }
 
     /// Run CMIO device discovery for the virtual camera. Called by the
@@ -157,6 +153,9 @@ internal final class StreamCoordinator {
             self.frameDispatcher.setPreviewEnabled(self.previewStore.isPreviewEnabled)
             self.demandChanged()
         }
+        micDemand.onUpdate = { [weak self] in
+            self?.audioDemandChanged()
+        }
     }
 }
 
@@ -199,36 +198,6 @@ private extension StreamCoordinator {
         }
     }
 
-    /// Observe the virtual-microphone driver's consumer notifications, mirroring the
-    /// camera observers above. Split out so neither function exceeds the body-length
-    /// limit; registered under the same token, removed wholesale in `deinit`.
-    func observeAudioConsumers() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord._hasAudioConsumers = true; coord.audioDemandChanged() }
-            },
-            LEMUR_AUDIO_NOTIFY_CONSUMER_STARTED as CFString, nil, .deliverImmediately
-        )
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord._hasAudioConsumers = false; coord.audioDemandChanged() }
-            },
-            LEMUR_AUDIO_NOTIFY_CONSUMER_STOPPED as CFString, nil, .deliverImmediately
-        )
-    }
-
     func demandChanged() {
         reconcileDemand()
     }
@@ -236,7 +205,7 @@ private extension StreamCoordinator {
     /// Microphone demand changed. The ring's producing flag tracks the mic directly;
     /// the shared pipeline is then reconciled like any other demand source.
     func audioDemandChanged() {
-        if _hasAudioConsumers {
+        if micDemand.hasConsumers {
             audioRing.beginProducing()
         } else {
             audioRing.endProducing()
@@ -488,11 +457,15 @@ extension StreamCoordinator {
         demandChanged()
     }
 
-    /// Apply a microphone consumer edge the way `observeAudioConsumers`' Darwin
+    /// Apply a microphone consumer edge the way `VirtualMicDemand`'s Darwin
     /// observers do. Tests call this instead of posting the system-wide
     /// notification, which every other LemurCam process would also receive.
     func simulateAudioConsumerChange(active: Bool) {
-        _hasAudioConsumers = active
-        audioDemandChanged()
+        micDemand.consumerChanged(active: active)
+    }
+
+    /// Whether an app is using the virtual microphone, as last applied.
+    var hasAudioConsumers: Bool {
+        micDemand.hasConsumers
     }
 }
