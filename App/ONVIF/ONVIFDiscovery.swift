@@ -9,7 +9,6 @@ private typealias XElement = XMLKit.XMLElement
 internal final class ONVIFDiscovery: Sendable {
     private static let multicastAddress = "239.255.255.250"
     private static let multicastPort: UInt16 = 3702
-    private static let scanDuration: TimeInterval = 5
 
     func scan() async -> [DiscoveredDevice] {
         await withCheckedContinuation { continuation in
@@ -35,7 +34,12 @@ internal final class ONVIFDiscovery: Sendable {
 
         guard bindSocket(sock) else { return [] }
 
-        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        // Bounds each receive, so the scan ends at most this long after its deadline.
+        let receiveTimeout = Tuning.onvifDiscoveryReceiveTimeout
+        let wholeSeconds = receiveTimeout.rounded(.down)
+        var timeout = timeval(
+            tv_sec: Int(wholeSeconds), tv_usec: Int32((receiveTimeout - wholeSeconds) * 1_000_000)
+        )
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         let messageID = "uuid:\(UUID().uuidString)"
@@ -92,7 +96,7 @@ internal final class ONVIFDiscovery: Sendable {
         var seen: Set<String> = []
         var ignored = 0
         var buffer = [UInt8](repeating: 0, count: 65_536)
-        let deadline = Date().addingTimeInterval(scanDuration)
+        let deadline = Date().addingTimeInterval(Tuning.onvifDiscoveryScanDuration)
 
         while Date() < deadline {
             var senderAddr = sockaddr_in()

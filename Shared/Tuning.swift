@@ -20,12 +20,30 @@ internal enum Tuning {
     /// stream start or after packet loss) doesn't count, whatever the keyframe interval.
     static let videoDecodeStallTimeoutNs: UInt64 = 20_000_000_000
 
-    /// ONVIF HTTP request timeout (seconds).
+    /// ONVIF HTTP request timeout (seconds): how long one request may go without
+    /// receiving anything, connecting included. A request to an address where nothing
+    /// answers fails after this long.
     static let onvifRequestTimeout: TimeInterval = 10
 
-    /// Overall timeout for the ONVIF reconnection flow (seconds).
-    /// Covers: initial fetch + WS-Discovery scan + re-fetch at new address.
-    static let onvifReconnectTimeout: TimeInterval = 15
+    /// Longest one stream-URI fetch in the ONVIF reconnection flow may take (seconds),
+    /// counting the clock and capabilities requests before GetStreamUri. Longer than
+    /// one request timeout, so a fetch from an address where nothing answers fails on
+    /// its own and leads to a WS-Discovery scan.
+    static let onvifReconnectFetchTimeout: TimeInterval = 15
+
+    /// How long a WS-Discovery scan collects replies (seconds).
+    static let onvifDiscoveryScanDuration: TimeInterval = 5
+
+    /// How long a WS-Discovery scan waits for one reply before it checks its deadline
+    /// again (seconds). A scan can run this much longer than its duration.
+    static let onvifDiscoveryReceiveTimeout: TimeInterval = 1
+
+    /// Overall timeout for the ONVIF reconnection flow (seconds). It covers each step
+    /// at its own limit: the fetch from the saved address, a WS-Discovery scan, and
+    /// the fetch from the address the scan found, plus a second for the work between.
+    static let onvifReconnectTimeout: TimeInterval = onvifReconnectFetchTimeout
+        + onvifDiscoveryScanDuration + onvifDiscoveryReceiveTimeout
+        + onvifReconnectFetchTimeout + 1
 
     // MARK: - Retry
 

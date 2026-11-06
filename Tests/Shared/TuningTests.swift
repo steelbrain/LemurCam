@@ -24,10 +24,23 @@ internal final class TuningTests: XCTestCase {
 
     func testSecondTimeoutsArePositive() {
         XCTAssertGreaterThan(Tuning.onvifRequestTimeout, 0)
+        XCTAssertGreaterThan(Tuning.onvifReconnectFetchTimeout, 0)
+        XCTAssertGreaterThan(Tuning.onvifDiscoveryScanDuration, 0)
+        XCTAssertGreaterThan(Tuning.onvifDiscoveryReceiveTimeout, 0)
         XCTAssertGreaterThan(Tuning.onvifReconnectTimeout, 0)
-        // The reconnect flow wraps an HTTP fetch plus a discovery scan, so its budget
-        // must be at least as large as a single request timeout.
-        XCTAssertGreaterThanOrEqual(Tuning.onvifReconnectTimeout, Tuning.onvifRequestTimeout)
+    }
+
+    /// The ONVIF reconnect flow fetches from the saved address, scans with
+    /// WS-Discovery, and fetches from the address the scan found. Its budget was 15 s
+    /// while one request to a silent address alone takes 10 s and a scan up to 6 s,
+    /// so a camera whose old address now drops connections was never found. The
+    /// budget must outlast every step at its own limit.
+    func testONVIFReconnectBudgetCoversEveryStep() {
+        let scan = Tuning.onvifDiscoveryScanDuration + Tuning.onvifDiscoveryReceiveTimeout
+        let steps = Tuning.onvifReconnectFetchTimeout + scan + Tuning.onvifReconnectFetchTimeout
+        XCTAssertGreaterThan(Tuning.onvifReconnectTimeout, steps)
+        // A silent address fails at the request timeout, inside the fetch's own limit.
+        XCTAssertGreaterThanOrEqual(Tuning.onvifReconnectFetchTimeout, Tuning.onvifRequestTimeout)
     }
 
     // MARK: - Retry / backoff

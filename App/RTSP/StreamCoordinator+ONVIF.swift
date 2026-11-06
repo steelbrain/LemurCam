@@ -75,10 +75,9 @@ extension StreamCoordinator {
     /// unless the camera was found elsewhere and failed there. Throws only when
     /// cancelled.
     static func attemptONVIFResolve(params: ONVIFResolveParams) async throws -> ONVIFStreamURIResult {
-        let client = params.environment.makeClient(params.info, params.credentials)
         let savedAddressError: any Error
         do {
-            return .success(try await client.getStreamURI(profileToken: params.token))
+            return .success(try await fetchStreamURI(from: params.info, params: params))
         } catch {
             try Task.checkCancellation()
             Log.rtsp.warning("ONVIF fetch failed for '\(params.sourceName)': \(error.localizedDescription)")
@@ -106,6 +105,18 @@ extension StreamCoordinator {
         return .failure(savedAddressError)
     }
 
+    /// GetStreamUri from the camera at `info`'s address, within
+    /// `Tuning.onvifReconnectFetchTimeout`. Each fetch has its own limit so that the
+    /// overall budget (`Tuning.onvifReconnectTimeout`) always leaves room for the scan
+    /// and the fetch from the address it finds.
+    private static func fetchStreamURI(from info: ONVIFSourceInfo, params: ONVIFResolveParams) async throws -> String {
+        let client = params.environment.makeClient(info, params.credentials)
+        let token = params.token
+        return try await ONVIFTimeout.run(seconds: Tuning.onvifReconnectFetchTimeout) {
+            try await client.getStreamURI(profileToken: token)
+        }
+    }
+
     private static func connect(
         movedTo moved: ONVIFSourceInfo, params: ONVIFResolveParams
     ) async throws -> ONVIFStreamURIResult {
@@ -114,9 +125,8 @@ extension StreamCoordinator {
                 id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
             )
         }
-        let client = params.environment.makeClient(moved, params.credentials)
         do {
-            return .success(try await client.getStreamURI(profileToken: params.token))
+            return .success(try await fetchStreamURI(from: moved, params: params))
         } catch {
             try Task.checkCancellation()
             Log.rtsp.error("ONVIF fetch failed at new address: \(error.localizedDescription)")
