@@ -340,9 +340,11 @@ private extension StreamCoordinator {
             Log.rtsp.info("Falling back to stored URI")
             pipeline.connect(url: storedURI, credentials: credentials)
         } else {
+            // Retry like any failed connect, so a camera that was offline when we
+            // tried is picked up once it is back instead of staying in error.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
             sourceManager.updateErrorMessage(for: sourceID, message: "Could not reach camera")
-            fallbackGenerator.start()
+            scheduleRetry()
         }
     }
 
