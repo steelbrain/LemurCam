@@ -102,7 +102,7 @@ internal struct StatusSettingsView: View {
         case .notInstalled:
             return button("Enable Camera") { setup.enableCamera() }
         case .failed:
-            return button("Try Again") { setup.enableCamera() }
+            return button("Try Again") { setup.retryCamera() }
         }
     }
 

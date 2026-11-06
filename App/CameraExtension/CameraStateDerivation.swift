@@ -117,6 +117,12 @@ internal enum CameraStateDerivation {
             }
         }
 
+        /// What "Try Again" redoes: the request that failed, or an activation (as
+        /// Enable) when none is recorded. Activating after a failed repair would find
+        /// the version already installed and show the camera running while the
+        /// duplicates stay.
+        var retry: Request { failedRequest ?? .activation }
+
         /// `request` failed; its reason is (about to be) the status.
         mutating func requestFailed(_ request: Request) {
             failedRequest = request

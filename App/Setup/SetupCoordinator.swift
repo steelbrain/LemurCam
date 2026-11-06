@@ -166,6 +166,11 @@ internal final class SetupCoordinator {
         cameraController.repair()
     }
 
+    /// "Try Again" on a failed camera status: redo the repair or activation that failed.
+    func retryCamera() {
+        cameraController.retry()
+    }
+
     /// Open System Settings to the Login Items & Extensions pane, scrolled to the
     /// Extensions list. On macOS 15+ this lands on the modern "By App" view, where
     /// LemurCam appears as a Media Extension — rather than the legacy by-category

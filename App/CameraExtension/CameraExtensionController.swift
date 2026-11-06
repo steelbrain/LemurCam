@@ -141,7 +141,8 @@ internal final class CameraExtensionController: NSObject {
 
     /// Collapse a duplicate/zombie install to a single current version: deactivate
     /// every installed copy, then re-activate the one this app ships. Surfaced as
-    /// the one-click Repair action when `status == .needsRepair`.
+    /// the one-click Repair action when `status == .needsRepair`, and redone by Try
+    /// Again when it failed (`retry`).
     func repair() {
         // Don't start a repair while any request is already in flight — a
         // deactivation racing a concurrent activation would fight over the install.
@@ -156,6 +157,15 @@ internal final class CameraExtensionController: NSObject {
         request.delegate = self
         deactivationRequest = request
         OSSystemExtensionManager.shared.submitRequest(request)
+    }
+
+    /// "Try Again" on a failed status: redo the request that failed, the repair or
+    /// the activation (`FailureHold.retry`).
+    func retry() {
+        switch failureHold.retry {
+        case .activation: activate()
+        case .repair: repair()
+        }
     }
 
     /// Query the authoritative installed/enabled/approval state. Safe to call

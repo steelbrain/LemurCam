@@ -305,7 +305,7 @@ private extension SetupView {
             Button("Enable Camera") { coordinator.enableCamera() }
                 .buttonStyle(.borderedProminent)
         case .failed:
-            Button("Try Again") { coordinator.enableCamera() }
+            Button("Try Again") { coordinator.retryCamera() }
                 .buttonStyle(.borderedProminent)
         }
     }
