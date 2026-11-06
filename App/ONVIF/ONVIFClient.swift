@@ -320,11 +320,14 @@ internal extension ONVIFClient {
         return profiles
     }
 
+    /// The `<Uri>` text without the whitespace around it, which XMLKit keeps: a camera
+    /// that writes the URI on its own line never streamed, and the stored fallback
+    /// kept the line breaks.
     func parseStreamURI(_ data: Data) throws -> String {
         let root = try ONVIFXML.parse(data)
         var uri: String?
         root.findElements(named: "Uri") { el in
-            if uri == nil, let text = el.getText(), !text.isEmpty {
+            if uri == nil, let text = el.getText()?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                 uri = text
             }
         }

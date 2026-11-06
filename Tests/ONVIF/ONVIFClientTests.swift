@@ -116,6 +116,36 @@ internal final class ONVIFClientTests: XCTestCase {
         XCTAssertEqual(uri, "rtsp://192.168.1.50:554/stream1")
     }
 
+    /// XMLKit keeps the whitespace around the text, and some cameras put the URI on its
+    /// own line.
+    func testParseStreamURITrimsSurroundingWhitespace() throws {
+        guard let client else { XCTFail("client not initialized"); return }
+        let xml = soapEnvelope(body: """
+            <GetStreamUriResponse xmlns="http://www.onvif.org/ver10/media/wsdl">
+              <MediaUri>
+                <Uri>
+                  rtsp://192.168.1.50:554/stream1\t
+                </Uri>
+              </MediaUri>
+            </GetStreamUriResponse>
+            """)
+
+        XCTAssertEqual(try client.parseStreamURI(Data(xml.utf8)), "rtsp://192.168.1.50:554/stream1")
+    }
+
+    /// A `<Uri>` holding only whitespace is no URI.
+    func testParseStreamURIThrowsWhenOnlyWhitespace() {
+        guard let client else { XCTFail("client not initialized"); return }
+        let xml = soapEnvelope(body: """
+            <GetStreamUriResponse>
+              <MediaUri><Uri>
+              </Uri></MediaUri>
+            </GetStreamUriResponse>
+            """)
+
+        XCTAssertThrowsError(try client.parseStreamURI(Data(xml.utf8)))
+    }
+
     func testParseStreamURIThrowsWhenMissing() {
         guard let client else { XCTFail("client not initialized"); return }
         let xml = soapEnvelope(body: """
