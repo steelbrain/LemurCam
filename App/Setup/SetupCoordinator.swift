@@ -70,9 +70,11 @@ internal final class SetupCoordinator {
     @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
     @ObservationIgnored private var verifyingDriverInstall = false
-    /// An install through the helper left an unsealed copy this session, so the
-    /// helper is a stale one: never install through it again (no reinstall loop).
-    @ObservationIgnored private var staleHelperSeen = false
+    /// An install through the helper left an unsealed copy since the Mac last
+    /// started, in this app session or an earlier one, so the helper is a stale one:
+    /// never install through it again (no reinstall loop).
+    @ObservationIgnored private lazy var staleHelperSeen = staleHelperMarker.isSet
+    @ObservationIgnored private let staleHelperMarker = StaleHelperMarker(defaults: .standard)
 
     /// Fail an in-progress driver install if the privileged helper vends a proxy
     /// but never replies (e.g. it crashes mid-request), so `micStatus` can't stick.
@@ -357,7 +359,10 @@ extension SetupCoordinator {
         case .uninstallDriver:
             disableMicrophone()
         case .setStatus(let status):
-            if status == .needsReboot { staleHelperSeen = true }
+            if status == .needsReboot {
+                staleHelperSeen = true
+                staleHelperMarker.record()
+            }
             micStatus = status
         }
     }

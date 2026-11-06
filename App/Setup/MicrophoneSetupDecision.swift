@@ -33,7 +33,8 @@ internal struct MicrophoneCheckContext: Equatable {
     var lastOperation: MicrophoneDriverOperation?
     /// The check follows an install the helper reported as done.
     var verifyingInstall = false
-    /// An install through the helper already left an unsealed copy this session.
+    /// An install through the helper already left an unsealed copy since the Mac
+    /// last started (`StaleHelperMarker`).
     var staleHelperSeen = false
     /// `CFBundleVersion` of the driver bundled in this app.
     var bundledVersion: String?
