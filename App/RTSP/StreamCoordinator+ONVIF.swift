@@ -67,7 +67,8 @@ extension StreamCoordinator {
     /// (`rtsp://user:p#ss@192.0.2.5/stream`) and reads others as an address: host
     /// `user` and port 1234 in `user:1234#ab@`, an empty port in `user:#ab@`, host `us`
     /// in `us#er:pw@`. A URI is split only when what follows the last `@` is
-    /// `onvifHost`, since that `@` may belong to a query (`?password=p@ss`), and the
+    /// `onvifHost` (`SourceCredentials.splitsAtLastAt`, the rule the saved fallback URI
+    /// follows too), since that `@` may belong to a query (`?password=p@ss`), and the
     /// saved login must never go to a host taken from a query. That holds for a URI
     /// `URLComponents` can't read as well: split at the `@` in `?password=p@ss word`,
     /// the rest of the password, `ss word`, was taken for the host. Any other URI is
@@ -75,32 +76,11 @@ extension StreamCoordinator {
     nonisolated static func connectionTarget(
         forResolvedURI uri: String, reportedBy onvifHost: String, savedCredentials: SourceCredentials?
     ) -> (url: String, credentials: SourceCredentials?) {
-        guard SourceCredentials.hasAmbiguousUserInfo(uri) else { return (uri, savedCredentials) }
-        let split = SourceCredentials.extractingFromRTSPURL(uri)
-        let host = URLComponents(string: uri) != nil
-            ? URLComponents(string: split.url)?.host
-            : leadingHost(of: split.url)
-        guard let host, canonicalHost(host) == canonicalHost(onvifHost) else { return (uri, savedCredentials) }
-        return (split.url, savedCredentials ?? split.credentials)
-    }
-
-    /// The host at the start of `url`'s authority, read by hand for a URL
-    /// `URLComponents` can't parse: a bracketed IPv6 literal (`[fe80::1]`, brackets
-    /// kept), or the text up to the first `:`, `/`, `?` or `#`. Nil when there is none.
-    nonisolated static func leadingHost(of url: String) -> String? {
-        guard let separator = url.range(of: "://") else { return nil }
-        let authority = url[separator.upperBound...]
-        if authority.hasPrefix("[") {
-            guard let close = authority.firstIndex(of: "]") else { return nil }
-            return String(authority[...close])
+        guard SourceCredentials.splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) else {
+            return (uri, savedCredentials)
         }
-        let host = authority.prefix { !":/?#".contains($0) }
-        return host.isEmpty ? nil : String(host)
-    }
-
-    /// IP literals compare by value, host names case-insensitively.
-    nonisolated private static func canonicalHost(_ host: String) -> String {
-        ONVIFDiscovery.normalizedIPAddress(host) ?? host.lowercased()
+        let split = SourceCredentials.extractingFromRTSPURL(uri)
+        return (split.url, savedCredentials ?? split.credentials)
     }
 
     /// Whether a camera whose stream URI could not be resolved may still be connected

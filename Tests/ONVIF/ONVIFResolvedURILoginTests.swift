@@ -106,16 +106,6 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
         }
     }
 
-    func testTheLeadingHostIsReadByHand() {
-        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://ss word"), "ss word")
-        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://host:554/s"), "host")
-        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://host#f"), "host")
-        XCTAssertEqual(StreamCoordinator.leadingHost(of: "rtsp://[::1]:554"), "[::1]")
-        XCTAssertNil(StreamCoordinator.leadingHost(of: "rtsp://[::1"))
-        XCTAssertNil(StreamCoordinator.leadingHost(of: "rtsp:///s"))
-        XCTAssertNil(StreamCoordinator.leadingHost(of: "host/s"))
-    }
-
     /// Logins `URLComponents` reads as part of the address (host `viewer` and port
     /// 1234; an empty port; host `vi`), which IPCamKit refuses as ambiguous, so the
     /// camera never streamed. What follows the last `@` is the camera's own host.

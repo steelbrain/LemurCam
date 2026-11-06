@@ -41,17 +41,24 @@ internal extension SourceCredentials {
 
     /// Whether a stream URI an ONVIF camera reported is split at its last `@`, as
     /// `extractingFromRTSPURL` splits a URL with ambiguous userinfo (see
-    /// `hasAmbiguousUserInfo`). Always when `URLComponents` can't parse the URI (a `#`
-    /// or `?` in the password: `rtsp://user:p#ss@192.0.2.5/s`). When it can, only if
-    /// the host after the last `@` is `onvifHost`, the camera that reported the URI
-    /// (`rtsp://admin:1234/5@192.0.2.5/s`). Otherwise that `@` is part of the address,
-    /// as in a login in the query (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`),
-    /// and splitting there would leave the end of the password as the host. Hosts are
-    /// compared without case and without IPv6 brackets.
+    /// `hasAmbiguousUserInfo`): only when the host after that `@` is `onvifHost`, the
+    /// camera that reported the URI. Otherwise that `@` may be part of the address, as
+    /// in a login in the query (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), and
+    /// splitting there would leave the end of the password as the host. The same rule
+    /// decides what is saved (`strippingUserInfo(fromReportedURI:onvifHost:)`) and what
+    /// is connected to (`StreamCoordinator.connectionTarget`), so they can't disagree.
+    ///
+    /// The host is `URLComponents`' when it can parse the URI
+    /// (`rtsp://admin:1234/5@192.0.2.5/s`). When it can't (a `#` or `?` in the
+    /// password: `rtsp://user:p#ss@192.0.2.5/s`, or a space in a query on some macOS
+    /// versions) it is read by hand: a bracketed IPv6 literal, or the text up to the
+    /// first `:`, `/`, `?` or `#`. IP literals compare by value, names without case.
     static func splitsAtLastAt(reportedURI uri: String, onvifHost: String) -> Bool {
         guard let split = AmbiguousUserInfo(uri) else { return false }
-        guard URLComponents(string: uri) != nil else { return true }
-        guard let host = URLComponents(string: split.urlWithout)?.host else { return false }
+        let host = URLComponents(string: uri) != nil
+            ? URLComponents(string: split.urlWithout)?.host
+            : leadingHost(of: split.urlWithout)
+        guard let host else { return false }
         return comparableHost(host) == comparableHost(onvifHost)
     }
 
@@ -59,11 +66,14 @@ internal extension SourceCredentials {
     /// cameras put in its userinfo, for saving as the camera's fallback URI. It is
     /// split at its last `@` only when `splitsAtLastAt(reportedURI:onvifHost:)` says
     /// so; otherwise only the userinfo `URLComponents` reads is removed, and an `@`
-    /// in the path or query stays where it is.
-    static func strippingUserInfo(fromReportedURI uri: String, onvifHost: String) -> String {
+    /// in the path or query stays where it is. Nil for a URI `URLComponents` can't
+    /// read that is not split: a login in it could not be taken out, and nothing could
+    /// connect to it anyway.
+    static func strippingUserInfo(fromReportedURI uri: String, onvifHost: String) -> String? {
         guard hasAmbiguousUserInfo(uri), !splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) else {
             return strippingUserInfo(from: uri)
         }
+        guard URLComponents(string: uri) != nil else { return nil }
         return extractingReadableLogin(from: uri).url
     }
 
@@ -89,7 +99,24 @@ private extension SourceCredentials {
         return (components.string ?? urlString, login)
     }
 
+    /// The host at the start of `url`'s authority, read by hand: a bracketed IPv6
+    /// literal (brackets kept), or the text up to the first `:`, `/`, `?` or `#`. Nil
+    /// when there is none.
+    static func leadingHost(of url: String) -> String? {
+        guard let separator = url.range(of: "://") else { return nil }
+        let authority = url[separator.upperBound...]
+        if authority.hasPrefix("[") {
+            guard let close = authority.firstIndex(of: "]") else { return nil }
+            return String(authority[...close])
+        }
+        let host = authority.prefix { !":/?#".contains($0) }
+        return host.isEmpty ? nil : String(host)
+    }
+
+    /// IP literals by value (`::ffff:192.0.2.5` is `192.0.2.5`; brackets and zone
+    /// ignored, see `ONVIFDiscovery.normalizedIPAddress`), names without case or brackets.
     static func comparableHost(_ host: String) -> String {
+        if let address = ONVIFDiscovery.normalizedIPAddress(host) { return address }
         var trimmed = Substring(host)
         if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
             trimmed = trimmed.dropFirst().dropLast()

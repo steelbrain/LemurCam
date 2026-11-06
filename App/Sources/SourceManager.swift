@@ -342,7 +342,7 @@ private extension SourceManager {
             return (.rtsp(RTSPSourceInfo(url: cleanedURL)), credentials)
         case .onvif(var info):
             let host = info.host
-            info.streamURI = info.streamURI.map { uri in
+            info.streamURI = info.streamURI.flatMap { uri in
                 SourceCredentials.strippingUserInfo(fromReportedURI: uri, onvifHost: host)
             }
             return (.onvif(info), nil)
