@@ -40,7 +40,8 @@ internal final class LemurCamModelConsumerReportTests: XCTestCase {
                     reads.withLock { $0 += 1 }
                     return deviceList
                 },
-                consumerObserver: { _ in nil }
+                consumerObserver: { _ in nil },
+                formatWriter: { _, _ in }
             )
             let recorded = reportedConsumers
             model.onExternalConsumerChange = { hasConsumer in

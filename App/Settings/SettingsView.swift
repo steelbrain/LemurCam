@@ -11,6 +11,8 @@ internal struct SettingsView: View {
     var setup: SetupCoordinator
     /// Opens the dedicated guided setup window (owned by `AppDelegate`).
     var openSetup: (() -> Void)?
+    /// Hands the camera a changed Resolution or Frame Rate (owned by `AppDelegate`).
+    var onCameraFormatChange: (() -> Void)?
     /// The selected pane. `AppDelegate` owns it, so it can switch an open window to
     /// a pane (e.g. Cameras) and start or stop preview demand with the Preview pane.
     var navigation: SettingsNavigation
@@ -47,7 +49,10 @@ internal struct SettingsView: View {
         case .preview:
             PreviewSettingsView(previewStore: previewStore, sourceManager: sourceManager)
         case .general:
-            GeneralSettingsView(launchAtLoginManager: launchAtLoginManager)
+            GeneralSettingsView(
+                launchAtLoginManager: launchAtLoginManager,
+                onCameraFormatChange: { onCameraFormatChange?() }
+            )
         case .logs:
             LogsSettingsView()
         }

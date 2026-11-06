@@ -215,6 +215,11 @@ internal final class LemurCamStreamState: Sendable {
         state.withLock { $0.streamResources != nil }
     }
 
+    /// The cached device's sink stream, or nil while no device is cached.
+    var sinkStreamID: CMIOStreamID? {
+        state.withLock { $0.isReady ? $0.streamID : nil }
+    }
+
     func beginStarting() -> StartSnapshot? {
         state.withLock { state in
             guard !state.isStreaming,

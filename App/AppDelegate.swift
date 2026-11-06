@@ -54,7 +54,6 @@ internal final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if terminateIfAlreadyRunning() { return }
         if terminateIfNotInApplications() { return }
-        RuntimeFlags.captureLaunchedFormat()
 
         DualLogger.onEmit = { category, level, message in
             Task { @MainActor in
@@ -252,6 +251,7 @@ extension AppDelegate {
             previewStore: streamCoordinator?.previewStore,
             setup: setupCoordinator,
             openSetup: { [weak self] in self?.openSetupWindow() },
+            onCameraFormatChange: { [weak self] in self?.streamCoordinator?.applyVirtualCameraFormat() },
             navigation: settingsNavigation
         )
         // The sidebar `NavigationSplitView` needs a full-size content view. Without

@@ -21,6 +21,13 @@ internal final class LemurCamModel: Sendable {
     /// testability.
     private let deviceListReader: @Sendable () -> CMIODeviceList
 
+    /// Sets a format on a sink stream (`SinkStreamFormatWriter`), on
+    /// `discoveryQueue`. Injected for testability.
+    private let formatWriter: @Sendable (StreamFormatSelection, CMIOStreamID) -> Void
+
+    /// The user's Resolution and Frame Rate settings. Injected for testability.
+    private let preferredFormat: @Sendable () -> StreamFormatSelection
+
     /// CMIO device-list listener, installed by the first `beginDiscovery()`. Its
     /// callbacks run on `discoveryQueue`, serialized with discovery itself.
     private let deviceListObserver = OSAllocatedUnfairLock<CMIODeviceListObserver?>(uncheckedState: nil)
@@ -47,16 +54,23 @@ internal final class LemurCamModel: Sendable {
 
     /// `consumerObserver` registers for the extension's consumer notifications,
     /// which start and stop the sink stream; tests pass one that never listens to
-    /// the real, system-wide ones.
+    /// the real, system-wide ones. Tests also pass a `formatWriter` that makes no
+    /// CMIO calls on whatever real objects have their fake stream IDs.
     init(
         consumerProbe: @escaping @Sendable (CMIODeviceID) -> Bool = { id in
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
         },
         deviceListReader: @escaping @Sendable () -> CMIODeviceList = { CoreMediaIOUtil.deviceList() },
-        consumerObserver: ConsumerObserving = { ConsumerNotificationObserver.camera(onChange: $0) }
+        consumerObserver: ConsumerObserving = { ConsumerNotificationObserver.camera(onChange: $0) },
+        formatWriter: @escaping @Sendable (StreamFormatSelection, CMIOStreamID) -> Void = { format, streamID in
+            _ = SinkStreamFormatWriter.write(format, toStream: streamID)
+        },
+        preferredFormat: @escaping @Sendable () -> StreamFormatSelection = { LemurCamConfig.storedFormat }
     ) {
         self.consumerProbe = consumerProbe
         self.deviceListReader = deviceListReader
+        self.formatWriter = formatWriter
+        self.preferredFormat = preferredFormat
         let registration = consumerObserver { [weak self] active in
             if active {
                 self?.startStream()
@@ -156,6 +170,11 @@ internal final class LemurCamModel: Sendable {
         case .retry:
             scheduleRetry()
         case .ready(let deviceID):
+            // This app hasn't told this device the settings yet: it just launched, or
+            // the extension restarted and is back in its default format.
+            if let streamID = result?.streamID {
+                writePreferredFormat(to: streamID)
+            }
             // If an app is already using the camera (e.g. this app relaunched while
             // Zoom had it open, or its consumerStarted notification fired before
             // discovery finished), start immediately. The app hasn't started its own
@@ -231,10 +250,36 @@ internal final class LemurCamModel: Sendable {
             scheduleRetry()
         }
     }
+}
 
-    // MARK: - Stream Lifecycle
+// MARK: - Format
 
-    private func startStream() {
+extension LemurCamModel {
+    /// Set the user's Resolution and Frame Rate settings on the cached device's
+    /// sink stream, after they change. The extension applies them to the camera
+    /// now if no app is using it, otherwise once the last app stops. Without a
+    /// cached device this does nothing: discovery sets them on the device it finds.
+    @MainActor
+    func applyPreferredFormat() {
+        guard let streamID = streamState.sinkStreamID else { return }
+        writePreferredFormat(to: streamID)
+    }
+
+    /// The CMIO calls go to the extension and wait for it, so they run on
+    /// `discoveryQueue`, in order with discovery, never on the main thread.
+    private func writePreferredFormat(to streamID: CMIOStreamID) {
+        let format = preferredFormat()
+        let writer = formatWriter
+        discoveryQueue.async {
+            writer(format, streamID)
+        }
+    }
+}
+
+// MARK: - Stream Lifecycle
+
+private extension LemurCamModel {
+    func startStream() {
         guard let snapshot = streamState.beginStarting() else {
             return
         }
@@ -246,7 +291,7 @@ internal final class LemurCamModel: Sendable {
         }
     }
 
-    private func resumeStream(_ snapshot: LemurCamStreamState.StartSnapshot) {
+    func resumeStream(_ snapshot: LemurCamStreamState.StartSnapshot) {
         let res = CMIODeviceStartStream(snapshot.deviceID, snapshot.streamID)
         guard res == noErr else {
             streamState.finishStartingWithoutStream()
@@ -258,7 +303,7 @@ internal final class LemurCamModel: Sendable {
         Log.ipc.info("Sink stream started")
     }
 
-    private func connectStream(_ snapshot: LemurCamStreamState.StartSnapshot) {
+    func connectStream(_ snapshot: LemurCamStreamState.StartSnapshot) {
         streamState.clearStreamResources()
 
         let queueAlteredRegistration = CMIOStreamQueueAlteredRegistration()
@@ -281,7 +326,7 @@ internal final class LemurCamModel: Sendable {
         Log.ipc.info("Sink stream started")
     }
 
-    private func stopStream() {
+    func stopStream() {
         guard let snapshot = streamState.stopStreaming() else {
             return
         }

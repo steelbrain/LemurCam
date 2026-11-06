@@ -13,7 +13,8 @@ internal final class LemurCamModelConsumerNotificationTests: XCTestCase {
         let notifications = FakeConsumerNotifications()
         var model: LemurCamModel? = LemurCamModel(
             consumerProbe: { _ in false },
-            consumerObserver: notifications.observe
+            consumerObserver: notifications.observe,
+            formatWriter: { _, _ in }
         )
 
         XCTAssertTrue(notifications.isRegistered, "the model must register through the observer it was given")

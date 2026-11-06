@@ -120,6 +120,12 @@ internal final class StreamCoordinator {
         model.beginDiscovery()
     }
 
+    /// Hand the virtual camera the Resolution and Frame Rate settings after the user
+    /// changed them in Settings.
+    func applyVirtualCameraFormat() {
+        model.applyPreferredFormat()
+    }
+
     deinit {
         retryTask?.cancel()
         pipeline.disconnect()

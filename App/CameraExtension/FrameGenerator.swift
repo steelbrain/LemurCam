@@ -9,19 +9,26 @@ internal final class FrameGenerator: Sendable {
         var message: String?
     }
 
+    /// The text's size at 1080p; it scales with the placeholder's height.
+    private static let fontSize: CGFloat = 48
+
     private let model: LemurCamModel
     private let timerQueue = DispatchQueue(label: "placeholderGenerator", qos: .userInteractive)
 
-    private let width: Int
-    private let height: Int
+    /// The size to draw at: the user's Resolution setting, read each time a
+    /// placeholder starts. The extension scales whatever it gets to the size the
+    /// app using the camera runs at, so this only saves that step when they match.
+    /// Injected for testability.
+    private let resolution: @Sendable () -> LemurCamConfig.Resolution
 
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
 
-    init(model: LemurCamModel) {
+    init(
+        model: LemurCamModel,
+        resolution: @escaping @Sendable () -> LemurCamConfig.Resolution = { LemurCamConfig.storedResolution }
+    ) {
         self.model = model
-        let resolution = LemurCamConfig.storedResolution
-        self.width = Int(resolution.width)
-        self.height = Int(resolution.height)
+        self.resolution = resolution
     }
 
     func start(message: String = "No camera available in LemurCam") {
@@ -33,6 +40,15 @@ internal final class FrameGenerator: Sendable {
     /// The text of the placeholder being generated, or nil while stopped.
     var placeholderMessage: String? {
         state.withLock { $0.timer == nil ? nil : $0.message }
+    }
+
+    /// The size of the placeholder being generated, or nil while stopped or when
+    /// it couldn't be drawn.
+    var placeholderDimensions: CMVideoDimensions? {
+        state.withLock { state in
+            guard state.timer != nil, let description = state.formatDescription else { return nil }
+            return CMVideoFormatDescriptionGetDimensions(description)
+        }
     }
 
     func stop() {
@@ -49,7 +65,14 @@ internal final class FrameGenerator: Sendable {
     }
 
     private func setupPlaceholder(message: String) {
-        let newBuffer = PlaceholderRenderer.render(text: message, width: width, height: height)
+        let size = resolution()
+        let height = Int(size.height)
+        let newBuffer = PlaceholderRenderer.render(
+            text: message,
+            width: Int(size.width),
+            height: height,
+            fontSize: PlaceholderRenderer.fontSize(Self.fontSize, forHeight: height)
+        )
 
         var newDesc: CMVideoFormatDescription?
         if let buf = newBuffer {

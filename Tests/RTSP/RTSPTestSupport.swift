@@ -213,7 +213,9 @@ internal final class CoordinatorHarness {
                 return nil
             },
             audioRing: AudioRingBuffer(name: ringName),
-            model: LemurCamModel(consumerProbe: { _ in false }, consumerObserver: { _ in nil }),
+            model: LemurCamModel(
+                consumerProbe: { _ in false }, consumerObserver: { _ in nil }, formatWriter: { _, _ in }
+            ),
             pipeline: fakePipeline,
             onvifEnvironment: onvifEnvironment
         )

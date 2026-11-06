@@ -2,6 +2,9 @@ import SwiftUI
 
 internal struct GeneralSettingsView: View {
     var launchAtLoginManager: LaunchAtLoginManager
+    /// Hands the camera the changed Resolution or Frame Rate
+    /// (`StreamCoordinator.applyVirtualCameraFormat`).
+    var onCameraFormatChange: () -> Void = {}
     @State private var selectedResolution = LemurCamConfig.storedResolution
     @State private var selectedFrameRate = LemurCamConfig.storedFrameRate
 
@@ -66,6 +69,7 @@ internal struct GeneralSettingsView: View {
             }
             .onChange(of: selectedResolution) { _, newValue in
                 LemurCamConfig.storedResolution = newValue
+                onCameraFormatChange()
             }
 
             Picker("Frame Rate", selection: $selectedFrameRate) {
@@ -75,20 +79,19 @@ internal struct GeneralSettingsView: View {
             }
             .onChange(of: selectedFrameRate) { _, newValue in
                 LemurCamConfig.storedFrameRate = newValue
+                onCameraFormatChange()
             }
 
-            if RuntimeFlags.needsRestart(resolution: selectedResolution, frameRate: selectedFrameRate) {
-                HStack {
-                    Text("Restart LemurCam to apply changes.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Restart Now") {
-                        NSApp.relaunch()
-                    }
-                    .controlSize(.small)
-                }
-            }
+            Text(Self.formatCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
+
+    /// What the two pickers do, as `SourceFormatState` implements it.
+    static let formatCaption = """
+        The LemurCam camera uses this format unless an app picks its own. \
+        A change here applies right away, or once no app is using the camera. \
+        A format an app picks stays until the next change.
+        """
 }
