@@ -7,11 +7,13 @@ import Security
 /// (the XPC server). The helper runs as root via SMAppService; the app talks to
 /// it over an NSXPCConnection pinned to each side's code-signing requirement.
 @objc internal protocol LemurAudioHelperProtocol {
-    /// Install (or replace) the AudioServerPlugIn `.driver` bundle found at
-    /// `fromPath` into the HAL plug-ins directory and restart coreaudiod. The
-    /// helper validates `fromPath`'s code signature against `driverRequirement`
-    /// before copying. Reply: (success, message) — message is empty on success
-    /// or a human-readable error otherwise.
+    /// Install (or replace) the AudioServerPlugIn `.driver` bundle and restart
+    /// coreaudiod. The helper installs the driver bundled inside the *calling app*
+    /// (located from the connection's code signature), not `fromPath`: the argument
+    /// is kept only so this selector stays compatible with helpers built before that
+    /// change. The staged copy must satisfy `driverRequirement` and must not be older
+    /// than the installed driver. Reply: (success, message) — message is empty on
+    /// success or a human-readable error otherwise.
     func installDriver(fromPath: String, withReply reply: @escaping (Bool, String) -> Void)
 
     /// Remove the installed driver and restart coreaudiod. Reply as above.
@@ -42,6 +44,12 @@ internal enum LemurAudioHelper {
     /// Absolute path of the installed driver bundle.
     static var installedDriverPath: String {
         (halPluginsDirectory as NSString).appendingPathComponent(driverBundleName)
+    }
+
+    /// Where an app bundle carries the driver (`Contents/Library/<driverBundleName>`).
+    static func bundledDriverPath(inAppBundle appBundlePath: String) -> String {
+        ((appBundlePath as NSString).appendingPathComponent("Contents/Library") as NSString)
+            .appendingPathComponent(driverBundleName)
     }
 
     private static let teamIdentifier = "2KG9772KH6"

@@ -91,11 +91,11 @@ internal final class AudioDeviceInstaller {
 
     // MARK: - Private
 
+    /// The same location the helper derives from this app's code signature; the
+    /// helper ignores the path it is sent, which is kept for older helpers.
     private var bundledDriverPath: String? {
-        let url = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Library")
-            .appendingPathComponent(LemurAudioHelper.driverBundleName)
-        return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
+        let path = LemurAudioHelper.bundledDriverPath(inAppBundle: Bundle.main.bundlePath)
+        return FileManager.default.fileExists(atPath: path) ? path : nil
     }
 
     /// Opens a pinned XPC connection and vends the helper proxy. `body` owns the

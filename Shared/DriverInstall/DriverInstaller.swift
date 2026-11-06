@@ -8,8 +8,8 @@ import Foundation
 /// Install: copy the source into a fresh private staging directory (0700, owned by
 /// `owner`, unique per request) so no other user can touch the copy; give every
 /// entry to `owner` with no group/other write; audit that; validate the code
-/// signature of exactly those bytes; then swap it into place with one atomic
-/// rename. Removal of the previous copy and of staging never follows
+/// signature of exactly those bytes; refuse a downgrade; then swap it into place with
+/// one atomic rename. Removal of the previous copy and of staging never follows
 /// symlinks. Callers must serialise operations (the helper runs them on one queue).
 internal struct DriverInstaller {
     typealias Files = DriverBundleFiles
@@ -53,6 +53,13 @@ internal struct DriverInstaller {
         if let failure = validateSignature(stagedPath) {
             throw Files.Failure(description: "Driver signature validation failed: \(failure)")
         }
+        if let installed = Files.bundleVersion(at: plugins, bundle: bundleName),
+           let staged = Files.bundleVersion(at: staging.descriptor, bundle: bundleName),
+           Self.isDowngrade(from: installed, to: staged) {
+            throw Files.Failure(description:
+                "Refusing to replace driver version \(installed) with older version \(staged). " +
+                "Remove the microphone first to install an older build.")
+        }
         try moveIntoPlace(from: staging.descriptor, plugins: plugins)
     }
 
@@ -82,6 +89,22 @@ internal struct DriverInstaller {
         guard let plugins = try? openExistingPluginsDirectory() else { return nil }
         defer { close(plugins) }
         return Files.bundleVersion(at: plugins, bundle: bundleName)
+    }
+
+    /// True when `staged` is numerically older than `installed`. Equal versions
+    /// reinstall (repair); a version that is not dot-separated integers is never
+    /// treated as a downgrade, since every signed build uses integer build numbers.
+    /// An explicit downgrade is uninstall followed by install.
+    static func isDowngrade(from installed: String, to staged: String) -> Bool {
+        let installedParts = installed.split(separator: ".", omittingEmptySubsequences: false)
+        let stagedParts = staged.split(separator: ".", omittingEmptySubsequences: false)
+        for index in 0..<max(installedParts.count, stagedParts.count) {
+            let lhs = index < installedParts.count ? installedParts[index] : "0"
+            let rhs = index < stagedParts.count ? stagedParts[index] : "0"
+            guard let installedNumber = Int(lhs), let stagedNumber = Int(rhs) else { return false }
+            if installedNumber != stagedNumber { return stagedNumber < installedNumber }
+        }
+        return false
     }
 
     // MARK: - Steps

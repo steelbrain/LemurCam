@@ -4,9 +4,9 @@ import OSLog
 /// Root-privileged implementation of the install/uninstall operations. Runs
 /// inside the SMAppService-managed daemon, so it can write into the root-owned
 /// HAL plug-ins directory and restart coreaudiod. The file work is done by
-/// `DriverInstaller` (shared with the unit tests): the driver is copied into
-/// private, per-request staging, sealed to root:wheel, signature-checked, and
-/// renamed into place.
+/// `DriverInstaller` (shared with the unit tests): the driver is copied from the
+/// calling app's own bundle into private, per-request staging, sealed to
+/// root:wheel, signature-checked, downgrade-checked, and renamed into place.
 internal final class HelperService: NSObject, LemurAudioHelperProtocol {
     /// Every privileged operation runs here, one at a time across all connections:
     /// installs and removals share the HAL directory and the coreaudiod restart.
@@ -23,13 +23,11 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
         }
     )
 
-    func installDriver(fromPath: String, withReply reply: (Bool, String) -> Void) {
+    func installDriver(fromPath _: String, withReply reply: (Bool, String) -> Void) {
         log.info("installDriver requested")
-        guard fromPath.hasSuffix(".driver") else {
-            reply(false, "Source is not a .driver bundle")
-            return
-        }
-        let (success, message) = Self.operations.sync { install(from: fromPath) }
+        // Only valid on the thread delivering the message, so read it before the hop.
+        let connection = NSXPCConnection.current()
+        let (success, message) = Self.operations.sync { install(for: connection) }
         reply(success, message)
     }
 
@@ -57,7 +55,16 @@ internal final class HelperService: NSObject, LemurAudioHelperProtocol {
 
     // MARK: - Private
 
-    private func install(from source: String) -> (Bool, String) {
+    private func install(for connection: NSXPCConnection?) -> (Bool, String) {
+        guard let connection else { return (false, "No calling app connection") }
+        let source: String
+        switch CallerCode.appBundlePath(of: connection) {
+        case .success(let appBundle):
+            source = LemurAudioHelper.bundledDriverPath(inAppBundle: appBundle)
+        case .failure(let failure):
+            log.error("caller lookup failed: \(failure.description, privacy: .public)")
+            return (false, failure.description)
+        }
         do {
             try installer.install(from: source)
         } catch {

@@ -4,8 +4,8 @@ import XCTest
 
 /// Runs the helper's install pipeline (`DriverInstaller`) against a temporary
 /// plug-ins directory, with the current user standing in for root. Covers the C1
-/// ordering (private staging, sealed copy, then signature check, then one rename)
-/// and per-request staging (C11).
+/// ordering (private staging, sealed copy, then signature check, then one rename),
+/// per-request staging (C11), and downgrade refusal (C10).
 internal final class DriverInstallerTests: XCTestCase {
     private typealias Support = DriverInstallTestSupport
     private let bundleName = LemurAudioHelper.driverBundleName
@@ -92,6 +92,26 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertEqual(try scratch.pluginsEntries(), [bundleName])
     }
 
+    func testDowngradeIsRefusedAndTheInstalledCopyKept() throws {
+        let scratch = try Scratch()
+        try scratch.installer().install(from: scratch.source(version: "7"))
+        XCTAssertThrowsError(try scratch.installer().install(from: scratch.source(version: "5"))) { error in
+            XCTAssertTrue("\(error)".contains("older version 5"), "\(error)")
+        }
+        XCTAssertEqual(scratch.installer().installedVersion(), "7")
+        XCTAssertEqual(try scratch.pluginsEntries(), [bundleName])
+    }
+
+    func testSameVersionReinstallAndUninstallThenOlderInstallAreAllowed() throws {
+        let scratch = try Scratch()
+        try scratch.installer().install(from: scratch.source(version: "7"))
+        XCTAssertNoThrow(try scratch.installer().install(from: scratch.source(version: "7")), "repair")
+
+        XCTAssertTrue(try scratch.installer().uninstall())
+        XCTAssertNoThrow(try scratch.installer().install(from: scratch.source(version: "5")), "explicit downgrade")
+        XCTAssertEqual(scratch.installer().installedVersion(), "5")
+    }
+
     func testSignatureFailureInstallsNothingAndLeavesNoStaging() throws {
         let scratch = try Scratch()
         scratch.signatureFailure = "not signed by the team"
@@ -144,8 +164,17 @@ internal final class DriverInstallerTests: XCTestCase {
         XCTAssertEqual(try scratch.pluginsEntries(), [])
     }
 
+    func testIsDowngradeComparesBuildNumbersNumerically() {
+        XCTAssertTrue(DriverInstaller.isDowngrade(from: "10", to: "9"))
+        XCTAssertTrue(DriverInstaller.isDowngrade(from: "5.1", to: "5"))
+        XCTAssertFalse(DriverInstaller.isDowngrade(from: "9", to: "10"))
+        XCTAssertFalse(DriverInstaller.isDowngrade(from: "5", to: "5.0"))
+        XCTAssertFalse(DriverInstaller.isDowngrade(from: "5", to: "5"))
+        XCTAssertFalse(DriverInstaller.isDowngrade(from: "abc", to: "1"), "unparseable versions never block")
+    }
+
     func testShippedDriverSignatureSurvivesTheCopy() throws {
-        let shipped = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/\(bundleName)").path
+        let shipped = LemurAudioHelper.bundledDriverPath(inAppBundle: Bundle.main.bundlePath)
         guard FileManager.default.fileExists(atPath: shipped),
               LemurAudioHelper.validateSignature(path: shipped, requirement: LemurAudioHelper.driverRequirement) == nil
         else {
