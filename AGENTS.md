@@ -61,7 +61,8 @@ Core commands:
 ```bash
 xcodegen generate       # Regenerate LemurCam.xcodeproj from project.yml
 swiftlint lint --strict # Lint only; warnings are errors
-scripts/ci.sh           # Full local CI: SwiftLint, build, tests
+scripts/ci.sh           # Full local CI: SwiftLint, build, tests (signed)
+scripts/ci.sh --unsigned # Same, with CODE_SIGNING_ALLOWED=NO like GitHub CI
 scripts/dev-run.sh      # Build Debug, install to /Applications, launch
 scripts/dev-camera.sh   # Fake RTSP + ONVIF camera for testing without hardware
 scripts/dev-clean.sh    # Dry-run cleanup for local extension/app state

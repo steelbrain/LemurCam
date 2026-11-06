@@ -49,12 +49,18 @@ formats, including AAC, G.711, and L16.
 ## Building From Source
 
 LemurCam is an XcodeGen project. `project.yml` is the source of truth for the
-Xcode project.
+Xcode project. `scripts/ci.sh` runs SwiftLint, generates the project, builds,
+and runs the tests:
 
 ```bash
-xcodegen generate
-scripts/ci.sh
+scripts/ci.sh             # signed with the team in project.yml
+scripts/ci.sh --unsigned  # no Apple signing identity needed
 ```
+
+`--unsigned` builds with `CODE_SIGNING_ALLOWED=NO`, like the GitHub workflow.
+It is also used when `LEMURCAM_UNSIGNED=1` or `CI` is set. An unsigned build
+compiles and passes the tests, but the app cannot install the camera extension
+or the audio driver.
 
 For a local run, use `scripts/dev-run.sh`; the app must launch from
 `/Applications` for the system extension, helper, and audio driver to work
