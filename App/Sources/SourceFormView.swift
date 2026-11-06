@@ -24,6 +24,7 @@ internal struct SourceFormView: View {
     @State private var onvifUseHTTPS = false
     @State private var deviceUUID: String?
     @State private var serialNumber: String?
+    @State private var urlFieldEdits = SourceFormURLFieldEdits()
     @State private var resolvedType: ResolvedType?
     @State private var editSourceType: EditSourceType?
 
@@ -106,7 +107,8 @@ internal struct SourceFormView: View {
         Section {
             TextField("RTSP URL or ONVIF URL", text: $inputText)
                 .textContentType(.URL)
-                .onChange(of: inputText) { _, _ in
+                .onChange(of: inputText) { _, newValue in
+                    guard urlFieldEdits.isUserEdit(newValue) else { return }
                     if resolvedType != nil {
                         resolvedType = nil
                         onvifProfiles = []
@@ -266,7 +268,10 @@ private extension SourceFormView {
             password = credentials.password
             hasCredentials = true
         }
-        if cleaned != url { inputText = cleaned }
+        if cleaned != url {
+            urlFieldEdits.rewrite(to: cleaned)
+            inputText = cleaned
+        }
         if name.isEmpty { name = URLComponents(string: cleaned)?.host ?? "Camera" }
     }
 
@@ -400,5 +405,24 @@ private extension SourceFormView {
         } catch {
             credentialsUnreadable = true
         }
+    }
+}
+
+/// Tells the user's edits of the URL field apart from the form rewriting it. Connect
+/// moves `user:password@` out of an RTSP URL by rewriting the field; the field's
+/// change handler resets the form after a user edit, and without this it also
+/// treated the rewrite as one, undoing the Connect and hiding the Add button.
+internal struct SourceFormURLFieldEdits {
+    private var pendingRewrite: String?
+
+    /// Call just before the form sets the field to `text` itself.
+    mutating func rewrite(to text: String) {
+        pendingRewrite = text
+    }
+
+    /// Whether the field's new value came from the user.
+    mutating func isUserEdit(_ newText: String) -> Bool {
+        defer { pendingRewrite = nil }
+        return pendingRewrite != newText
     }
 }
