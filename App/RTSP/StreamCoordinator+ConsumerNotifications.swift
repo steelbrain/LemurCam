@@ -5,7 +5,7 @@ extension StreamCoordinator {
     /// which `observe` registers for, and what the model learns from CMIO. Returns
     /// what keeps the notifications coming, which the coordinator holds until
     /// `deinit`.
-    func observeConsumerChanges(using observe: CameraConsumerObserving) -> AnyObject? {
+    func observeConsumerChanges(using observe: ConsumerObserving) -> AnyObject? {
         let registration = observe { [weak self] active in
             self?.cameraConsumerChanged(active: active)
         }

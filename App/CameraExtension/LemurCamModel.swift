@@ -53,7 +53,7 @@ internal final class LemurCamModel: Sendable {
             CoreMediaIOUtil.hasExternalConsumer(deviceID: id)
         },
         deviceListReader: @escaping @Sendable () -> CMIODeviceList = { CoreMediaIOUtil.deviceList() },
-        consumerObserver: CameraConsumerObserving = { CameraConsumerNotificationObserver(onChange: $0) }
+        consumerObserver: ConsumerObserving = { ConsumerNotificationObserver.camera(onChange: $0) }
     ) {
         self.consumerProbe = consumerProbe
         self.deviceListReader = deviceListReader

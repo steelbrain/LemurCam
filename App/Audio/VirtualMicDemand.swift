@@ -31,6 +31,9 @@ internal final class VirtualMicDemand {
 
     private let probe: @Sendable () -> Bool
     private let makeDeviceListObserver: AudioDeviceListObserving
+    /// Keeps the driver's consumer notifications coming; releasing it, with this
+    /// object, removes their observers.
+    private var consumerNotifications: AnyObject?
     private let deviceListObserver = OSAllocatedUnfairLock<AnyObject?>(uncheckedState: nil)
     private var isObservingDeviceList = false
     private let halQueue = DispatchQueue(label: "com.steelbrain.LemurCam.audioHAL", qos: .userInitiated)
@@ -40,16 +43,18 @@ internal final class VirtualMicDemand {
 
     /// `probe` reads whether the virtual microphone is running, and
     /// `makeDeviceListObserver` installs the HAL device-list listener. Both are
-    /// called on `halQueue`.
-    init(probe: @escaping @Sendable () -> Bool, makeDeviceListObserver: @escaping AudioDeviceListObserving) {
+    /// called on `halQueue`. `consumerObserver` registers for the driver's consumer
+    /// notifications; tests pass one that never listens to the real, system-wide ones.
+    init(
+        probe: @escaping @Sendable () -> Bool,
+        makeDeviceListObserver: @escaping AudioDeviceListObserving,
+        consumerObserver: ConsumerObserving = { ConsumerNotificationObserver.microphone(onChange: $0) }
+    ) {
         self.probe = probe
         self.makeDeviceListObserver = makeDeviceListObserver
-        observeConsumerNotifications()
-    }
-
-    deinit {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        CFNotificationCenterRemoveEveryObserver(center, Unmanaged.passUnretained(self).toOpaque())
+        consumerNotifications = consumerObserver { [weak self] active in
+            self?.consumerChanged(active: active)
+        }
     }
 
     /// Apply a consumer notification from the driver.
@@ -87,30 +92,5 @@ internal final class VirtualMicDemand {
         guard notificationCount == notificationsBefore else { return }
         hasConsumers = isRunning
         onUpdate?()
-    }
-
-    private func observeConsumerNotifications() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let demand = Unmanaged<VirtualMicDemand>.fromOpaque(observer).takeUnretainedValue()
-                DispatchQueue.main.async { demand.consumerChanged(active: true) }
-            },
-            LEMUR_AUDIO_NOTIFY_CONSUMER_STARTED as CFString, nil, .deliverImmediately
-        )
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let demand = Unmanaged<VirtualMicDemand>.fromOpaque(observer).takeUnretainedValue()
-                DispatchQueue.main.async { demand.consumerChanged(active: false) }
-            },
-            LEMUR_AUDIO_NOTIFY_CONSUMER_STOPPED as CFString, nil, .deliverImmediately
-        )
     }
 }

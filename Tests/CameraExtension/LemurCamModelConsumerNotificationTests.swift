@@ -10,7 +10,7 @@ import XCTest
 /// released.
 internal final class LemurCamModelConsumerNotificationTests: XCTestCase {
     func testTheModelRegistersThroughTheInjectedObserverForItsLifetime() {
-        let notifications = FakeCameraConsumerNotifications()
+        let notifications = FakeConsumerNotifications()
         var model: LemurCamModel? = LemurCamModel(
             consumerProbe: { _ in false },
             consumerObserver: notifications.observe

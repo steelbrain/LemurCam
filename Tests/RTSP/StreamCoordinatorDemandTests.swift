@@ -70,4 +70,34 @@ internal final class StreamCoordinatorDemandTests: XCTestCase {
         harness.coordinator.simulateAudioConsumerChange(active: true)
         XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a", "rtsp://cam-a"], "demand resumes it")
     }
+
+    /// The driver's consumer notifications reach the coordinator through the observer
+    /// it was given. Every test coordinator used to register for the real,
+    /// system-wide Darwin notifications, so the LemurCam microphone starting or
+    /// stopping on the Mac changed its demand while a test awaited.
+    func testMicrophoneConsumerNotificationsArriveThroughTheInjectedObserver() throws {
+        let harness = try XCTUnwrap(fixture)
+        _ = harness.addRTSP("cam-a")
+        XCTAssertTrue(harness.audioConsumerNotifications.isRegistered)
+
+        harness.audioConsumerNotifications.post(active: true)
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://cam-a"], "mic demand starts the stream")
+        let cancelsBefore = harness.pipeline.silentCancels
+
+        harness.audioConsumerNotifications.post(active: false)
+        XCTAssertEqual(harness.pipeline.silentCancels, cancelsBefore + 1, "the stream must pause")
+    }
+
+    /// The real observer removes its Darwin observers when released, so the
+    /// registration must last exactly as long as the coordinator.
+    func testReleasingTheCoordinatorEndsItsMicrophoneConsumerRegistration() {
+        var harness: CoordinatorHarness? = CoordinatorHarness()
+        let notifications = harness?.audioConsumerNotifications
+        XCTAssertEqual(notifications?.isRegistered, true)
+
+        harness?.cleanUp()
+        harness = nil
+
+        XCTAssertEqual(notifications?.isRegistered, false)
+    }
 }

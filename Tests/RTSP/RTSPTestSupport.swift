@@ -168,15 +168,17 @@ internal final class LogLineRecorder: Sendable {
 /// added before the coordinator exists, as the app loads saved cameras before
 /// creating it. No HAL listener is installed: `start()` hands the harness the
 /// device-list callback, which `simulateAudioDeviceListChange()` fires. Neither
-/// the coordinator nor its model listens to the extension's system-wide camera
-/// consumer notifications: the coordinator registers with
-/// `cameraConsumerNotifications` instead, and the model with nothing.
+/// the coordinator nor its model listens to the extension's or the driver's
+/// system-wide consumer notifications: the coordinator registers with
+/// `cameraConsumerNotifications` and `audioConsumerNotifications` instead, and the
+/// model with nothing.
 @MainActor
 internal final class CoordinatorHarness {
     let manager: SourceManager
     let pipeline: FakeStreamPipeline
     let coordinator: StreamCoordinator
-    let cameraConsumerNotifications = FakeCameraConsumerNotifications()
+    let cameraConsumerNotifications = FakeConsumerNotifications()
+    let audioConsumerNotifications = FakeConsumerNotifications()
     private let directory: URL
     private let savedActiveID: String?
     private let ringName = "/lc-test-\(UUID().uuidString.prefix(8))"
@@ -205,6 +207,7 @@ internal final class CoordinatorHarness {
             audioConsumerProbe: audioConsumerProbe,
             cameraConsumerProbe: cameraConsumerProbe,
             cameraConsumerObserver: cameraConsumerNotifications.observe,
+            audioConsumerObserver: audioConsumerNotifications.observe,
             audioDeviceListObserver: { [audioDeviceListChange] _, onChange in
                 audioDeviceListChange.withLock { $0 = onChange }
                 return nil

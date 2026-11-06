@@ -46,14 +46,15 @@ internal final class StreamCoordinator {
     /// `audioConsumerProbe` (whether the virtual mic runs IO) and
     /// `audioDeviceListObserver` are called off the main thread. `audioRing` and
     /// `model` are injectable so tests can use a private shm region and a consumer
-    /// probe that never reads a real CMIO device. `cameraConsumerObserver`
-    /// registers for the extension's camera consumer notifications; tests pass one
-    /// that never listens to the real, system-wide ones.
+    /// probe that never reads a real CMIO device. `cameraConsumerObserver` and
+    /// `audioConsumerObserver` register for the extension's and the driver's consumer
+    /// notifications; tests pass ones that never listen to the real, system-wide ones.
     init(
         sourceManager: SourceManager,
         audioConsumerProbe: @escaping @Sendable () -> Bool = { VirtualMicProbe.isVirtualMicRunning() },
         cameraConsumerProbe: @escaping () -> Bool = { CoreMediaIOUtil.lemurCameraHasExternalConsumer() },
-        cameraConsumerObserver: CameraConsumerObserving = { CameraConsumerNotificationObserver(onChange: $0) },
+        cameraConsumerObserver: ConsumerObserving = { ConsumerNotificationObserver.camera(onChange: $0) },
+        audioConsumerObserver: ConsumerObserving = { ConsumerNotificationObserver.microphone(onChange: $0) },
         audioDeviceListObserver: @escaping AudioDeviceListObserving = { queue, onChange in
             AudioDeviceListObserver(queue: queue, handler: onChange)
         },
@@ -69,7 +70,10 @@ internal final class StreamCoordinator {
         self.sourceManager = sourceManager
         self.pipeline = pipeline
         self.onvifEnvironment = onvifEnvironment
-        self.micDemand = VirtualMicDemand(probe: audioConsumerProbe, makeDeviceListObserver: audioDeviceListObserver)
+        self.micDemand = VirtualMicDemand(
+            probe: audioConsumerProbe, makeDeviceListObserver: audioDeviceListObserver,
+            consumerObserver: audioConsumerObserver
+        )
         self.audioRing = audioRing
         self.cameraConsumerProbe = cameraConsumerProbe
         self.fallbackGenerator = FrameGenerator(model: streamModel)

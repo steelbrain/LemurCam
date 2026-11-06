@@ -1,13 +1,13 @@
 @testable import LemurCam
 import os
 
-/// Stands in for the camera extension's consumer notifications, which are
-/// system-wide: a test that listened to the real ones would hear any LemurCam
-/// camera on the Mac start and stop. `observe` is a `CameraConsumerObserving` that
+/// Stands in for the camera extension's or the audio driver's consumer
+/// notifications, which are system-wide: a test that listened to the real ones
+/// would hear any LemurCam camera or microphone on the Mac start and stop. `observe` is a `ConsumerObserving` that
 /// keeps the handler it is given and returns a registration which, like the real
 /// observer, ends when released. `post(active:)` delivers an edge to a live
 /// registration's handler, as the real observer does on the main thread.
-internal final class FakeCameraConsumerNotifications: Sendable {
+internal final class FakeConsumerNotifications: Sendable {
     private struct State {
         var handler: (@MainActor @Sendable (Bool) -> Void)?
         var isRegistered = false
@@ -26,7 +26,7 @@ internal final class FakeCameraConsumerNotifications: Sendable {
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    var observe: CameraConsumerObserving {
+    var observe: ConsumerObserving {
         { [state] onChange in
             state.withLock { state in
                 state.handler = onChange
