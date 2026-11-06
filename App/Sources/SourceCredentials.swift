@@ -25,3 +25,23 @@ internal extension SourceCredentials {
         return (cleaned, SourceCredentials(username: user, password: password))
     }
 }
+
+/// What saving a source does to its stored credentials.
+internal enum CredentialChange: Equatable {
+    /// Leave whatever is stored untouched.
+    case keep
+    case set(SourceCredentials)
+    case remove
+
+    /// The change the add/edit form asks for. Credentials are only removed when the
+    /// form knows what was stored: if reading them failed, the form never showed
+    /// them, so leaving authentication off must not delete them.
+    static func fromForm(
+        authenticationEnabled: Bool, username: String, password: String, storedCredentialsUnreadable: Bool
+    ) -> Self {
+        if authenticationEnabled && !username.isEmpty {
+            return .set(SourceCredentials(username: username, password: password))
+        }
+        return storedCredentialsUnreadable ? .keep : .remove
+    }
+}

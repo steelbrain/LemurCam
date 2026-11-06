@@ -65,7 +65,7 @@ extension StreamCoordinator {
             guard let sourceManager = params.sourceManager else { return }
             sourceManager.updateSource(
                 id: params.sourceID, name: params.sourceName,
-                sourceType: .onvif(updated), credentials: params.credentials
+                sourceType: .onvif(updated), credentials: .keep
             )
         }
 

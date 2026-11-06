@@ -60,7 +60,7 @@ internal final class SourceManagerCallbackTests: XCTestCase {
         configChangeCount = 0
 
         sourceManager.updateSource(id: id, name: "b",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")), credentials: nil)
+                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://b")), credentials: .remove)
 
         XCTAssertEqual(configChangeCount, 1)
     }

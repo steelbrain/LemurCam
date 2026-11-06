@@ -11,9 +11,9 @@ internal final class SourceManager {
     var onSourceConfigChanged: (() -> Void)?
 
     private let storage: SourceStorage
-    private let keychain: KeychainService
+    private let keychain: any CredentialStore
 
-    init(storage: SourceStorage = SourceStorage(), keychain: KeychainService = KeychainService()) {
+    init(storage: SourceStorage = SourceStorage(), keychain: any CredentialStore = KeychainService()) {
         self.storage = storage
         self.keychain = keychain
     }
@@ -76,11 +76,17 @@ internal final class SourceManager {
         onSourceConfigChanged?()
     }
 
-    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: SourceCredentials?) {
+    /// Replaces a source's name and type and applies `credentials` to its stored
+    /// credentials. Credentials embedded in an RTSP URL are moved to the Keychain and
+    /// take precedence over `.keep` and `.remove`, since they are the newest input.
+    func updateSource(id: UUID, name: String, sourceType: SourceType, credentials: CredentialChange) {
         guard let index = sources.firstIndex(where: { $0.id == id }) else { return }
 
         let (cleanType, urlCredentials) = Self.sanitizingCredentials(from: sourceType)
-        let resolvedCredentials = credentials ?? urlCredentials
+        var change = credentials
+        if let urlCredentials, credentials == .keep || credentials == .remove {
+            change = .set(urlCredentials)
+        }
 
         var updated = sources[index]
         updated.name = name
@@ -88,23 +94,30 @@ internal final class SourceManager {
         updated.updatedAt = Date()
         sources[index] = updated
 
-        if let resolvedCredentials {
+        apply(change, for: id, sourceName: name)
+
+        persist()
+        Log.app.info("Updated source '\(name)'")
+        onSourceConfigChanged?()
+    }
+
+    private func apply(_ change: CredentialChange, for id: UUID, sourceName: String) {
+        switch change {
+        case .keep:
+            break
+        case .set(let credentials):
             do {
-                try keychain.save(credentials: resolvedCredentials, for: id)
+                try keychain.save(credentials: credentials, for: id)
             } catch {
-                Log.app.error("Failed to save credentials for '\(name)': \(error)")
+                Log.app.error("Failed to save credentials for '\(sourceName)': \(error)")
             }
-        } else {
+        case .remove:
             do {
                 try keychain.delete(for: id)
             } catch {
                 Log.app.error("Failed to delete credentials for source \(id): \(error)")
             }
         }
-
-        persist()
-        Log.app.info("Updated source '\(name)'")
-        onSourceConfigChanged?()
     }
 
     func setActiveSource(id: UUID?) {
@@ -120,12 +133,21 @@ internal final class SourceManager {
         persist()
     }
 
+    /// Credentials to connect with; nil when none are saved or they can't be read.
+    /// Code that writes credentials back must use `loadCredentials(for:)` instead, so a
+    /// failed read is never mistaken for "no authentication".
     func credentials(for sourceID: UUID) -> SourceCredentials? {
+        try? loadCredentials(for: sourceID)
+    }
+
+    /// Nil when no credentials are saved for the source; throws when the Keychain
+    /// can't be read.
+    func loadCredentials(for sourceID: UUID) throws -> SourceCredentials? {
         do {
             return try keychain.retrieve(for: sourceID)
         } catch {
             Log.app.error("Failed to retrieve credentials for source \(sourceID): \(error)")
-            return nil
+            throw error
         }
     }
 

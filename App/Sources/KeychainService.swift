@@ -7,7 +7,16 @@ internal enum KeychainError: Error {
     case unexpectedStatus(OSStatus)
 }
 
-internal final class KeychainService {
+/// Where source credentials are kept. `KeychainService` is the real store; tests
+/// substitute in-memory stores, including ones whose reads fail.
+internal protocol CredentialStore {
+    func save(credentials: SourceCredentials, for sourceID: UUID) throws
+    /// Nil when nothing is saved for the source; throws when the store can't be read.
+    func retrieve(for sourceID: UUID) throws -> SourceCredentials?
+    func delete(for sourceID: UUID) throws
+}
+
+internal final class KeychainService: CredentialStore {
     private let service = "cam.lemur.app.credentials"
 
     func save(credentials: SourceCredentials, for sourceID: UUID) throws {

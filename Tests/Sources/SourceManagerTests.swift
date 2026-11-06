@@ -101,7 +101,7 @@ internal final class SourceManagerTests: XCTestCase {
 
         manager.updateSource(id: id, name: "New Name",
                              sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://new")),
-                             credentials: nil)
+                             credentials: .remove)
 
         XCTAssertEqual(manager.sources[0].name, "New Name")
         if case .rtsp(let info) = manager.sources[0].sourceType {

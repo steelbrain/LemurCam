@@ -118,14 +118,14 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
 
     // MARK: - credential lifecycle on update
 
-    func testUpdateWithNilCredentialsClearsStoredCredentials() throws {
+    func testUpdateWithRemoveClearsStoredCredentials() throws {
         let sourceManager = try XCTUnwrap(manager)
         sourceManager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")),
                                 credentials: SourceCredentials(username: "u", password: "p"))
         let id = try XCTUnwrap(sourceManager.sources.first).id
 
         sourceManager.updateSource(id: id, name: "Cam",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: nil)
+                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: .remove)
 
         XCTAssertNil(sourceManager.credentials(for: id))
     }
@@ -138,7 +138,7 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
 
         let fresh = SourceCredentials(username: "new", password: "new")
         sourceManager.updateSource(id: id, name: "Cam",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: fresh)
+                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: .set(fresh))
 
         XCTAssertEqual(sourceManager.credentials(for: id), fresh)
     }
@@ -159,7 +159,7 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
 
         Thread.sleep(forTimeInterval: 0.01)
         sourceManager.updateSource(id: id, name: "Renamed",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: nil)
+                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")), credentials: .remove)
 
         let after = try XCTUnwrap(sourceManager.sources.first).updatedAt
         XCTAssertGreaterThan(after, before)
@@ -170,7 +170,7 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
         sourceManager.addSource(name: "Cam", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://a")))
 
         sourceManager.updateSource(id: UUID(), name: "Ghost",
-                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://x")), credentials: nil)
+                                   sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://x")), credentials: .remove)
 
         XCTAssertEqual(sourceManager.sources.count, 1)
         XCTAssertEqual(sourceManager.sources.first?.name, "Cam")
@@ -227,7 +227,7 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
         sourceManager.updateSource(
             id: id, name: "Cam",
             sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://bob:hunter2@cam/new")),
-            credentials: nil
+            credentials: .keep
         )
         let source = try XCTUnwrap(sourceManager.sources.first)
 

@@ -11,6 +11,9 @@ internal struct SourceFormView: View {
     @State private var username: String = ""
     @State private var password: String = ""
     @State private var hasCredentials: Bool = false
+    /// Reading the saved credentials failed, so the form can't show them; saving
+    /// leaves them untouched unless new ones are entered.
+    @State private var credentialsUnreadable = false
     @State private var isProbing = false
     @State private var probeError: String?
     @State private var onvifProfiles: [ONVIFProfile] = []
@@ -56,6 +59,11 @@ internal struct SourceFormView: View {
     private var credentialsSection: some View {
         Section {
             Toggle("Requires Authentication", isOn: $hasCredentials)
+            if credentialsUnreadable {
+                Text("The saved username and password couldn't be read from the Keychain. "
+                     + "Saving keeps them unless you enter new ones here.")
+                    .font(.caption).foregroundStyle(.red)
+            }
             if hasCredentials {
                 TextField("Username", text: $username)
                 SecureField("Password", text: $password)
@@ -340,13 +348,14 @@ private extension SourceFormView {
 
     func save() {
         guard let sourceType = resolvedSourceType() else { return }
-        let credentials: SourceCredentials? =
-            hasCredentials && !username.isEmpty
-            ? SourceCredentials(username: username, password: password) : nil
+        let change = CredentialChange.fromForm(
+            authenticationEnabled: hasCredentials, username: username, password: password,
+            storedCredentialsUnreadable: credentialsUnreadable
+        )
         if let source = editing {
-            sourceManager.updateSource(id: source.id, name: name,
-                                       sourceType: sourceType, credentials: credentials)
+            sourceManager.updateSource(id: source.id, name: name, sourceType: sourceType, credentials: change)
         } else {
+            let credentials: SourceCredentials? = if case .set(let entered) = change { entered } else { nil }
             sourceManager.addSource(name: name, sourceType: sourceType, credentials: credentials)
         }
     }
@@ -366,10 +375,14 @@ private extension SourceFormView {
             streamURI = info.streamURI
             deviceUUID = info.deviceUUID
         }
-        if let creds = sourceManager.credentials(for: source.id) {
-            hasCredentials = true
-            username = creds.username
-            password = creds.password
+        do {
+            if let creds = try sourceManager.loadCredentials(for: source.id) {
+                hasCredentials = true
+                username = creds.username
+                password = creds.password
+            }
+        } catch {
+            credentialsUnreadable = true
         }
     }
 }
