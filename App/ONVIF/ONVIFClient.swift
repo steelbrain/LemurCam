@@ -256,7 +256,7 @@ internal final class ONVIFClient: Sendable {
         do {
             (bytes, response) = try await session.bytes(for: request)
         } catch {
-            throw ONVIFError.networkError(error.localizedDescription)
+            throw ONVIFError.networkError(error.localizedDescription, code: (error as? URLError)?.code)
         }
         let limit = ONVIFXML.maxDocumentBytes
         if response.expectedContentLength > Int64(limit) {
@@ -275,6 +275,8 @@ internal final class ONVIFClient: Sendable {
         } catch let rejection as ONVIFXML.Rejection {
             throw rejection
         } catch {
+            // No code: the reply had started arriving, so the host was reached
+            // (`ONVIFError.isHostUnreachable`).
             throw ONVIFError.networkError(error.localizedDescription)
         }
         return (data, response)

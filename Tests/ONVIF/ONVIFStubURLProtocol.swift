@@ -10,6 +10,13 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
         var status = 200
         var headers: [String: String] = ["Content-Type": "application/soap+xml; charset=utf-8"]
         var body = Data()
+        /// Fails the request with this URL error, before any response, instead of answering.
+        var failure: URLError.Code?
+
+        /// A request that gets no response, failing with `code`.
+        static func failing(with code: URLError.Code) -> Self {
+            Self(failure: code)
+        }
     }
 
     /// Receives the request and its body (URLSession moves the body into a stream).
@@ -46,6 +53,10 @@ internal final class ONVIFStubURLProtocol: URLProtocol {
             return
         }
         let reply = handler(request, Self.body(of: request))
+        if let failure = reply.failure {
+            client?.urlProtocol(self, didFailWithError: URLError(failure))
+            return
+        }
         guard let response = HTTPURLResponse(
             url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers
         ) else {

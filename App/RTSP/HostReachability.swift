@@ -46,11 +46,13 @@ extension RTSPStreamPipeline {
 
 extension SourceManager {
     /// Shows why an ONVIF camera's stream URI could not be resolved, noting whether
-    /// the camera gave no answer at all (`ONVIFError.isTransportFailure`).
+    /// no connection to its host could be made (`ONVIFError.isHostUnreachable`). Any
+    /// failure with no answer used to count, so a camera whose HTTP service hung, or
+    /// whose certificate wasn't trusted, showed the Local Network hint.
     func updateErrorMessage(for sourceID: UUID, onvifResolveFailure error: any Error) {
         updateErrorMessage(
             for: sourceID, message: StreamCoordinator.onvifResolveFailureMessage(for: error),
-            hostUnreachable: (error as? ONVIFError)?.isTransportFailure == true
+            hostUnreachable: (error as? ONVIFError)?.isHostUnreachable == true
         )
     }
 }

@@ -50,9 +50,12 @@ internal struct ONVIFProfile: Identifiable, Equatable {
 
 internal enum ONVIFError: LocalizedError {
     case invalidURL
-    /// The request got no answer: the device is unreachable, refused the
-    /// connection, or the TLS handshake failed.
-    case networkError(String)
+    /// The request got no complete answer: the device is unreachable, refused the
+    /// connection, did not answer in time or failed the TLS handshake, or its reply
+    /// broke off. `code` is the URL Loading System's code for a request that got no
+    /// reply at all, and nil once a reply had started arriving or when the error had
+    /// no such code (see `isHostUnreachable`).
+    case networkError(String, code: URLError.Code? = nil)
     /// The device answered with an HTTP error status (other than 401).
     case httpStatus(Int)
     case soapFault(String)
@@ -61,7 +64,8 @@ internal enum ONVIFError: LocalizedError {
     case timedOut
 
     /// True when no answer came back from the device at all, as opposed to the
-    /// device answering with an error.
+    /// device answering with an error. Not the same as the host being out of reach
+    /// (`isHostUnreachable`).
     var isTransportFailure: Bool {
         switch self {
         case .networkError, .timedOut:
@@ -71,11 +75,38 @@ internal enum ONVIFError: LocalizedError {
         }
     }
 
+    /// Whether no connection to the device's host could be made at all, which is what
+    /// denied Local Network access looks like: only a request that got no reply and
+    /// failed while connecting (`hostUnreachableCodes`). A transport failure is not
+    /// enough. A timeout, whether the URL Loading System's or `timedOut` for a whole
+    /// fetch, is the same for a connect that never finished and for a device that
+    /// accepted the connection and never answered; a failed TLS handshake or an
+    /// untrusted certificate came from a device that was reached; and so did a reply
+    /// that broke off.
+    var isHostUnreachable: Bool {
+        guard case .networkError(_, let code?) = self else { return false }
+        return Self.hostUnreachableCodes.contains(code)
+    }
+
+    /// The URL Loading System's codes for a request that could not connect to the
+    /// device's host. With Local Network access denied, the system leaves the request
+    /// no usable network path (its unsatisfied reason is
+    /// `nw_path_unsatisfied_reason_local_network_denied`), which URLSession reports as
+    /// `notConnectedToInternet`, as it does for any unsatisfied path; a connect that
+    /// fails with no route to the host is `cannotConnectToHost`. A `.local` name that
+    /// did not resolve, mDNS being gated by Local Network access too, is
+    /// `cannotFindHost` (`dnsLookupFailed` is its older code). A refused connection
+    /// and a host that is down are `cannotConnectToHost` as well, and count as they do
+    /// for an RTSP camera (`RTSPStreamPipeline.isHostUnreachable`).
+    private static let hostUnreachableCodes: Set<URLError.Code> = [
+        .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed
+    ]
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
             return "Invalid ONVIF device URL"
-        case .networkError(let msg):
+        case .networkError(let msg, _):
             return "Network error: \(msg)"
         case .httpStatus(let code):
             return "Network error: HTTP \(code)"

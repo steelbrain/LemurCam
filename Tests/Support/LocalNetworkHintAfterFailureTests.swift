@@ -133,6 +133,24 @@ internal final class LocalNetworkHintAfterFailureTests: XCTestCase {
         XCTAssertTrue(hintShows(harness, camera))
     }
 
+    /// A camera that accepted the connection and never answered fails the same way as a
+    /// connect that never finished, and one whose certificate isn't trusted was reached;
+    /// neither says the host was out of reach. Their messages are shown as before.
+    func testAnONVIFCameraThatTimedOutOrFailedTLSDoesNotShowTheHint() async throws {
+        let failures: [(host: String, code: URLError.Code)] = [
+            ("192.168.1.33", .timedOut), ("192.168.1.34", .secureConnectionFailed),
+            ("192.168.1.35", .serverCertificateUntrusted)
+        ]
+        for failure in failures {
+            let (harness, camera) = try await failedONVIFCamera(
+                host: failure.host, reply: .failing(with: failure.code)
+            )
+            let message = try XCTUnwrap(harness.manager.errorMessages[camera])
+            XCTAssertTrue(message.hasPrefix("Network error: "), message)
+            XCTAssertFalse(hintShows(harness, camera), "\(failure.code)")
+        }
+    }
+
     func testAnONVIFCameraThatRefusedTheLoginDoesNotShowTheHint() async throws {
         let (harness, camera) = try await failedONVIFCamera(host: "192.168.1.32", reply: .init(status: 401))
         XCTAssertEqual(harness.manager.errorMessages[camera], ONVIFError.authenticationFailed.localizedDescription)
