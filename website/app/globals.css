@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 /* ----------------------------------------------------------------------------
-   Page tokens. The page stays plain: system font, neutral greys, one accent
-   (blue) for links, buttons and focus. Colour is spent on the product
+   Page tokens. The page stays plain: system font, neutral grays, one accent
+   (blue) for links, buttons and focus. Color is spent on the product
    recreations, which use the macOS tokens further down.
 ---------------------------------------------------------------------------- */
 :root {
@@ -17,9 +17,9 @@
   --stage: #eeeef1;
   --stage-line: #e3e3e7;
 
-  /* macOS appearance, light. Values follow the system colours the SwiftUI
+  /* macOS appearance, light. Values follow the system colors the SwiftUI
      views use (labels, separators, grouped-form fills, accent and status
-     colours), approximated as sRGB. */
+     colors), approximated as sRGB. */
   --mac-window: #ffffff;
   --mac-title: rgba(0, 0, 0, 0.68);
   --mac-sidebar: #f7f7f7;

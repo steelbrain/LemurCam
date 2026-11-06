@@ -5,7 +5,7 @@ import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
 /* Shared pieces of the macOS recreations: window chrome, controls and the SF
    Symbols the SwiftUI views name, redrawn as simple SVG shapes (the real
-   symbols are Apple's and are not used here). Colours come from the --mac-*
+   symbols are Apple's and are not used here). Colors come from the --mac-*
    tokens in globals.css, which follow the visitor's light or dark setting the
    way macOS does. */
 
@@ -261,8 +261,8 @@ export function Spinner({ className = "h-3.5 w-3.5", label }: { className?: stri
 // Window chrome
 // ---------------------------------------------------------------------------
 
-/** Close, minimise, zoom. LemurCam's Settings and setup windows are closable
-    only, so minimise and zoom are drawn disabled (grey), as macOS shows them. */
+/** Close, minimize, zoom. LemurCam's Settings and setup windows are closable
+    only, so minimize and zoom are drawn disabled (gray), as macOS shows them. */
 export function TrafficLights() {
   return (
     <span className="flex shrink-0 gap-[9px]" aria-hidden>
