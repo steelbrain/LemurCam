@@ -12,11 +12,14 @@ internal final class FakeAudioHelper: AudioHelperClient {
     private(set) var checks: [(InstalledDriverCheck) -> Void] = []
     private(set) var registrations = 0
     private(set) var loginItemsOpened = 0
+    /// Set to make registering fail with it, leaving the helper's state as it is.
+    var registrationError: (any Error)?
 
     /// Registering leaves the helper waiting for the user's approval, as it does
-    /// the first time.
-    func registerHelper() {
+    /// the first time (unless `registrationError` makes it fail).
+    func registerHelper() throws {
         registrations += 1
+        if let registrationError { throw registrationError }
         state = .requiresApproval
     }
 

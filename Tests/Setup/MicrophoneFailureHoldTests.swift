@@ -78,4 +78,25 @@ internal final class MicrophoneFailureHoldTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - A failed registration
+
+    private func refreshOverFailedRegistration(_ helper: AudioDeviceInstaller.State) -> MicrophoneRefresh {
+        MicrophoneRefresh.decide(
+            helper: helper, operationRunning: false, holdingFailure: false, holdingRegistrationFailure: true
+        )
+    }
+
+    func testRefreshLeavesAFailedRegistrationUpWhileTheHelperIsNotRegistered() {
+        for state: AudioDeviceInstaller.State in [.notRegistered, .notFound] {
+            XCTAssertEqual(refreshOverFailedRegistration(state), .keepStatus, "\(state)")
+        }
+    }
+
+    func testRefreshShowsAHelperThatGotPastAFailedRegistration() {
+        // Awaiting approval, Open System Settings is what is left to do; approved, the
+        // driver check shows the microphone's state.
+        XCTAssertEqual(refreshOverFailedRegistration(.requiresApproval), .setStatus(.needsApproval))
+        XCTAssertEqual(refreshOverFailedRegistration(.enabled), .checkDriver)
+    }
 }

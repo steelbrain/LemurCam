@@ -164,12 +164,20 @@ internal enum MicrophoneRefresh: Equatable {
     /// the user has not acted on: replacing it on the next poll took the reason away
     /// within seconds. No check is sent while an operation runs: the helper answers
     /// it only after the operation, its answer is not applied then, and the
-    /// operation is followed by a check of its own.
-    static func decide(helper: AudioDeviceInstaller.State, operationRunning: Bool, holdingFailure: Bool) -> Self {
+    /// operation is followed by a check of its own. A failed registration
+    /// (`holdingRegistrationFailure`) stays up while the helper is still not
+    /// registered; a helper awaiting approval, or approved, is shown.
+    static func decide(
+        helper: AudioDeviceInstaller.State,
+        operationRunning: Bool,
+        holdingFailure: Bool,
+        holdingRegistrationFailure: Bool = false
+    ) -> Self {
         guard !operationRunning else { return .keepStatus }
         switch helper {
         case .enabled: return .checkDriver
-        case .notRegistered, .notFound: return holdingFailure ? .keepStatus : .setStatus(.notSetUp)
+        case .notRegistered, .notFound:
+            return holdingFailure || holdingRegistrationFailure ? .keepStatus : .setStatus(.notSetUp)
         case .requiresApproval: return holdingFailure ? .keepStatus : .setStatus(.needsApproval)
         }
     }

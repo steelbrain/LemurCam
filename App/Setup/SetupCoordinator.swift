@@ -62,6 +62,10 @@ internal final class SetupCoordinator {
     /// Try Again on that failure found the helper no longer approved: the first check
     /// after approval redoes it (`MicrophoneVersionReply`). Enable or an operation ends it.
     @ObservationIgnored private var micRedoAfterApproval: MicrophoneOperationFailure?
+    /// Why registering the helper failed, as shown. While `micStatus` shows it, routine
+    /// refreshes leave it up if the helper is still not registered (`MicrophoneRefresh`);
+    /// Skip and Re-check Now let it go, and Try Again registers again.
+    @ObservationIgnored private var micRegistrationFailure: MicrophoneStatus?
     /// "Try Again" is re-checking.
     @ObservationIgnored private var micRetrying = false
     /// The helper reported an install; the next check verifies the installed copy.
@@ -265,21 +269,21 @@ extension SetupCoordinator {
         }
     }
 
-    /// The user moved past a failed install or removal without retrying it (Skip in
-    /// guided setup): stop holding its reason, and show the microphone's state.
+    /// The user moved past a failed registration, install or removal without retrying
+    /// it (Skip in guided setup): stop holding its reason, and show the microphone's state.
     func acknowledgeMicrophoneFailure() {
-        guard micOperationFailure != nil else { return }
+        guard micOperationFailure != nil || micRegistrationFailure == micStatus else { return }
         releaseHeldFailure()
         refreshMicrophoneStatus()
     }
 
     /// The microphone half of "Re-check Now". Routine refreshes leave a failed
-    /// install's or removal's reason up; this explicit check lets it go and shows
-    /// "Checking…" until the check lands, so its result replaces the reason even when
-    /// the helper does not answer. Nothing is redone: that is Try Again
+    /// registration's, install's or removal's reason up; this explicit check lets it go
+    /// and shows "Checking…" until the check lands, so its result replaces the reason
+    /// even when the helper does not answer. Nothing is redone: that is Try Again
     /// (`retryMicrophone`).
     func recheckMicrophone() {
-        if micOperationFailure != nil, !isInstallingDriver {
+        if micOperationFailure != nil || micRegistrationFailure == micStatus, !isInstallingDriver {
             releaseHeldFailure()
             micStatus = .checking
         }
@@ -290,6 +294,7 @@ extension SetupCoordinator {
     private func releaseHeldFailure() {
         if micOperationFailure?.leavesInstallUnfinished == true { micInstallUnfinished = true }
         micOperationFailure = nil
+        micRegistrationFailure = nil
     }
 
     /// Open the Login Items pane where the audio helper is approved.
@@ -303,7 +308,9 @@ extension SetupCoordinator {
             try audioInstaller.registerHelper()
             micStatus = .needsApproval
         } catch {
-            micStatus = .failed("Couldn’t register the audio helper: \(error.localizedDescription)")
+            let failure = MicrophoneStatus.failed("Couldn’t register the audio helper: \(error.localizedDescription)")
+            micRegistrationFailure = failure
+            micStatus = failure
         }
     }
 
@@ -398,7 +405,8 @@ extension SetupCoordinator {
         // helper is approved, so a transient XPC failure can't masquerade as state.
         switch MicrophoneRefresh.decide(
             helper: audioInstaller.state, operationRunning: isInstallingDriver,
-            holdingFailure: micOperationFailure != nil
+            holdingFailure: micOperationFailure != nil,
+            holdingRegistrationFailure: micRegistrationFailure == micStatus
         ) {
         case .checkDriver:
             queryInstalledDriverVersion()
