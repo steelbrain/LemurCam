@@ -13,12 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 const description =
-  "LemurCam turns any RTSP or ONVIF IP camera into a virtual webcam and microphone on macOS. Works with Zoom, Teams, Google Meet, FaceTime, OBS and more.";
+  "LemurCam turns an RTSP or ONVIF IP camera that streams H.264 or H.265 into a virtual webcam and microphone on macOS. Works with Zoom, Teams, Google Meet, FaceTime, OBS and more.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://lemur.cam"),
   title: {
-    default: "LemurCam — Turn any IP camera into a Mac webcam",
+    default: "LemurCam — Turn your IP camera into a Mac webcam",
     template: "%s · LemurCam",
   },
   description,
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   openGraph: {
-    title: "LemurCam — Turn any IP camera into a Mac webcam",
+    title: "LemurCam — Turn your IP camera into a Mac webcam",
     description,
     url: "https://lemur.cam",
     siteName: "LemurCam",
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary",
-    title: "LemurCam — Turn any IP camera into a Mac webcam",
+    title: "LemurCam — Turn your IP camera into a Mac webcam",
     description,
     images: ["/icon.png"],
   },

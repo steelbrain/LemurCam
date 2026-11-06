@@ -126,8 +126,8 @@ export default function Home() {
 
           <Reveal delay={140}>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-muted">
-              LemurCam turns any RTSP or ONVIF IP camera into a virtual webcam
-              and microphone on macOS — so you show up on every call with the
+              LemurCam turns an RTSP or ONVIF IP camera that streams H.264 or
+              H.265 into a virtual webcam and microphone on macOS — so you show up on every call with the
               lens you actually want.
             </p>
           </Reveal>
@@ -330,7 +330,8 @@ export default function Home() {
               Bring the camera you already own
             </h2>
             <p className="mt-4 text-lg leading-relaxed text-muted">
-              If it speaks RTSP or ONVIF, LemurCam can stream it. That covers
+              If it speaks RTSP or ONVIF and streams H.264 or H.265 video,
+              LemurCam can stream it. That covers
               most popular IP-camera lines — and microphone pass-through works
               whenever the camera sends common audio formats.
             </p>
