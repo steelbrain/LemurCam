@@ -125,10 +125,8 @@ internal final class AudioDecoder {
             Log.rtsp.warning("AudioDecoder: \(Self.unsupportedSourceRateMessage(sourceRate))")
             return
         }
-        guard let inFmt = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32, sampleRate: sourceRate,
-            channels: AVAudioChannelCount(sourceChannels), interleaved: true
-        ), let outFmt = AVAudioFormat(
+        guard let inFmt = Self.resamplerInputFormat(sampleRate: sourceRate, channels: sourceChannels),
+              let outFmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: Self.outputSampleRate,
             channels: Self.outputChannels, interleaved: true
         ) else {
@@ -138,10 +136,9 @@ internal final class AudioDecoder {
         inputFormat = inFmt
         outputFormat = outFmt
         let conv = AVAudioConverter(from: inFmt, to: outFmt)
-        // Duplicate mono into both output channels; pass stereo through unchanged.
-        if sourceChannels == 1 {
-            conv?.channelMap = [0, 0]
-        }
+        // Mono into both output channels, stereo unchanged, the first two of more.
+        let map = Self.resamplerChannelMap(sourceChannels: sourceChannels)
+        if !map.isEmpty { conv?.channelMap = map }
         converter = conv
     }
 
