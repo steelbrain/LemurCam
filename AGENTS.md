@@ -303,6 +303,29 @@ Keep credentials out of:
 Connection status is runtime state managed by `SourceManager`; do not persist it
 on `CameraSource`.
 
+## ONVIF Connection Security
+
+`ONVIFClient` makes the app's only URL loads, and it enforces three per-camera
+gates. Make a saved camera's client with `StreamCoordinator.makeONVIFClient`,
+which passes the camera's `connectionPolicy`, and don't bypass the gates.
+
+- TLS: a certificate macOS trusts is accepted, and so is exactly the one the
+  user trusted for the camera (`ONVIFSourceInfo.pinnedCertificate`, a SHA-256
+  fingerprint; see `ONVIFServerTrust`). Any other fails with
+  `ONVIFError.certificateNotTrusted`, and the forms ask (`CertificateTrustPrompt`).
+- Plain HTTP: `App/Info.plist` sets `NSAllowsArbitraryLoads`, so ATS blocks
+  nothing. `ONVIFClient` refuses plain HTTP to a host outside the local network
+  (`ONVIFLocalNetwork`) unless the camera's Allow Unencrypted HTTP checkbox is
+  on. Any other URL load added to the app must be HTTPS only.
+- Identity: before anything signed goes to a camera's saved address, the
+  resolve asks the device for its endpoint reference, unsigned, and stops with
+  `ONVIFError.differentDevice` when another device answers (`ONVIFDeviceIdentity`).
+
+The certificate and the checkbox belong to one address: a move or an address
+edit drops them (`ONVIFSourceInfo.clearAddressDecisions()`). An error only the
+user can clear (`ONVIFError.needsUserDecision`) is not retried, rescanned for, or
+answered by falling back to the stored stream URI.
+
 ## Tests And Coverage
 
 Any new behavior must land with tests that exercise it. This is especially
