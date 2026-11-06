@@ -13,6 +13,13 @@ internal enum ONVIFURLInput {
     static let loginMessage =
         "Remove the user name and password from the URL, and enter them under Requires Authentication."
 
+    /// The RTSP field's message for such a URL says to write `/`, `?`, `#` and `@` as
+    /// escapes, but this form keeps only the address of the URL: a login written that
+    /// way was dropped without a word.
+    static let ambiguousLoginMessage =
+        "The camera's address can't be read from this URL: an @ comes after a /, ? or #. Remove any user "
+            + "name and password from the URL, and enter them under Requires Authentication."
+
     static let notAnAddressMessage =
         "The camera's address in this URL isn't valid. Write it as an IP address or host name, as in "
             + "http://192.168.1.64:8080/onvif/device_service."
@@ -30,12 +37,12 @@ internal enum ONVIFURLInput {
     /// The camera's address in `url`, read as every camera URL is
     /// (`URLComponents(cameraURL:)`), with the URL's port or the scheme's default one;
     /// or what to tell the user. A URL whose login holds a raw `/`, `?`, `#` or `@` is
-    /// refused as the RTSP field refuses it (`SourceCredentials.hasAmbiguousUserInfo`):
+    /// refused, as the RTSP field refuses it (`SourceCredentials.hasAmbiguousUserInfo`):
     /// `http://admin:1234/5@192.168.1.64/onvif/device_service` read as host `admin` and
     /// port 1234, and Fetch Profiles sent the form's login there.
     static func address(in url: String) -> Result<Address, Problem> {
         if SourceCredentials.hasAmbiguousUserInfo(url) {
-            return .failure(Problem(message: RTSPURLInput.ambiguousUserInfoMessage))
+            return .failure(Problem(message: ambiguousLoginMessage))
         }
         guard let components = URLComponents(cameraURL: url), let host = components.host, !host.isEmpty else {
             return .failure(Problem(message: invalidMessage))

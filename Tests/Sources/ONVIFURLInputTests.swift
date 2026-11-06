@@ -74,8 +74,12 @@ internal final class ONVIFURLInputTests: XCTestCase {
             "http://admin:1234/5@192.168.1.64/onvif/device_service",
             "http://admin:Admin#123@192.168.1.64/onvif/device_service"
         ] {
-            XCTAssertEqual(ONVIFURLInput.address(in: url), refusal(RTSPURLInput.ambiguousUserInfoMessage), url)
+            XCTAssertEqual(ONVIFURLInput.address(in: url), refusal(ONVIFURLInput.ambiguousLoginMessage), url)
         }
+        // This form keeps only the address: a login written with escapes, as the RTSP
+        // field's message suggests, would be dropped.
+        XCTAssertFalse(ONVIFURLInput.ambiguousLoginMessage.contains("%"))
+        XCTAssertTrue(ONVIFURLInput.ambiguousLoginMessage.contains("Requires Authentication"))
     }
 
     func testAURLWithoutAHostIsInvalid() {
