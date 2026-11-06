@@ -29,6 +29,22 @@ internal struct SourceFileSaveError: LocalizedError {
     }
 }
 
+/// An edit was written to the cameras file, its new credentials couldn't be stored in
+/// the Keychain, and the file couldn't be put back. The camera stays as edited, and its
+/// old credentials are removed: they belong to the camera as it was, maybe another
+/// address. Only when the Keychain can't remove them either do they stay.
+internal struct EditSavedWithoutLoginError: LocalizedError {
+    let oldLoginRemoved: Bool
+
+    var errorDescription: String? {
+        oldLoginRemoved
+            ? "The camera was saved without its username and password: they couldn't be saved in the "
+                + "Keychain, and the change couldn't be undone. Enter them again and save."
+            : "The camera was saved, but its new username and password couldn't be saved in the Keychain, "
+                + "and its old ones couldn't be removed. Enter them again and save, or delete the camera."
+    }
+}
+
 @MainActor @Observable
 internal final class SourceManager {
     private(set) var sources: [CameraSource] = []
@@ -143,7 +159,9 @@ internal final class SourceManager {
     /// stored part it needs can't be read, and `SourceFileSaveError` when the file
     /// can't be written. The file is written before the Keychain changes, so a failed
     /// write leaves the stored credentials with the camera as saved; credentials that
-    /// then can't be stored put the file back as it was.
+    /// then can't be stored put the file back as it was. When the file can't be put
+    /// back either, the edit stays, without a login, and `EditSavedWithoutLoginError`
+    /// is thrown (see `undoEdit`).
     ///
     /// `loaded` is the type the edit form loaded. An ONVIF address it left as it was
     /// gives way to one WS-Discovery saved since (`SourceType.keepingMove`); without
@@ -173,9 +191,7 @@ internal final class SourceManager {
         do {
             try apply(change, for: id, sourceName: name)
         } catch {
-            sources = previous
-            saveSources()
-            throw error
+            throw undoEdit(of: id, to: previous, sourceName: name, after: error)
         }
 
         Log.app.info("Updated source '\(name)'")
@@ -327,6 +343,35 @@ private extension SourceManager {
         }
         lastSaveFailed = false
         persistActiveSource()
+    }
+
+    /// An edit is in the file and its new credentials couldn't be stored. Puts the
+    /// cameras back to `previous`, in the app and in the file, and returns `error`. When
+    /// the file can't be written, it keeps the edited camera, and with it the old
+    /// credentials, which belong to the camera as it was: kept, they went to the edited
+    /// address after a restart. They are removed instead, so the camera has no login
+    /// rather than the wrong one; the app keeps the camera as the file has it, signals
+    /// the change, and returns `EditSavedWithoutLoginError`.
+    func undoEdit(of id: UUID, to previous: [CameraSource], sourceName: String, after error: any Error) -> any Error {
+        let edited = sources
+        sources = previous
+        guard !storage.save(sources) else {
+            lastSaveFailed = false
+            return error
+        }
+        sources = edited
+        // The file holds what the app holds: nothing is left unsaved.
+        lastSaveFailed = false
+        var oldLoginRemoved = true
+        do {
+            try keychain.delete(for: id)
+        } catch {
+            oldLoginRemoved = false
+            Log.app.error("Failed to delete credentials for source \(id): \(error)")
+        }
+        Log.app.error("Saved '\(sourceName)' without its login: the edit could not be undone")
+        onSourceConfigChanged?()
+        return EditSavedWithoutLoginError(oldLoginRemoved: oldLoginRemoved)
     }
 
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an

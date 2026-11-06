@@ -2,9 +2,9 @@ import Foundation
 @testable import LemurCam
 
 /// A `CredentialStore` that never touches the real Keychain. `failReads` makes every
-/// `retrieve` throw, as a locked or damaged Keychain does, and `failSaves` every
-/// `save`. Every call is recorded so tests can assert that nothing was saved or
-/// deleted.
+/// `retrieve` throw, as a locked or damaged Keychain does, `failSaves` every `save`,
+/// and `failDeletes` every `delete`. Every call is recorded so tests can assert that
+/// nothing was saved or deleted.
 internal final class InMemoryCredentialStore: CredentialStore {
     enum Call: Equatable {
         case save(UUID)
@@ -14,11 +14,13 @@ internal final class InMemoryCredentialStore: CredentialStore {
 
     struct ReadFailure: Error {}
     struct SaveFailure: Error {}
+    struct DeleteFailure: Error {}
 
     private(set) var stored: [UUID: SourceCredentials] = [:]
     private(set) var calls: [Call] = []
     var failReads = false
     var failSaves = false
+    var failDeletes = false
 
     func save(credentials: SourceCredentials, for sourceID: UUID) throws {
         calls.append(.save(sourceID))
@@ -32,8 +34,9 @@ internal final class InMemoryCredentialStore: CredentialStore {
         return stored[sourceID]
     }
 
-    func delete(for sourceID: UUID) {
+    func delete(for sourceID: UUID) throws {
         calls.append(.delete(sourceID))
+        if failDeletes { throw DeleteFailure() }
         stored[sourceID] = nil
     }
 
