@@ -59,6 +59,38 @@ internal final class ONVIFDiscoveryReplyTests: XCTestCase {
         XCTAssertEqual(device?.endpointURL, "http://192.168.1.66:8000/onvif")
     }
 
+    /// A camera listing an HTTPS address first was added over HTTPS, which fails on
+    /// its self-signed certificate. Plain HTTP is preferred when both are listed.
+    func testPrefersHTTPOverHTTPSXAddr() {
+        let xml = probeMatchXML(
+            uuid: "cam",
+            xaddrs: "https://192.168.1.66:443/onvif/device_service http://192.168.1.66:8000/onvif/device_service"
+        )
+
+        let device = parse(xml, sender: "192.168.1.66")
+
+        XCTAssertEqual(device?.endpointURL, "http://192.168.1.66:8000/onvif/device_service")
+        XCTAssertEqual(device?.useHTTPS, false)
+        XCTAssertEqual(device?.port, 8000)
+    }
+
+    /// HTTP wins even over an HTTPS entry that names the sender; the host is the
+    /// sender's either way.
+    func testPrefersHTTPEvenWhenOnlyHTTPSNamesTheSender() {
+        let xml = probeMatchXML(
+            uuid: "cam", xaddrs: "https://192.168.1.66/onvif/device_service http://10.1.1.1:81/onvif/device_service"
+        )
+
+        let device = parse(xml, sender: "192.168.1.66")
+
+        XCTAssertEqual(device?.endpointURL, "http://192.168.1.66:81/onvif/device_service")
+    }
+
+    func testUsesHTTPSWhenItIsTheOnlyScheme() {
+        let xml = probeMatchXML(uuid: "cam", xaddrs: "https://192.168.1.66:8443/onvif/device_service")
+        XCTAssertEqual(parse(xml, sender: "192.168.1.66")?.useHTTPS, true)
+    }
+
     /// XAddrs may be separated by any whitespace, including a leading newline;
     /// splitting only on spaces used to drop such devices.
     func testSplitsXAddrsOnAnyWhitespace() {

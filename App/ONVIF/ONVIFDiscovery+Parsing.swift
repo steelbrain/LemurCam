@@ -19,9 +19,9 @@ internal extension ONVIFDiscovery {
     /// Any host on the LAN can answer the multicast probe. A reply only counts when
     /// its `RelatesTo` echoes this probe's `MessageID`, and the device's address is
     /// always the host the reply came from: the XAddr whose host matches the sender
-    /// is preferred, and otherwise the first XAddr is used with its host replaced by
-    /// the sender's. A reply therefore cannot point the app (and the credentials it
-    /// later sends) at a third host.
+    /// is preferred (plain HTTP before HTTPS, see `endpoint`), and otherwise the
+    /// first XAddr is used with its host replaced by the sender's. A reply therefore
+    /// cannot point the app (and the credentials it later sends) at a third host.
     static func parseProbeMatch(xml: String, context: ReplyContext) -> DiscoveredDevice? {
         guard let root = try? ONVIFXML.parse(xml) else { return nil }
 
@@ -70,6 +70,11 @@ internal extension ONVIFDiscovery {
 
     /// Picks the device service address from a whitespace-separated XAddrs list (any
     /// whitespace, including newlines, separates entries). See `parseProbeMatch`.
+    ///
+    /// When a device lists both, plain HTTP is preferred over HTTPS: cameras ship with
+    /// self-signed certificates, which the app has no way to trust yet, so the HTTPS
+    /// address fails where the HTTP one works. Among addresses of the preferred scheme,
+    /// the one whose host matches the sender is preferred.
     static func endpoint(fromXAddrs xaddrs: String, sender: String) -> (url: String, host: String, port: Int)? {
         let candidates = xaddrs.split(whereSeparator: \.isWhitespace).compactMap { entry -> URLComponents? in
             guard let components = URLComponents(string: String(entry)),
@@ -78,8 +83,10 @@ internal extension ONVIFDiscovery {
             return components
         }
         guard let senderIP = normalizedIPAddress(sender) else { return nil }
-        let matching = candidates.first { $0.host.flatMap(normalizedIPAddress) == senderIP }
-        guard var components = matching ?? candidates.first else { return nil }
+        let plainHTTP = candidates.filter { $0.scheme?.lowercased() == "http" }
+        let preferred = plainHTTP.isEmpty ? candidates : plainHTTP
+        let matching = preferred.first { $0.host.flatMap(normalizedIPAddress) == senderIP }
+        guard var components = matching ?? preferred.first else { return nil }
 
         let host = senderIP.contains(":") ? "[\(senderIP)]" : senderIP
         components.percentEncodedHost = host
