@@ -81,9 +81,15 @@ internal final class StreamCoordinator {
     /// Recover audio demand missed at launch: a `consumerStarted` Darwin notification
     /// that fired before observers registered is not replayed, so seed from the device's
     /// running state and begin producing if in use. Split from `start()` for testability.
+    /// An idle probe explicitly ends production too: the shared region can outlive an
+    /// earlier app run that left it marked as producing.
     func recoverAudioDemandOnLaunch() {
         _hasAudioConsumers = audioConsumerProbe()
-        if _hasAudioConsumers { audioRing.beginProducing() }
+        if _hasAudioConsumers {
+            audioRing.beginProducing()
+        } else {
+            audioRing.endProducing()
+        }
     }
 
     /// Run CMIO device discovery for the virtual camera. Called by the

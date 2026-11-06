@@ -224,6 +224,32 @@ static inline uint32_t lemur_ring_write(LemurAudioRing *ring,
     return n;
 }
 
+/// PRODUCER: discard every unread frame by moving writeIndex back to the
+/// consumer's position, so a consumer that does not reset its read position on
+/// start (drivers before this change) never starts on stale backlog. Call only
+/// while no consumer should be reading (production stopped or just restarted).
+/// If a consumer read does race it, the consumer can advance past the new
+/// writeIndex; both sides then see an out-of-range distance and reset instead of
+/// replaying old audio. No store when the ring is already drained.
+static inline void lemur_ring_discard(LemurAudioRing *ring) {
+    uint32_t r = ring->readIndex;
+    atomic_thread_fence(memory_order_acquire);
+    uint32_t w = ring->writeIndex;
+    if (w != r) {
+        ring->writeIndex = r;
+    }
+}
+
+/// PRODUCER: set or clear the app-owned `producing` flag.
+static inline void lemur_ring_set_producing(LemurAudioRing *ring, int producing) {
+    ring->producing = producing ? 1 : 0;
+}
+
+/// Whether the app-owned `producing` flag is set.
+static inline int lemur_ring_is_producing(const LemurAudioRing *ring) {
+    return ring->producing != 0;
+}
+
 /// CONSUMER (real-time safe): read exactly `frames` frames into `dst`, zero-
 /// filling any shortfall (underrun => silence). Returns frames actually copied
 /// from the ring (the remainder, if any, was zero-filled). Out-of-range indices

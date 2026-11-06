@@ -7,21 +7,40 @@ import OSLog
 /// Creates and maps the POSIX shm region, initialises the `LemurAudioRing`, and
 /// writes interleaved 48 kHz Float32 stereo PCM. The region persists (the driver
 /// inside coreaudiod maps the same name); only one producer thread may write.
+/// Every ring access goes through the C helpers in `LemurAudioShared.h`, which
+/// never trust the shared header or indices for memory safety.
 internal final class AudioRingBuffer: Sendable {
     private struct State: Sendable {
         var ringAddress: UInt?
         var fileDescriptor: Int32 = -1
-        /// Producer-thread-only: the `producing` flag seen on the previous `write`, so
-        /// the first write after production (re)starts drops any backlog exactly once.
-        var wasProducing = false
+        /// Set when production (re)starts, cleared by the first `write` after it, so
+        /// that write drops any backlog exactly once. Tracked here rather than inferred
+        /// from what `write` last saw, so a stop/start with no write in between still
+        /// drops the old backlog.
+        var discardOnNextWrite = true
     }
 
     private let log = Logger(subsystem: "cam.lemur.app", category: "audio-ring")
     private let mapSize = MemoryLayout<LemurAudioRing>.size
+    private let name: String
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
 
     var isOpen: Bool {
         state.withLock { $0.ringAddress != nil }
+    }
+
+    /// Whether the ring's `producing` flag is set. False while not open.
+    var isProducing: Bool {
+        state.withLock { state in
+            guard let address = state.ringAddress else { return false }
+            return lemur_ring_is_producing(Self.ringPointer(from: address)) != 0
+        }
+    }
+
+    /// `name` is the POSIX shm name; tests pass a private one so they never touch the
+    /// region a live driver maps.
+    init(name: String = LEMUR_AUDIO_SHM_NAME) {
+        self.name = name
     }
 
     deinit {
@@ -34,7 +53,7 @@ internal final class AudioRingBuffer: Sendable {
         guard !isOpen else { return true }
         // The shim creates + sizes the region once and chmods it so the driver in
         // coreaudiod (a different uid) can map it read-write; see the bridging header.
-        let descriptor = lemur_shm_open_create(LEMUR_AUDIO_SHM_NAME)
+        let descriptor = lemur_shm_open_create(name)
         guard descriptor >= 0 else {
             log.error("shm_open/ftruncate failed: \(errno)")
             return false
@@ -51,13 +70,17 @@ internal final class AudioRingBuffer: Sendable {
         if lemur_ring_ready(ringPointer) == 0 {
             lemur_ring_init(ringPointer)
         }
+        // A region reused from an earlier app run can still say "producing" (the
+        // flag is only cleared when a consumer stops). This instance has not been
+        // told about any consumer yet, so it starts idle and keeps the ring drained.
+        lemur_ring_set_producing(ringPointer, 0)
         let ringAddress = UInt(bitPattern: ringPointer)
 
         let installed = state.withLock { state in
             guard state.ringAddress == nil else { return false }
             state.ringAddress = ringAddress
             state.fileDescriptor = descriptor
-            state.wasProducing = false
+            state.discardOnNextWrite = true
             return true
         }
 
@@ -70,13 +93,18 @@ internal final class AudioRingBuffer: Sendable {
         return installed
     }
 
-    /// Mark production active. Safe to call from any thread: it only flips the
-    /// `producing` flag. The backlog drop happens in `write()` on the producer
-    /// thread, so the producer-owned `writeIndex` is never mutated off that thread.
+    /// Mark production active. Safe to call from any thread: it flips the `producing`
+    /// flag and, on an idle-to-producing transition, arms a one-time backlog drop. The
+    /// drop itself happens in `write()` on the producer thread, so the producer-owned
+    /// `writeIndex` is never mutated off that thread.
     func beginProducing() {
         state.withLock {
             guard let address = $0.ringAddress else { return }
-            Self.ringPointer(from: address).pointee.producing = 1
+            let ring = Self.ringPointer(from: address)
+            if lemur_ring_is_producing(ring) == 0 {
+                $0.discardOnNextWrite = true
+            }
+            lemur_ring_set_producing(ring, 1)
         }
     }
 
@@ -84,7 +112,7 @@ internal final class AudioRingBuffer: Sendable {
     func endProducing() {
         state.withLock {
             guard let address = $0.ringAddress else { return }
-            Self.ringPointer(from: address).pointee.producing = 0
+            lemur_ring_set_producing(Self.ringPointer(from: address), 0)
         }
     }
 
@@ -100,16 +128,15 @@ internal final class AudioRingBuffer: Sendable {
                   let inputSamples = UnsafePointer<Float>(bitPattern: sampleAddress) else { return }
 
             let ring = Self.ringPointer(from: address)
-            guard ring.pointee.producing != 0 else {
-                ring.pointee.writeIndex = ring.pointee.readIndex
-                $0.wasProducing = false
+            guard lemur_ring_is_producing(ring) != 0 else {
+                lemur_ring_discard(ring)
                 return
             }
-            if !$0.wasProducing {
-                ring.pointee.writeIndex = ring.pointee.readIndex
-                $0.wasProducing = true
+            if $0.discardOnNextWrite {
+                lemur_ring_discard(ring)
+                $0.discardOnNextWrite = false
             }
-            lemur_ring_write(ring, inputSamples, UInt32(frames), mach_absolute_time())
+            lemur_ring_write(ring, inputSamples, UInt32(clamping: frames), mach_absolute_time())
         }
     }
 
@@ -125,7 +152,6 @@ internal final class AudioRingBuffer: Sendable {
             let previous = (address: state.ringAddress, fileDescriptor: state.fileDescriptor)
             state.ringAddress = nil
             state.fileDescriptor = -1
-            state.wasProducing = false
             return previous
         }
 
