@@ -1,3 +1,25 @@
+/// Setup state of the virtual microphone, derived from the privileged helper's
+/// registration state plus whether the audio driver is installed. Collapses the
+/// old four-button helper/driver dance into a single "enable" progression.
+internal enum MicrophoneStatus: Equatable {
+    /// Not yet queried.
+    case unknown
+    /// Helper not registered, or registered+enabled but the driver isn't installed.
+    case notSetUp
+    /// Helper registered but the user must approve it in System Settings.
+    case needsApproval
+    /// Registering the helper or installing the driver is in progress.
+    case installing
+    /// Helper enabled and driver installed — the microphone is available.
+    case ready
+    /// The helper reported an install, but the installed copy is still not sealed
+    /// to root: the helper serving the app is one from before an app update that
+    /// has not exited. Only a restart replaces it.
+    case needsReboot
+    /// A setup step failed; the associated string is a user-facing reason.
+    case failed(String)
+}
+
 /// What the installed-driver check found: whether the privileged helper answered,
 /// the installed driver's `CFBundleVersion` (nil when none is installed), and
 /// whether the installed copy is sealed to root (`sealed` means nothing but root
