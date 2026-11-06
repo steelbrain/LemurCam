@@ -297,7 +297,8 @@ private extension SourceFormView {
     }
 
     /// Moves any `user:password@` in the URL into the credential fields, including a
-    /// password with an empty user name, so it is not kept in the URL. The field then
+    /// password with an empty user name, so it is not kept in the URL; a part the URL
+    /// lacks keeps what was typed (see `SourceFormCredentialFields`). The field then
     /// holds the URL as it will be saved: without the credentials and without the
     /// surrounding whitespace Connect ignored.
     func handleDirectRTSP(_ url: String) {
@@ -306,12 +307,12 @@ private extension SourceFormView {
             return
         }
         resolvedType = .rtsp
-        let (cleaned, credentials) = SourceCredentials.extractingFromRTSPURL(url)
-        if let credentials {
-            username = credentials.username
-            password = credentials.password
-            hasCredentials = true
-        }
+        let (cleaned, login) = SourceCredentials.extractingLoginFromRTSPURL(url)
+        var fields = SourceFormCredentialFields(isEnabled: hasCredentials, username: username, password: password)
+        fields.take(login)
+        hasCredentials = fields.isEnabled
+        username = fields.username
+        password = fields.password
         urlFieldEdits.replace(&inputText, with: cleaned)
         if name.isEmpty { name = URLComponents(string: cleaned)?.host ?? "Camera" }
     }
