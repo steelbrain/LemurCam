@@ -47,6 +47,10 @@ targets:
     sources:
       - path: App
       - path: Shared
+      # The third-party notices, which their MIT licenses require in every copy of
+      # the software, including the app as distributed.
+      - path: ACKNOWLEDGEMENTS.md
+        buildPhase: resources
       # Embed the helper's LaunchDaemon plist where SMAppService expects it.
       - path: Helper/cam.lemur.app.helper.plist
         buildPhase:
