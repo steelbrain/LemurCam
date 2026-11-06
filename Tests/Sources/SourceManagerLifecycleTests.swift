@@ -19,13 +19,11 @@ internal final class SourceManagerLifecycleTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("sources.json")
         guard let tempURL else { return }
-        manager = SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: KeychainService())
+        // An in-memory store stands in for the Keychain, so the real one is never touched.
+        manager = SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: InMemoryCredentialStore())
     }
 
     override func tearDown() async throws {
-        if let sourceManager = manager {
-            for source in sourceManager.sources { try? KeychainService().delete(for: source.id) }
-        }
         if let savedActiveID {
             UserDefaults.standard.set(savedActiveID, forKey: LemurCamConfig.activeSourceKey)
         } else {

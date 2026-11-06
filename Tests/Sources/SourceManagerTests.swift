@@ -5,6 +5,8 @@ import XCTest
 internal final class SourceManagerTests: XCTestCase {
     private var tempURL: URL?
     private var manager: SourceManager?
+    /// Stands in for the Keychain, so the tests never read or write the real one.
+    private let credentialStore = InMemoryCredentialStore()
 
     override func setUp() async throws {
         try await super.setUp()
@@ -13,17 +15,10 @@ internal final class SourceManagerTests: XCTestCase {
             .appendingPathComponent("sources.json")
         guard let tempURL else { return }
         let storage = SourceStorage(fileURL: tempURL)
-        let keychain = KeychainService()
-        manager = SourceManager(storage: storage, keychain: keychain)
+        manager = SourceManager(storage: storage, keychain: credentialStore)
     }
 
     override func tearDown() async throws {
-        // Clean up sources from keychain
-        if let manager {
-            for source in manager.sources {
-                try? KeychainService().delete(for: source.id)
-            }
-        }
         if let tempURL {
             try? FileManager.default.removeItem(at: tempURL.deletingLastPathComponent())
         }
@@ -144,7 +139,7 @@ internal final class SourceManagerTests: XCTestCase {
 
         // Create a new manager pointing to the same storage
         let storage = SourceStorage(fileURL: tempURL)
-        let newManager = SourceManager(storage: storage, keychain: KeychainService())
+        let newManager = SourceManager(storage: storage, keychain: credentialStore)
         newManager.load()
 
         XCTAssertEqual(newManager.sources.count, 2)

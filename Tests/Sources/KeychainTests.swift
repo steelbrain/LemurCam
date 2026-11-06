@@ -1,17 +1,21 @@
 @testable import LemurCam
 import XCTest
 
+/// Tests `KeychainService` against the real Keychain, under a service of its own so
+/// the app's saved camera logins are never read, changed or deleted. Each test uses
+/// a fresh account and `tearDown` deletes it.
 internal final class KeychainTests: XCTestCase {
-    private let keychain = KeychainService()
+    private let keychain = KeychainService(service: "cam.lemur.app.tests.credentials")
     private var testID: UUID?
 
     override func setUp() {
+        super.setUp()
         testID = UUID()
     }
 
     override func tearDown() {
-        guard let testID else { return }
-        try? keychain.delete(for: testID)
+        if let testID { try? keychain.delete(for: testID) }
+        super.tearDown()
     }
 
     func testSaveAndRetrieve() throws {

@@ -129,7 +129,8 @@ internal final class LogLineRecorder: Sendable {
 }
 
 /// A `StreamCoordinator` wired to a `FakeStreamPipeline` and a `SourceManager` with
-/// throwaway storage. `SourceManager` persists the active source in the host app's
+/// throwaway storage and an in-memory credential store in place of the Keychain.
+/// `SourceManager` persists the active source in the host app's
 /// standard defaults, so `cleanUp()` restores that value. Its `LemurCamModel`
 /// finds no consumer at discovery and never reads a real CMIO device, and its audio
 /// ring is a private shm region, never the one a live driver maps, so tests may
@@ -155,7 +156,7 @@ internal final class CoordinatorHarness {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let storage = SourceStorage(fileURL: directory.appendingPathComponent("sources.json"))
-        let sourceManager = SourceManager(storage: storage, keychain: KeychainService())
+        let sourceManager = SourceManager(storage: storage, keychain: InMemoryCredentialStore())
         for name in rtspSources {
             try? sourceManager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
         }

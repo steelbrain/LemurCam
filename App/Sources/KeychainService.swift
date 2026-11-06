@@ -17,7 +17,13 @@ internal protocol CredentialStore {
 }
 
 internal final class KeychainService: CredentialStore {
-    private let service = "cam.lemur.app.credentials"
+    private let service: String
+
+    /// `service` is the Keychain service the items are saved under. Only the tests
+    /// of this class pass another one, so they never touch the app's own items.
+    init(service: String = "cam.lemur.app.credentials") {
+        self.service = service
+    }
 
     func save(credentials: SourceCredentials, for sourceID: UUID) throws {
         let data = try encode(credentials)

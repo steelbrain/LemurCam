@@ -15,7 +15,7 @@ internal final class StreamCoordinatorAudioDemandTests: XCTestCase {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("sources.json")
-        return SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: KeychainService())
+        return SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: InMemoryCredentialStore())
     }
 
     func testRecoverAudioDemandSeedsWhenMicAlreadyRunning() async {

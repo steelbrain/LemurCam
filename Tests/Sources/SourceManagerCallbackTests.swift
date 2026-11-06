@@ -20,15 +20,15 @@ internal final class SourceManagerCallbackTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("sources.json")
         guard let tempURL else { return }
-        let sourceManager = SourceManager(storage: SourceStorage(fileURL: tempURL), keychain: KeychainService())
+        // An in-memory store stands in for the Keychain, so the real one is never touched.
+        let sourceManager = SourceManager(
+            storage: SourceStorage(fileURL: tempURL), keychain: InMemoryCredentialStore()
+        )
         sourceManager.onSourceConfigChanged = { [weak self] in self?.configChangeCount += 1 }
         self.manager = sourceManager
     }
 
     override func tearDown() async throws {
-        if let sourceManager = manager {
-            for source in sourceManager.sources { try? KeychainService().delete(for: source.id) }
-        }
         if let savedActiveID {
             UserDefaults.standard.set(savedActiveID, forKey: LemurCamConfig.activeSourceKey)
         } else {
