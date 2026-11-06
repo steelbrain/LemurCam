@@ -67,4 +67,20 @@ internal final class ONVIFModelsTests: XCTestCase {
     func testErrorDescriptionInterpolatesEmptyMessage() {
         XCTAssertEqual(ONVIFError.networkError("").errorDescription, "Network error: ")
     }
+
+    func testHTTPStatusKeepsTheNetworkErrorWording() {
+        XCTAssertEqual(ONVIFError.httpStatus(500).errorDescription, "Network error: HTTP 500")
+    }
+
+    /// Only "no answer at all" counts as a transport failure; any answer from the
+    /// device (an HTTP error, a SOAP fault, a rejected login) means it was reached.
+    func testTransportFailureClassification() {
+        XCTAssertTrue(ONVIFError.networkError("refused").isTransportFailure)
+        XCTAssertTrue(ONVIFError.timedOut.isTransportFailure)
+        XCTAssertFalse(ONVIFError.httpStatus(404).isTransportFailure)
+        XCTAssertFalse(ONVIFError.soapFault("NotAuthorized").isTransportFailure)
+        XCTAssertFalse(ONVIFError.authenticationFailed.isTransportFailure)
+        XCTAssertFalse(ONVIFError.parseError.isTransportFailure)
+        XCTAssertFalse(ONVIFError.invalidURL.isTransportFailure)
+    }
 }

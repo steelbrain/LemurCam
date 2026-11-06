@@ -41,11 +41,26 @@ internal struct ONVIFProfile: Identifiable, Equatable {
 
 internal enum ONVIFError: LocalizedError {
     case invalidURL
+    /// The request got no answer: the device is unreachable, refused the
+    /// connection, or the TLS handshake failed.
     case networkError(String)
+    /// The device answered with an HTTP error status (other than 401).
+    case httpStatus(Int)
     case soapFault(String)
     case parseError
     case authenticationFailed
     case timedOut
+
+    /// True when no answer came back from the device at all, as opposed to the
+    /// device answering with an error. Only these suggest the device may have moved.
+    var isTransportFailure: Bool {
+        switch self {
+        case .networkError, .timedOut:
+            return true
+        case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed:
+            return false
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -53,6 +68,8 @@ internal enum ONVIFError: LocalizedError {
             return "Invalid ONVIF device URL"
         case .networkError(let msg):
             return "Network error: \(msg)"
+        case .httpStatus(let code):
+            return "Network error: HTTP \(code)"
         case .soapFault(let msg):
             return "ONVIF error: \(msg)"
         case .parseError:
