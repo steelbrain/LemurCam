@@ -153,14 +153,15 @@ internal final class ReportedStreamURITests: XCTestCase {
     }
 
     func testStrippingAReportedURI() {
-        // An `@` after the host of a URI with a port is written `%40`
-        // (`ONVIFUnsplitURILoginTests`).
+        // An `@` after an IPv4 address with a port stays as reported; one IPCamKit
+        // refuses, with a `:` before it, is written `%40` (`ONVIFUnsplitURILoginTests`).
         let cases = [
             "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024":
-                "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n%402024",
+                "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024",
             "rtsp://192.0.2.5:554/user=admin_password=Adm1n@2024_channel=1":
-                "rtsp://192.0.2.5:554/user=admin_password=Adm1n%402024_channel=1",
-            "rtsp://admin:pw@192.0.2.5:554/live?password=Adm1n@2024": "rtsp://192.0.2.5:554/live?password=Adm1n%402024",
+                "rtsp://192.0.2.5:554/user=admin_password=Adm1n@2024_channel=1",
+            "rtsp://admin:pw@192.0.2.5:554/live?password=Adm1n@2024": "rtsp://192.0.2.5:554/live?password=Adm1n@2024",
+            "rtsp://192.0.2.5/live?t=12:00&password=Adm1n@2024": "rtsp://192.0.2.5/live?t=12:00&password=Adm1n%402024",
             "rtsp://admin:1234/5@192.0.2.5/s": "rtsp://192.0.2.5/s",
             "rtsp://user:p#ss@192.0.2.5/s": "rtsp://192.0.2.5/s",
             "rtsp://user:p#ss@192.0.2.9/s": "rtsp://192.0.2.9/s",
@@ -202,31 +203,43 @@ internal final class ReportedStreamURITests: XCTestCase {
         return (info.streamURI, try String(contentsOf: fileURL, encoding: .utf8))
     }
 
-    /// With its `@` written `%40`, which IPCamKit requires with a port in the URI.
+    /// As reported: IPCamKit takes an `@` after an IPv4 address with a port. After a
+    /// host name with a port it is written `%40`, which IPCamKit requires there.
     func testALoginInTheQueryIsSavedWithTheAddress() throws {
         let reported = "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n@2024"
-        XCTAssertEqual(try save(reported: reported).uri, "rtsp://192.0.2.5:554/live?user=admin&password=Adm1n%402024")
+        XCTAssertEqual(try save(reported: reported).uri, reported)
+        let named = "rtsp://frontdoor.local:554/live?user=admin&password=Adm1n@2024"
+        XCTAssertEqual(
+            try save(reported: named, host: "frontdoor.local").uri,
+            "rtsp://frontdoor.local:554/live?user=admin&password=Adm1n%402024"
+        )
     }
 
-    /// A URI saved as reported, which IPCamKit refused as the fallback too, is
-    /// written so on load.
-    func testAStoredURIWithAnAtSignAfterThePortIsEscapedOnLoad() throws {
+    /// A URI saved as reported is left so on load after an IPv4 address with a port,
+    /// and so is one an earlier version saved with the `@` written `%40`. After a host
+    /// name with a port, which IPCamKit refuses as the fallback, it is written so.
+    func testAStoredURIWithAnAtSignAfterThePortIsEscapedOnLoadOnlyWhereIPCamKitNeedsIt() throws {
         let fileURL = try XCTUnwrap(directory).appendingPathComponent("sources.json")
-        let source = CameraSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(
-            host: "192.0.2.5", port: 80, selectedProfileToken: "main",
-            streamURI: "rtsp://192.0.2.5:554/live?password=Adm1n@2024"
-        )))
-        SourceStorage(fileURL: fileURL).save([source])
+        let stored: [(host: String, uri: String, loaded: String)] = [
+            ("192.0.2.5", "rtsp://192.0.2.5:554/live?password=Adm1n@2024", "rtsp://192.0.2.5:554/live?password=Adm1n@2024"),
+            ("192.0.2.5", "rtsp://192.0.2.5:554/live?password=Adm1n%402024", "rtsp://192.0.2.5:554/live?password=Adm1n%402024"),
+            ("frontdoor.local", "rtsp://frontdoor.local:554/live?password=Adm1n@2024",
+             "rtsp://frontdoor.local:554/live?password=Adm1n%402024")
+        ]
+        let sources = stored.map { host, uri, _ in
+            CameraSource(name: "Porch", sourceType: .onvif(ONVIFSourceInfo(host: host, port: 80, streamURI: uri)))
+        }
+        SourceStorage(fileURL: fileURL).save(sources)
         let manager = SourceManager(storage: SourceStorage(fileURL: fileURL), keychain: InMemoryCredentialStore())
 
         manager.load()
 
-        XCTAssertEqual(manager.storedONVIFStreamURI(for: source.id), "rtsp://192.0.2.5:554/live?password=Adm1n%402024")
+        XCTAssertEqual(sources.map { manager.storedONVIFStreamURI(for: $0.id) }, stored.map(\.loaded))
     }
 
     func testALoginInTheUserInfoIsDroppedBeforeSaving() throws {
         let readable = try save(reported: "rtsp://admin:s3cret@192.0.2.5:554/live?password=Adm1n@2024")
-        XCTAssertEqual(readable.uri, "rtsp://192.0.2.5:554/live?password=Adm1n%402024")
+        XCTAssertEqual(readable.uri, "rtsp://192.0.2.5:554/live?password=Adm1n@2024")
         XCTAssertFalse(readable.file.contains("s3cret"))
 
         let rawSlash = try save(reported: "rtsp://admin:12/34@192.0.2.5/main")
@@ -253,12 +266,13 @@ internal final class ReportedStreamURITests: XCTestCase {
         XCTAssertFalse(unreadable.file.contains("s3c"))
     }
 
-    /// Saved with the `@` and the space escaped, so IPCamKit connects to it, or not at
-    /// all where `URLComponents` can't read it; never split into host `ss word`.
+    /// Saved with the space escaped, so IPCamKit connects to it, or not at all where
+    /// `URLComponents` can't read it; never split into host `ss word`. The `@` after an
+    /// IPv4 address with a port stays.
     func testALoginInAQueryWithASpaceIsNotSplitBeforeSaving() throws {
         let reported = "rtsp://192.168.1.20:554/live?password=p@ss word"
         let saved = try save(reported: reported, host: "frontdoor.local")
-        let escaped = "rtsp://192.168.1.20:554/live?password=p%40ss%20word"
+        let escaped = "rtsp://192.168.1.20:554/live?password=p@ss%20word"
         XCTAssertTrue(saved.uri == nil || saved.uri == escaped, saved.uri ?? "nil")
     }
 }

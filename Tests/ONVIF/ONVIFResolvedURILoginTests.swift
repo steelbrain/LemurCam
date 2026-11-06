@@ -95,10 +95,11 @@ internal final class ONVIFResolvedURILoginTests: XCTestCase {
 
         // Whether `URLComponents` reads a space or a raw `%` depends on the macOS
         // version; the outcome must not. The last one it can't read on any. In the
-        // first, with a port, the `@` is written `%40` (`ONVIFUnsplitURILoginTests`);
-        // a space IPCamKit refuses is written `%20` (`ReportedURISpaceTests`).
+        // first, IPCamKit takes the `@` after an IPv4 address with a port as it is
+        // (`ONVIFUnsplitURILoginTests`); a space it refuses is written `%20`
+        // (`ReportedURISpaceTests`).
         let queries: [(uri: String, url: String?)] = [
-            ("rtsp://192.0.2.5:554/stream?password=p@ss word", "rtsp://192.0.2.5:554/stream?password=p%40ss%20word"),
+            ("rtsp://192.0.2.5:554/stream?password=p@ss word", "rtsp://192.0.2.5:554/stream?password=p@ss%20word"),
             ("rtsp://192.0.2.5/stream?user=viewer&password=p@ss word/x",
              "rtsp://192.0.2.5/stream?user=viewer&password=p@ss%20word/x"),
             ("rtsp://192.0.2.5/stream?password=p@ss%zz", nil),

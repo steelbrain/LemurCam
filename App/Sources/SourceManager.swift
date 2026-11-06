@@ -386,7 +386,7 @@ private extension SourceManager {
     /// credentials: what it holds before its last `@` is only a reading, and may be
     /// part of the address rather than a login to drop. An ambiguous RTSP URL that
     /// `URLComponents` still reads as an address is never rewritten either: a login in
-    /// the query (`rtsp://192.168.1.5:554/user=admin&password=p@ss`) would be split at
+    /// the path (`rtsp://frontdoor.local:554/user=admin&password=p@ss`) would be split at
     /// the `@` in its password and the address lost. IPCamKit refuses such a URL with a
     /// message saying how to write the `@`, and the edit form asks for the same fix. An
     /// ONVIF stream URI goes by the rule it is saved and connected to by

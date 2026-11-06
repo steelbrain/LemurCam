@@ -63,11 +63,16 @@ internal final class ONVIFMovedStreamURITests: XCTestCase {
             move("rtsp://192.168.1.50/s", "192.168.1.20", "192.168.1.31"), "rtsp://192.168.1.50/s",
             "a stream served from another host stays"
         )
-        // IPCamKit reads no port in a bracketed IPv6 host's `:`s, so the `@` was kept as
-        // reported there, and refused once the camera moved to an IPv4 address.
+        // IPCamKit reads no login in a bracketed IPv6 or an IPv4 address with a port, so
+        // the `@` is kept as reported there, but refuses it after a host name with a
+        // port: moved to one, it is written `%40`.
+        XCTAssertEqual(
+            move("rtsp://[fd00::5]:554/live?password=p@ss", "fd00::5", "cam.local"),
+            "rtsp://cam.local:554/live?password=p%40ss"
+        )
         XCTAssertEqual(
             move("rtsp://[fd00::5]:554/live?password=p@ss", "fd00::5", "192.168.1.31"),
-            "rtsp://192.168.1.31:554/live?password=p%40ss"
+            "rtsp://192.168.1.31:554/live?password=p@ss"
         )
         XCTAssertEqual(
             move("rtsp://[fd00::5]/live?password=p@ss", "fd00::5", "192.168.1.31"),

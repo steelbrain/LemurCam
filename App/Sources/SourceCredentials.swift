@@ -52,10 +52,10 @@ internal extension SourceCredentials {
     /// `URLComponents(cameraURL:)`, so an escape next to a non-ASCII character, or to
     /// another character `URLComponents` encodes, is not encoded again. An `@` after the
     /// new host is written `%40` where IPCamKit would refuse it, as for a URI reported
-    /// there (`escapingAtSignsAfterTheHost`): a `:` in a bracketed IPv6 host doesn't
-    /// count, so `rtsp://[fd00::5]:554/live?password=p@ss` was saved as it is, and
-    /// moved to an IPv4 address became a URI IPCamKit refused every time it was the
-    /// fallback.
+    /// there (`escapingAtSignsAfterTheHost`): a port on a bracketed IPv6 or an IPv4
+    /// address doesn't count, so `rtsp://[fd00::5]:554/live?password=p@ss` was saved as
+    /// it is, and moved to a host name became a URI IPCamKit refused every time it was
+    /// the fallback.
     static func storedStreamURI(_ uri: String, movedFrom oldHost: String, to newHost: String) -> String? {
         guard var components = URLComponents(cameraURL: uri), let host = components.host else { return nil }
         guard comparableHost(host) == comparableHost(oldHost) else { return uri }
@@ -72,7 +72,7 @@ internal extension SourceCredentials {
     /// no `/` or `?` comes before it, since then it can't be in a path or a query
     /// (`rtsp://admin:p#ss@192.0.2.20/s`, `rtsp://user:1234#ab@192.0.2.20/s`). When one
     /// does, the `@` may be part of the address, as in a login in the query
-    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), where splitting would leave
+    /// (`rtsp://frontdoor.local:554/live?password=Adm1n@2024`), where splitting would leave
     /// the end of the password as the host; such a URI is split only when the host
     /// after the `@` is `onvifHost`, the camera that reported it
     /// (`rtsp://admin:1234/5@192.0.2.5/s`). A camera saved by a name
@@ -190,16 +190,19 @@ private extension SourceCredentials {
     /// `url`, a stream URI the camera at `onvifHost` reported, its login taken out, with
     /// each `@` after its host written `%40` when IPCamKit would refuse it as ambiguous
     /// (`hasAmbiguousUserInfo`) and the host `URLComponents` reads in it is the camera's
-    /// or an IP address. Such an `@` is in the path, query or fragment, but with a port
-    /// in the URL (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`) IPCamKit can't tell
-    /// it from the end of a login, so the camera never streamed, and an ONVIF camera has
-    /// no URL field where it could be written `%40`. Where `URLComponents` reads a login
-    /// as the address (`rtsp://viewer:12/34@192.0.2.9/s` as host `viewer`, port 12), the
-    /// saved login would go there, so another host has to be an IP address: a user name
-    /// that reads as one is not a login. A camera saved by a name reports its IP address
-    /// (`rtsp://192.168.1.20:554/…` from `frontdoor.local`), and a recorder serving the
-    /// stream is connected to with the saved login like any URI naming another host.
-    /// The URL is written as `URLComponents(cameraURL:)` reads it. Otherwise `url` as it is.
+    /// or an IP address. Such an `@` is in the path, query or fragment, but after a host
+    /// name with a port (`rtsp://frontdoor.local:554/live?password=Adm1n@2024`), or with
+    /// a `:` before it (`rtsp://192.0.2.5/live?time=12:00&password=p@ss`), IPCamKit can't
+    /// tell it from the end of a login, so the camera never streamed, and an ONVIF camera
+    /// has no URL field where it could be written `%40`. After an IPv4 address with a
+    /// port and no such `:` (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), IPCamKit
+    /// takes it as it is, and so it stays. Where `URLComponents` reads a login as the
+    /// address (`rtsp://viewer:12/34@192.0.2.9/s` as host `viewer`, port 12), the saved
+    /// login would go there, so another host has to be an IP address: a user name that
+    /// reads as one is not a login. A camera saved by a name usually reports its IP
+    /// address, and a recorder serving the stream is connected to with the saved login
+    /// like any URI naming another host. The URL is written as
+    /// `URLComponents(cameraURL:)` reads it. Otherwise `url` as it is.
     static func escapingAtSignsAfterTheHost(of url: String, reportedBy onvifHost: String) -> String {
         guard hasAmbiguousUserInfo(url), var components = URLComponents(cameraURL: url), let host = components.host,
               comparableHost(host) == comparableHost(onvifHost) || ONVIFDiscovery.normalizedIPAddress(host) != nil
@@ -303,10 +306,13 @@ internal enum CredentialChange: Equatable {
 /// The userinfo of a URL whose `user:password@` `URLComponents` can't read: everything
 /// between `://` and the last `@`. Applies when `URLComponents` fails on a URL that has
 /// an `@` after `://` (a `#` or `?` in the password), and when it parses the URL but
-/// IPCamKit's ambiguity rule fires: an `@` after the end of the authority, together
-/// with userinfo or a port in the authority (how a password's start reads) or a `:`
-/// between the authority and that `@`. Works on Unicode scalars, as `URLComponents`
-/// does, so a combining mark after a delimiter can't hide it.
+/// IPCamKit's ambiguity rule (its `checkAmbiguousUserInfo`) fires: an `@` after the end
+/// of the authority, together with userinfo in the authority, a port on a host name
+/// (how a user name and a password's start read), or a `:` between the authority and
+/// that `@`. An IPv4 address with a port, like a bracketed IPv6 one, isn't read as a
+/// user name: `rtsp://192.0.2.5:554/live?password=Adm1n@2024` is an address with a
+/// login in its query, and IPCamKit connects to it as written. Works on Unicode
+/// scalars, as `URLComponents` does, so a combining mark after a delimiter can't hide it.
 private struct AmbiguousUserInfo {
     let urlWithout: String
     let login: URLLogin?
@@ -325,7 +331,7 @@ private struct AmbiguousUserInfo {
                   lastAt > authorityEnd else { return nil }
             let authority = rest[..<authorityEnd]
             guard authority.contains("@")
-                    || (authority.first != "[" && authority.contains(":"))
+                    || (authority.first != "[" && authority.contains(":") && !Self.isIPv4AddressWithPort(authority))
                     || rest[authorityEnd..<lastAt].contains(":") else { return nil }
         }
 
@@ -348,5 +354,20 @@ private struct AmbiguousUserInfo {
     private static func decoded(_ part: Substring.UnicodeScalarView) -> String {
         let text = String(part)
         return text.removingPercentEncoding ?? text
+    }
+
+    /// Whether `authority` is an IPv4 address in dotted-decimal form (four numbers of
+    /// one to three digits, each up to 255), a `:` and a port of one to five digits:
+    /// IPCamKit's `isIPv4AddressWithPort`, which it does not export.
+    private static func isIPv4AddressWithPort(_ authority: Substring.UnicodeScalarView) -> Bool {
+        func isDigits(_ part: Substring.UnicodeScalarView, count: ClosedRange<Int>) -> Bool {
+            count.contains(part.count) && part.allSatisfy { ("0"..."9").contains($0) }
+        }
+        let hostAndPort = authority.split(separator: ":", omittingEmptySubsequences: false)
+        guard hostAndPort.count == 2, isDigits(hostAndPort[1], count: 1...5) else { return false }
+        let octets = hostAndPort[0].split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4 && octets.allSatisfy { octet in
+            isDigits(octet, count: 1...3) && octet.reduce(0) { $0 * 10 + Int($1.value - 48) } <= 255
+        }
     }
 }

@@ -95,12 +95,14 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         XCTAssertEqual(SourceCredentials.extractingFromRTSPURL("rtsp://cam/live@main").url, "rtsp://cam/live@main")
     }
 
-    /// IPCamKit refuses these too: an `@` after the host, with a port or userinfo
-    /// before it.
+    /// IPCamKit refuses these too: an `@` after the host, with a port on a host name or
+    /// userinfo before it, or a `:` between the host and the `@`.
     func testAmbiguousURLsAreFlagged() {
         let ambiguous = [
             "rtsp://admin:Admin#123@192.168.1.5/s", "rtsp://admin:1234/5@cam/stream",
-            "rtsp://cam:554/live@main", "rtsp://admin:pw@cam/s@x", "rtsp://corp/alice:pw@cam/"
+            "rtsp://cam:554/live@main", "rtsp://admin:pw@cam/s@x", "rtsp://corp/alice:pw@cam/",
+            "rtsp://frontdoor.local:554/live?password=Adm1n@2024", "rtsp://192.168.1.5/s?t=1:2&p=a@b",
+            "rtsp://192.168.1.5:554/s?t=1:2&p=a@b", "rtsp://admin:pw@192.168.1.5:554/s?a=b@c"
         ]
         for url in ambiguous {
             XCTAssertTrue(SourceCredentials.hasAmbiguousUserInfo(url), url)
@@ -115,6 +117,9 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         XCTAssertEqual(RTSPURLInput.problem(with: "rtsp://admin:Admin#123@192.168.1.5/s"),
                        RTSPURLInput.ambiguousUserInfoMessage)
         XCTAssertNil(RTSPURLInput.problem(with: "rtsp://admin:pw@192.168.1.5:554/s"))
+        // Unlike one after an IPv4 address with a port (`IPv4AddressAtSignTests`).
+        XCTAssertEqual(RTSPURLInput.problem(with: "rtsp://frontdoor.local:554/live?password=Adm1n@2024"),
+                       RTSPURLInput.ambiguousUserInfoMessage)
         XCTAssertNil(RTSPURLInput.problem(with: "rtsps://cam.local/s"))
         XCTAssertEqual(RTSPURLInput.problem(with: "http://cam/s"), RTSPURLInput.invalidMessage)
         XCTAssertEqual(RTSPURLInput.problem(with: "rtsp://"), RTSPURLInput.invalidMessage)
@@ -182,10 +187,10 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
     /// stream URI on the camera's own host or an IP address has the `@` written `%40`
     /// instead (`ONVIFUnsplitURILoginTests`): there is no URL field to correct it in.
     func testLoadLeavesAmbiguousURLThatParsesAsAnAddress() throws {
-        let url = "rtsp://192.168.1.5:554/user=admin&password=p@ss&channel=1"
+        let url = "rtsp://dvr.local:554/user=admin&password=p@ss&channel=1"
         let rtsp = CameraSource(name: "DVR", sourceType: .rtsp(RTSPSourceInfo(url: url)))
         let onvif = CameraSource(name: "Cam", sourceType: .onvif(ONVIFSourceInfo(
-            host: "192.168.1.5", port: 80, streamURI: url
+            host: "dvr.local", port: 80, streamURI: url
         )))
         try seed([rtsp, onvif])
         let (manager, credentialStore) = try makeManager()
@@ -193,7 +198,7 @@ internal final class AmbiguousUserInfoTests: XCTestCase {
         manager.load()
 
         let escaped = SourceType.onvif(ONVIFSourceInfo(
-            host: "192.168.1.5", port: 80, streamURI: "rtsp://192.168.1.5:554/user=admin&password=p%40ss&channel=1"
+            host: "dvr.local", port: 80, streamURI: "rtsp://dvr.local:554/user=admin&password=p%40ss&channel=1"
         ))
         XCTAssertEqual(manager.sources.map(\.sourceType), [rtsp.sourceType, escaped])
         XCTAssertTrue(credentialStore.writes.isEmpty)

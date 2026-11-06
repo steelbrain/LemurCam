@@ -127,9 +127,12 @@ extension StreamCoordinator {
     /// `URLComponents` reads, as the saved copy does: connected to as reported, a space
     /// in that login (`rtsp://admin:pa ss@cam/s`) or an `@` in the query after it
     /// (`?a=b@c`) made IPCamKit refuse every connect, even with saved credentials to
-    /// use instead. So did any `@` after the host of a URI with a port
-    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`); one in a URI whose host is
-    /// `onvifHost` or an IP address is written `%40`. Both go by
+    /// use instead. So does an `@` after a host name with a port
+    /// (`rtsp://frontdoor.local:554/live?password=Adm1n@2024`), or with a `:` before it
+    /// in the path or query; one in a URI whose host is `onvifHost` or an IP address is
+    /// written `%40`. After an IPv4 address with a port
+    /// (`rtsp://192.0.2.5:554/live?password=Adm1n@2024`), IPCamKit takes it as reported,
+    /// and so it is connected to. Both go by
     /// `SourceCredentials.extractingLogin(fromReportedURI:onvifHost:)`, which decides
     /// the saved copy too. A URI it can't take a login out of is connected to as
     /// reported, with the saved credentials.

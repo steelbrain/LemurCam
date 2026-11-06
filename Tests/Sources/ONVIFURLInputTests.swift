@@ -82,6 +82,18 @@ internal final class ONVIFURLInputTests: XCTestCase {
         XCTAssertTrue(ONVIFURLInput.ambiguousLoginMessage.contains("Requires Authentication"))
     }
 
+    /// The rule the RTSP field and IPCamKit follow: an `@` after an IPv4 address with a
+    /// port isn't read as the end of a login, so the address is the URL's. After a host
+    /// name with a port, it may be.
+    func testAnAtSignAfterAnIPv4AddressWithAPortIsNotALogin() {
+        XCTAssertEqual(
+            ONVIFURLInput.address(in: "http://192.168.1.64:8080/onvif/device_service?token=a@b"),
+            .success(Address(host: "192.168.1.64", port: 8080, useHTTPS: false))
+        )
+        let name = "http://cam.local:8080/onvif/device_service?token=a@b"
+        XCTAssertEqual(ONVIFURLInput.address(in: name), refusal(ONVIFURLInput.ambiguousLoginMessage))
+    }
+
     func testAURLWithoutAHostIsInvalid() {
         for url in ["http://", "http:///onvif/device_service", "http://[fe80::1/onvif"] {
             XCTAssertEqual(ONVIFURLInput.address(in: url), refusal(ONVIFURLInput.invalidMessage), url)
