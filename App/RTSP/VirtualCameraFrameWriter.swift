@@ -4,17 +4,13 @@ import os
 
 /// Converts decoded frames into CMIO-ready sample buffers and writes them into
 /// the virtual-camera sink. Called from the jitter-buffer drain queue, not the
-/// main actor; cached format-description state is guarded by `formatLock`.
+/// main actor; the cached format description is guarded by a lock.
 internal final class VirtualCameraFrameWriter: Sendable {
     private struct FormatCache: Sendable {
         var description: CMVideoFormatDescription?
-        var dims: FormatDimensions?
-    }
-
-    private struct FormatDimensions: Equatable, Sendable {
-        let width: Int
-        let height: Int
-        let pixelFormat: OSType
+        /// A frame could not be turned into a sample buffer since the last one that
+        /// could; the failure is logged once per such run, not for every frame.
+        var failing = false
     }
 
     private let model: LemurCamModel
@@ -26,21 +22,16 @@ internal final class VirtualCameraFrameWriter: Sendable {
 
     func write(_ pixelBuffer: CVPixelBuffer) {
         guard model.isStreaming,
-              let sampleBuffer = createSampleBuffer(from: pixelBuffer) else {
+              let sampleBuffer = sampleBuffer(for: pixelBuffer) else {
             return
         }
         model.sendSampleBuffer(sampleBuffer)
     }
 
-    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
-        let dims = FormatDimensions(
-            width: CVPixelBufferGetWidth(pixelBuffer),
-            height: CVPixelBufferGetHeight(pixelBuffer),
-            pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer)
-        )
-        guard let formatDescription = formatDescription(for: pixelBuffer, dims: dims) else {
-            return nil
-        }
+    /// `pixelBuffer` as a sample buffer stamped with the host clock, or nil when one
+    /// can't be made. Internal so tests can check it without a sink.
+    func sampleBuffer(for pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
+        guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
 
         var timing = CMSampleTimingInfo(
             duration: .invalid,
@@ -48,42 +39,54 @@ internal final class VirtualCameraFrameWriter: Sendable {
             decodeTimeStamp: .invalid
         )
         var sampleBuffer: CMSampleBuffer?
-        CMSampleBufferCreateForImageBuffer(
+        let status = CMSampleBufferCreateForImageBuffer(
             allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer,
             dataReady: true, makeDataReadyCallback: nil, refcon: nil,
             formatDescription: formatDescription,
             sampleTiming: &timing, sampleBufferOut: &sampleBuffer
         )
+        guard status == noErr, let sampleBuffer else {
+            reportFailure(status, making: "sample buffer")
+            return nil
+        }
+        formatCache.withLock { $0.failing = false }
         return sampleBuffer
     }
 
-    private func formatDescription(
-        for pixelBuffer: CVPixelBuffer,
-        dims: FormatDimensions
-    ) -> CMVideoFormatDescription? {
-        if let cached = formatCache.withLock({ cache -> CMVideoFormatDescription? in
-            guard dims == cache.dims else { return nil }
-            return cache.description
-        }) {
+    /// The cached format description when it still describes `pixelBuffer`, otherwise
+    /// a new one made from it. A description covers more than the frame's size and
+    /// pixel format: also the color attachments VideoToolbox sets from the stream
+    /// (primaries, transfer function, YCbCr matrix, chroma location). Keyed on size
+    /// and pixel format alone, the description cached for one camera was kept for the
+    /// next one at that size with other color tags (BT.709 then BT.601, say), and every
+    /// one of its frames failed to become a sample buffer (-12743, invalid media
+    /// format) without a word: apps using the virtual camera kept showing the
+    /// placeholder while LemurCam showed the camera connected.
+    private func formatDescription(for pixelBuffer: CVPixelBuffer) -> CMVideoFormatDescription? {
+        if let cached = formatCache.withLock({ $0.description }),
+           CMVideoFormatDescriptionMatchesImageBuffer(cached, imageBuffer: pixelBuffer) {
             return cached
         }
 
-        var createdDescription: CMVideoFormatDescription?
-        CMVideoFormatDescriptionCreateForImageBuffer(
+        var created: CMVideoFormatDescription?
+        let status = CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault, imageBuffer: pixelBuffer,
-            formatDescriptionOut: &createdDescription
+            formatDescriptionOut: &created
         )
-        let newDescription = createdDescription
-
-        return formatCache.withLock {
-            if let description = $0.description,
-               dims == $0.dims {
-                return description
-            }
-
-            $0.description = newDescription
-            $0.dims = dims
-            return newDescription
+        guard status == noErr, let created else {
+            reportFailure(status, making: "format description")
+            return nil
         }
+        formatCache.withLock { $0.description = created }
+        return created
+    }
+
+    private func reportFailure(_ status: OSStatus, making what: String) {
+        let firstInRun = formatCache.withLock { cache -> Bool in
+            defer { cache.failing = true }
+            return !cache.failing
+        }
+        guard firstInRun else { return }
+        Log.ipc.error("Couldn't make a \(what) for a decoded frame (\(status)); dropping frames until one works")
     }
 }
