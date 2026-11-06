@@ -310,8 +310,10 @@ internal enum MicrophoneUpdateReason: Equatable {
 /// Microphone status copy shared by the setup window and the Settings status card.
 internal enum MicrophoneStatusCopy {
     static let checking = "Checking the microphone\u{2026}"
+    /// Nothing installs by itself after the restart: the microphone then shows Not set
+    /// up (Enable) or Update, so the copy says to come back.
     static let needsReboot = "An older copy of LemurCam’s audio helper is still running. "
-        + "Restart your Mac to finish installing the microphone."
+        + "Restart your Mac, then come back here to finish setting up the microphone."
     static let unsealed = "The installed copy can be modified without administrator rights. "
         + "Updating reinstalls it protected and briefly restarts audio."
     static let newerVersion = "A newer version is available — updating briefly restarts audio."
