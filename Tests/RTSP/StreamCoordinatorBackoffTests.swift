@@ -80,7 +80,7 @@ internal final class StreamCoordinatorBackoffTests: XCTestCase {
         await connectThenDrop(camera, in: harness)
         await connectThenDrop(camera, in: harness)
 
-        harness.manager.updateSource(
+        try harness.manager.updateSource(
             id: camera, name: "cam-a", sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://cam-a2")), credentials: nil
         )
         await reconnectThenFail(camera, in: harness)

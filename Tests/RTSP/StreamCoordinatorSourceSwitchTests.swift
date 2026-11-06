@@ -40,7 +40,7 @@ internal final class StreamCoordinatorSourceSwitchTests: XCTestCase {
         let info = ONVIFSourceInfo(
             deviceUUID: nil, host: "127.0.0.1", port: 1, selectedProfileToken: "profile_1", streamURI: nil
         )
-        harness.manager.addSource(name: "onvif", sourceType: .onvif(info))
+        try harness.manager.addSource(name: "onvif", sourceType: .onvif(info))
         let onvif = try XCTUnwrap(harness.manager.sources.last?.id)
 
         harness.manager.setActiveSource(id: onvif)

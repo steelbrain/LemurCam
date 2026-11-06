@@ -157,7 +157,7 @@ internal final class CoordinatorHarness {
         let storage = SourceStorage(fileURL: directory.appendingPathComponent("sources.json"))
         let sourceManager = SourceManager(storage: storage, keychain: KeychainService())
         for name in rtspSources {
-            sourceManager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
+            try? sourceManager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))
         }
         let fakePipeline = FakeStreamPipeline()
         manager = sourceManager
