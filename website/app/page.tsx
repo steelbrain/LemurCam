@@ -2,6 +2,7 @@ import Image from "next/image";
 import type { ReactNode } from "react";
 import AppWindow from "./components/AppWindow";
 import { BridgeProvider } from "./components/Bridge";
+import PopoverDemo from "./components/PopoverDemo";
 import SetupWindow from "./components/SetupWindow";
 
 // The same links README.md uses.
@@ -108,9 +109,9 @@ export default function Home() {
       </header>
 
       <main id="main">
-        {/* What it is */}
+        {/* What it is, next to the menu bar popover */}
         <section aria-labelledby="hero-title" className="pt-8 pb-16 sm:pt-14 sm:pb-20">
-          <div className={container}>
+          <div className={`${container} grid items-start gap-12 lg:grid-cols-[minmax(0,1fr)_440px] lg:gap-16`}>
             <div className="max-w-[38rem]">
               <h1 id="hero-title" className="text-4xl leading-[1.1] font-semibold tracking-tight sm:text-5xl">
                 Turn your IP camera into a Mac webcam
@@ -143,6 +144,7 @@ export default function Home() {
                 Universal app for Apple Silicon and Intel Macs.
               </p>
             </div>
+            <PopoverDemo />
           </div>
         </section>
 
