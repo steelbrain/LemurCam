@@ -940,7 +940,7 @@ function GeneralPane({
 function LogsPane({ entries, onClear }: { entries: LogEntry[]; onClear: () => void }) {
   const scroller = useRef<HTMLDivElement>(null);
 
-  // LogsSettingsView scrolls to the newest entry whenever the count changes.
+  // LogsSettingsView scrolls to the newest entry whenever the last entry changes.
   useEffect(() => {
     const node = scroller.current;
     if (node) node.scrollTop = node.scrollHeight;
@@ -1091,9 +1091,9 @@ export default function AppWindow() {
       log("rtsp", "No demand — pausing RTSP pipeline");
       connectTimers.cancelAll();
       setStreaming(false);
-      // With no live connection, the badge shows what handlePipelineStateChanged
-      // maps .idle/.disconnected to: ConnectionStatus.disconnected, "Disconnected"
-      // in red (ConnectionStatusHelpers.swift).
+      // StreamCoordinator.reconcileDemand → showActiveSourceIdle: the paused camera
+      // shows ConnectionStatus.disconnected, "Disconnected" in red
+      // (ConnectionStatusHelpers.swift).
       if (activeId) setStatuses((prev) => ({ ...prev, [activeId]: "disconnected" }));
     }
   };
