@@ -71,12 +71,17 @@ internal final class ONVIFResolveFixture {
         return info
     }
 
-    func params(for source: CameraSource, scanResult: [DiscoveredDevice]) throws -> ONVIFResolveParams {
+    /// `whileScanning` runs during the scan, before it returns `scanResult`.
+    func params(
+        for source: CameraSource, scanResult: [DiscoveredDevice],
+        whileScanning: @escaping @Sendable () async -> Void = {}
+    ) throws -> ONVIFResolveParams {
         guard case .onvif(let info) = source.sourceType else { throw XCTSkip("expected ONVIF") }
         let scanCounter = scans
         let environment = ONVIFResolveEnvironment(
             scan: {
                 scanCounter.withLock { $0 += 1 }
+                await whileScanning()
                 return scanResult
             },
             makeClient: { info, credentials in

@@ -236,11 +236,14 @@ extension StreamCoordinator {
         }
     }
 
+    /// Saved only while the resolve is current and the camera is still saved at the
+    /// address the resolve started from (`SourceManager.updateONVIFAddress`). Both are
+    /// checked on the main actor, where an edit that cancels the resolve runs: checked
+    /// before the hop, an edit could land in between and the move overwrite it.
     private static func saveMove(_ moved: ONVIFSourceInfo, params: ONVIFResolveParams) async {
         await MainActor.run {
-            params.sourceManager?.updateONVIFAddress(
-                id: params.sourceID, host: moved.host, port: moved.port, useHTTPS: moved.useHTTPS
-            )
+            guard !Task.isCancelled else { return }
+            params.sourceManager?.updateONVIFAddress(id: params.sourceID, from: params.info, to: moved)
         }
     }
 }

@@ -180,21 +180,28 @@ internal final class SourceManager {
         )
     }
 
-    /// Records that an ONVIF camera now answers at a new address (found by
-    /// WS-Discovery). Only the address changes: name, profile and credentials are left
-    /// alone, nothing is written when the address is the same, and no config change is
-    /// signalled, because the resolve that found the address goes on to connect there.
-    /// `updatedAt` marks user edits and stays as it is.
-    func updateONVIFAddress(id: UUID, host: String, port: Int, useHTTPS: Bool) {
+    /// Records that an ONVIF camera now answers at the address of `moved` (found by
+    /// WS-Discovery), as long as it is still saved at the address of `previous`, the one
+    /// the resolve that found it started from. An address saved since, by an edit or by
+    /// another resolve, is kept: the move was found for the address it replaced. Only
+    /// the address changes: name, profile and credentials are left alone, nothing is
+    /// written when the address is the same, and no config change is signalled, because
+    /// the resolve that found the address goes on to connect there. `updatedAt` marks
+    /// user edits and stays as it is.
+    func updateONVIFAddress(id: UUID, from previous: ONVIFSourceInfo, to moved: ONVIFSourceInfo) {
         guard let index = sources.firstIndex(where: { $0.id == id }),
-              case .onvif(var info) = sources[index].sourceType,
-              info.host != host || info.port != port || info.useHTTPS != useHTTPS else { return }
-        info.host = host
-        info.port = port
-        info.useHTTPS = useHTTPS
+              case .onvif(var info) = sources[index].sourceType else { return }
+        guard info.host == previous.host, info.port == previous.port, info.useHTTPS == previous.useHTTPS else {
+            Log.app.info("Keeping the address saved for '\(sources[index].name)' since the camera was looked for")
+            return
+        }
+        guard info.host != moved.host || info.port != moved.port || info.useHTTPS != moved.useHTTPS else { return }
+        info.host = moved.host
+        info.port = moved.port
+        info.useHTTPS = moved.useHTTPS
         sources[index].sourceType = .onvif(info)
         persist()
-        Log.app.info("Camera '\(sources[index].name)' now answers at \(host):\(port)")
+        Log.app.info("Camera '\(sources[index].name)' now answers at \(moved.host):\(moved.port)")
     }
 
     /// Only a failed save throws: a failed delete leaves the old credentials stored,

@@ -72,7 +72,7 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         sourceManager.onSourceConfigChanged = { configChanges += 1 }
         let writesBefore = credentialStore.writes
 
-        sourceManager.updateONVIFAddress(id: source.id, host: "192.168.1.20", port: 80, useHTTPS: false)
+        sourceManager.updateONVIFAddress(id: source.id, from: Self.info(of: source), to: Self.info(of: source))
 
         XCTAssertEqual(sourceManager.sources.first, source)
         XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(tempURL)), fileBefore)
@@ -88,7 +88,10 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         sourceManager.onSourceConfigChanged = { configChanges += 1 }
         let writesBefore = credentialStore.writes
 
-        sourceManager.updateONVIFAddress(id: source.id, host: "192.168.1.31", port: 8080, useHTTPS: false)
+        var moved = Self.info(of: source)
+        moved.host = "192.168.1.31"
+        moved.port = 8080
+        sourceManager.updateONVIFAddress(id: source.id, from: Self.info(of: source), to: moved)
 
         let updated = try XCTUnwrap(sourceManager.sources.first)
         guard case .onvif(let info) = updated.sourceType else {
@@ -101,6 +104,40 @@ internal final class ONVIFRediscoveryTests: XCTestCase {
         XCTAssertEqual(updated.updatedAt, source.updatedAt)
         XCTAssertEqual(configChanges, 0)
         XCTAssertEqual(credentialStore.writes, writesBefore)
+    }
+
+    /// The address was saved again (an edit, or another resolve's move) after the
+    /// resolve that found the move started: the move is not saved over it.
+    func testAMoveIsNotSavedOverAnAddressSavedSince() throws {
+        let (sourceManager, _, source) = try addCamera(host: "192.168.1.20")
+        let started = Self.info(of: source)
+        var edited = started
+        edited.host = "192.168.1.40"
+        try sourceManager.updateSource(id: source.id, name: "Porch", sourceType: .onvif(edited), credentials: .keep)
+        let fileBefore = try Data(contentsOf: try XCTUnwrap(tempURL))
+
+        var moved = started
+        moved.host = "192.168.1.31"
+        sourceManager.updateONVIFAddress(id: source.id, from: started, to: moved)
+
+        XCTAssertEqual(sourceManager.sources.first?.sourceType, .onvif(edited))
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(tempURL)), fileBefore)
+
+        // Port and HTTPS count too.
+        for change in [{ (info: inout ONVIFSourceInfo) in info.port = 8080 }, { $0.useHTTPS = true }] {
+            var other = edited
+            change(&other)
+            sourceManager.updateONVIFAddress(id: source.id, from: other, to: moved)
+            XCTAssertEqual(sourceManager.sources.first?.sourceType, .onvif(edited))
+        }
+    }
+
+    private static func info(of source: CameraSource) -> ONVIFSourceInfo {
+        guard case .onvif(let info) = source.sourceType else {
+            XCTFail("expected ONVIF")
+            return ONVIFSourceInfo(host: "")
+        }
+        return info
     }
 
     // MARK: - Resolve flow

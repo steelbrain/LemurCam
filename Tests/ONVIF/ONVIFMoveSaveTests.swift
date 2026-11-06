@@ -132,6 +132,27 @@ internal final class ONVIFMoveSaveTests: XCTestCase {
         XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.87")
     }
 
+    /// The address is edited while the resolve looks for the camera. The move it
+    /// found was for the address it started from, and overwrote the one just saved.
+    func testAMoveIsNotSavedOverAnAddressSavedWhileTheCameraWasLookedFor() async throws {
+        let harness = try XCTUnwrap(fixture)
+        let source = try harness.addCamera(host: "192.168.77.90")
+        let manager = harness.manager
+        let edited = ONVIFSourceInfo(
+            deviceUUID: ONVIFResolveFixture.deviceUUID, host: "192.168.77.92", port: 80, selectedProfileToken: "main"
+        )
+
+        _ = try await StreamCoordinator.attemptONVIFResolve(params: harness.params(
+            for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.91")]
+        ) {
+            await MainActor.run {
+                try? manager.updateSource(id: source.id, name: "Porch", sourceType: .onvif(edited), credentials: .keep)
+            }
+        })
+
+        XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.92")
+    }
+
     func testWhichFailuresSaveAMoveOnlyOnceAnswered() {
         XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: ONVIFError.authenticationFailed))
         XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: ONVIFError.soapFault("Sender not Authorized")))
