@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 /// A camera's username and password could not be stored in the Keychain. The camera
 /// is then not added or changed: saving it anyway would keep a URL without the

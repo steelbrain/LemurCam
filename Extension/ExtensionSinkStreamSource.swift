@@ -1,7 +1,6 @@
 import CoreMedia
 import CoreMediaIO
 import Foundation
-import os
 
 internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSource {
     private struct ConsumeContext: Sendable {

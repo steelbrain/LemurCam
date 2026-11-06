@@ -1,7 +1,5 @@
 import Darwin
-import Foundation
 import os
-import OSLog
 
 /// App-side producer over the shared-memory ring the AudioServerPlugIn consumes.
 /// Creates and maps the POSIX shm region, initialises the `LemurAudioRing`, and

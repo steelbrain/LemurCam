@@ -1,5 +1,3 @@
-import Foundation
-
 /// Pure state-machine glue for `CameraExtensionController`: turns the OS-reported
 /// install topology and the version handshake into the controller's status, with no
 /// SystemExtensions / CoreMediaIO dependency. The load-bearing transitions — the

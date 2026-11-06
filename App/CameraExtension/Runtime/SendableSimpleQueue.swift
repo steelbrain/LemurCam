@@ -1,5 +1,4 @@
 import CoreMedia
-import Foundation
 
 internal final class SendableSimpleQueue: Sendable {
     private let queue: SendableRetainedReference<CMSimpleQueue>

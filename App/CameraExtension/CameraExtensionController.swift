@@ -1,5 +1,4 @@
 import Foundation
-import os
 import SystemExtensions
 
 /// Real, queryable state of the LemurCam camera system extension. Replaces the

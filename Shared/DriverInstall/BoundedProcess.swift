@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Runs a tool with a deadline. The helper runs every privileged operation on one

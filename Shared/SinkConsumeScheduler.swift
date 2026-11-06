@@ -1,5 +1,3 @@
-import Foundation
-
 /// The next action the camera extension's sink stream should take after a
 /// `consumeSampleBuffer(from:)` completion fires.
 internal enum SinkConsumeAction: Equatable {

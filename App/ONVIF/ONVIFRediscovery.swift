@@ -1,5 +1,4 @@
 import Darwin
-import Foundation
 
 /// Decides when a saved ONVIF camera should be looked for again with WS-Discovery,
 /// and what to do with what the scan finds.

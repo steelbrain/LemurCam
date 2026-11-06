@@ -1,5 +1,4 @@
 import CoreMediaIO
-import Foundation
 import os
 
 internal final class CMIOStreamQueueAlteredRegistration: Sendable {

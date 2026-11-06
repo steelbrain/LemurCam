@@ -1,7 +1,6 @@
 import CoreMedia
 import CoreMediaIO
 import CoreVideo
-import Foundation
 import os
 
 /// Lock-protected runtime state for `ExtensionDeviceSource`. The counting and

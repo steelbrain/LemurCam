@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 @testable import LemurCam
-import XCTest
 
 /// Temporary directory trees for the driver-install tests. Everything runs as the
 /// current user, with the current user standing in for root:wheel as the owner.

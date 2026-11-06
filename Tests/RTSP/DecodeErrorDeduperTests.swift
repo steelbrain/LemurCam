@@ -1,4 +1,3 @@
-import Foundation
 @testable import LemurCam
 import os
 import VideoToolbox

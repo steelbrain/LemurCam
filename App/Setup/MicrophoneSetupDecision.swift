@@ -1,5 +1,3 @@
-import Foundation
-
 /// What the installed-driver check found: whether the privileged helper answered,
 /// the installed driver's `CFBundleVersion` (nil when none is installed), and
 /// whether the installed copy is sealed to root (`sealed` means nothing but root

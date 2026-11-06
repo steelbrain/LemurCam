@@ -1,5 +1,3 @@
-import Foundation
-
 /// Pure, CMIO-free bookkeeping for the camera extension's `ExtensionDeviceRuntime`:
 /// how many apps are consuming the source stream, whether the placeholder timer
 /// runs, and whether the app is feeding the sink. Lives in `Shared/` so it is

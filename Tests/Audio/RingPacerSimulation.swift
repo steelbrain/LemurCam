@@ -1,5 +1,4 @@
 @testable import LemurCam
-import XCTest
 
 /// Producer/consumer simulation of the paced ring in frame time, shared by the pacer
 /// test classes. Frames carry consecutive sequence numbers (from 1, so 0 means

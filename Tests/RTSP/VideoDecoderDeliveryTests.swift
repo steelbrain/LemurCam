@@ -1,5 +1,4 @@
 import CoreVideo
-import Foundation
 @testable import LemurCam
 import os
 import XCTest

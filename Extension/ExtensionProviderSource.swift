@@ -1,7 +1,6 @@
 import CoreMediaIO
 import Foundation
 import IOKit.audio
-import os
 
 internal class ExtensionProviderSource: NSObject, CMIOExtensionProviderSource {
 

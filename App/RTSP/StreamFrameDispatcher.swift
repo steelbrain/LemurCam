@@ -1,6 +1,5 @@
 import CoreGraphics
 import CoreVideo
-import Foundation
 import os
 
 /// Thread-safe decoded-frame ingress for the RTSP pipeline. It keeps the hot

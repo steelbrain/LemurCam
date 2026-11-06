@@ -1,5 +1,3 @@
-import Foundation
-
 /// Pure rule for *when* the launch banner may appear (`LaunchNudgeDecision` decides
 /// *whether* the camera state warrants one). Kept out of `AppDelegate` so the
 /// gating is unit testable without AppKit.

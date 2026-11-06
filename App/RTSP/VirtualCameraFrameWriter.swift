@@ -1,6 +1,5 @@
 import CoreMedia
 import CoreVideo
-import Foundation
 import os
 
 /// Converts decoded frames into CMIO-ready sample buffers and writes them into

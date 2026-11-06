@@ -1,5 +1,3 @@
-import Foundation
-
 /// Retains an Objective-C/CoreFoundation-style reference while it crosses a
 /// Swift concurrency or dispatch boundary that does not model the type as
 /// `Sendable`.

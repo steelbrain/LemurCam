@@ -1,4 +1,3 @@
-import AVFoundation
 @testable import LemurCam
 import XCTest
 

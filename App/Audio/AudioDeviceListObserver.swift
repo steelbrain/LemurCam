@@ -1,5 +1,4 @@
 import CoreAudio
-import Foundation
 
 /// Watches the CoreAudio HAL device list and calls `handler` on `queue` after each
 /// change, such as the virtual microphone appearing or disappearing when the helper

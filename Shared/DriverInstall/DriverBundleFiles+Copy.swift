@@ -1,5 +1,4 @@
 import Darwin
-import Foundation
 
 extension DriverBundleFiles {
     /// Copy the bundle directory at `sourcePath` to `name` inside `parent`. Only

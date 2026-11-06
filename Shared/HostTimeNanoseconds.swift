@@ -1,5 +1,4 @@
 import CoreMedia
-import Foundation
 
 /// Converts `CMTime` values to the `hostTimeInNanoseconds` that the CMIO extension
 /// APIs take. `UInt64(_:)` traps on NaN, infinite, negative or out-of-range

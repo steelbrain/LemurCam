@@ -1,5 +1,4 @@
 import CoreVideo
-import Foundation
 import os
 
 /// Thread-safe jitter buffer that smooths bursty frame delivery from IP cameras.

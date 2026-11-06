@@ -1,6 +1,5 @@
 import AVFoundation
 import CoreMediaIO
-import Foundation
 import os
 
 internal final class LemurCamModel: Sendable {

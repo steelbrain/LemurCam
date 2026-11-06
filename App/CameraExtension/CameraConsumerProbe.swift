@@ -1,5 +1,4 @@
 import CoreMediaIO
-import Foundation
 
 /// Decides whether an external app is already using the LemurCam virtual camera,
 /// from the standard CMIO property `kCMIODevicePropertyDeviceIsRunningSomewhere`

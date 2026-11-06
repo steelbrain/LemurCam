@@ -1,5 +1,3 @@
-import Foundation
-
 /// What the camera extension's sink stream does with one
 /// `consumeSampleBuffer(from:)` completion, once it knows which session the
 /// completion belongs to.

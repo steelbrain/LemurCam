@@ -1,5 +1,3 @@
-import Foundation
-
 /// What the proactive launch banner should tell the user, if anything. Kept pure
 /// and OS-free so the "should we nudge" policy is unit-testable without AppKit.
 ///

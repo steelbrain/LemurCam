@@ -1,6 +1,5 @@
 import CoreMedia
 import CoreMediaIO
-import Foundation
 import os
 
 internal typealias SinkSampleBufferHandler = @Sendable (CMSampleBuffer) -> Void

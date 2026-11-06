@@ -1,6 +1,5 @@
 import CoreMediaIO
 import Foundation
-import os
 
 internal final class ExtensionDeviceSource: NSObject, CMIOExtensionDeviceSource {
 

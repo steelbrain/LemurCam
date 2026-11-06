@@ -1,5 +1,3 @@
-import Foundation
-
 /// The virtual-camera format this run of the app started with. Resolution and
 /// frame-rate changes take effect only after a restart, so Settings compares its
 /// pickers against these values to decide whether to show the restart notice.

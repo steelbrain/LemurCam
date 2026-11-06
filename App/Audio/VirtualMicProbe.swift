@@ -1,5 +1,4 @@
 import CoreAudio
-import Foundation
 
 /// Queries the CoreAudio HAL for the live running state of the LemurCam virtual
 /// microphone. Used at launch to recover audio demand the app would otherwise miss:

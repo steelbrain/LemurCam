@@ -1,6 +1,4 @@
 import CoreMedia
-import CoreVideo
-import Foundation
 import os
 
 internal final class FrameGenerator: Sendable {
