@@ -112,19 +112,21 @@ internal extension SourceCredentials {
     /// makes the URL ambiguous to it (`rtsp://admin:pw@cam/s?a=b@c`), so it is taken
     /// out for connecting too. An `@` after the host that still makes the URL
     /// ambiguous to IPCamKit is written `%40` when the host is the camera's or an IP
-    /// address (`escapingAtSignsAfterTheHost(of:reportedBy:)`). The URL is nil for a URI
-    /// `URLComponents` can't read that is not split: a login in it could not be taken
-    /// out, and nothing could connect to it anyway.
+    /// address (`escapingAtSignsAfterTheHost(of:reportedBy:)`), and a space or control
+    /// character IPCamKit refuses is written as an escape (`escapingSpaces(in:)`). The
+    /// URL is nil for a URI `URLComponents` can't read that is not split: a login in it
+    /// could not be taken out, and nothing could connect to it anyway.
     static func extractingLogin(
         fromReportedURI uri: String, onvifHost: String
     ) -> (url: String?, credentials: SourceCredentials?) {
         if splitsAtLastAt(reportedURI: uri, onvifHost: onvifHost) {
             let split = extractingFromRTSPURL(uri)
-            return (split.url, split.credentials)
+            return (escapingSpaces(in: split.url), split.credentials)
         }
         if hasAmbiguousUserInfo(uri), URLComponents(cameraURL: uri) == nil { return (nil, nil) }
         let readable = extractingReadableLogin(from: uri)
-        return (escapingAtSignsAfterTheHost(of: readable.url, reportedBy: onvifHost), readable.login?.credentials)
+        let url = escapingSpaces(in: escapingAtSignsAfterTheHost(of: readable.url, reportedBy: onvifHost))
+        return (url, readable.login?.credentials)
     }
 
     /// Whether `urlString` has an `@` after its host that may end a user name or
@@ -168,6 +170,20 @@ private extension SourceCredentials {
               !host.hasPrefix("["), host.contains("%"),
               URLComponents.percentEncodingForParsing(url) != URLComponents.percentEncodingNonASCII(url),
               let written = components.string else { return url }
+        return written
+    }
+
+    /// `url`, a stream URI an ONVIF camera reported, its login taken out, written as
+    /// `URLComponents(cameraURL:)` writes it when it holds a space or a control
+    /// character, which IPCamKit refuses in a URL to connect to (its
+    /// `checkURLCharacters`); otherwise as it is. `rtsp://192.168.1.20:554/Front Door`
+    /// was refused on every connect, though the same URI with a login, or with a host
+    /// IPCamKit writes out again, went with `%20`, and an ONVIF camera has no URL field
+    /// where it could be corrected. Other characters `URLComponents` encodes go as
+    /// reported.
+    static func escapingSpaces(in url: String) -> String {
+        guard url.unicodeScalars.contains(where: { $0.value <= 0x20 || $0.value == 0x7F }),
+              let written = URLComponents(cameraURL: url)?.string else { return url }
         return written
     }
 
