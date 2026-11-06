@@ -180,6 +180,8 @@ internal final class CoordinatorHarness {
     let cameraConsumerNotifications = FakeConsumerNotifications()
     let audioConsumerNotifications = FakeConsumerNotifications()
     private let directory: URL
+    /// The saved `sources.json`, readable from any thread.
+    nonisolated let sourcesFile: URL
     private let savedActiveID: String?
     private let ringName = "/lc-test-\(UUID().uuidString.prefix(8))"
     private let audioDeviceListChange = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
@@ -194,7 +196,8 @@ internal final class CoordinatorHarness {
     ) {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let storage = SourceStorage(fileURL: directory.appendingPathComponent("sources.json"))
+        sourcesFile = directory.appendingPathComponent("sources.json")
+        let storage = SourceStorage(fileURL: sourcesFile)
         let sourceManager = SourceManager(storage: storage, keychain: InMemoryCredentialStore())
         for name in rtspSources {
             try? sourceManager.addSource(name: name, sourceType: .rtsp(RTSPSourceInfo(url: "rtsp://\(name)")))

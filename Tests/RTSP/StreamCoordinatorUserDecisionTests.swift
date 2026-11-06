@@ -7,10 +7,11 @@ import XCTest
 /// What connecting does when what answers at a camera's saved address needs the
 /// user's decision: a certificate other than the one the user trusted, an address
 /// outside the local network that plain HTTP isn't allowed to, or another device than
-/// the camera saved there. Trying again,
-/// looking for the camera with a scan, or falling back to the stored stream URI would
-/// not change the answer, and the last two may send the login to another device. The
-/// camera shows what to do, and nothing connects until the camera is edited.
+/// the camera saved there. Trying again or falling back to the stored stream URI
+/// would not change the answer, and the fallback may send the login to another
+/// device. A scan would not change it for a certificate or plain HTTP either; another
+/// device at the saved address is a sign the camera moved, so the camera is looked
+/// for first. The camera shows what to do, and nothing connects until it is edited.
 /// Cameras are stubbed with `ONVIFStubURLProtocol`; nothing goes on the network.
 @MainActor
 internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
@@ -99,10 +100,11 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
     }
 
     /// After a DHCP change another camera answers at the saved address. It is asked
-    /// who it is without the login, and gets nothing more.
-    func testADifferentDeviceAtTheSavedAddressIsNeitherStreamedNorSentTheLogin() async throws {
+    /// who it is without the login, and gets nothing more. The scan doesn't find the
+    /// camera anywhere else, so it waits for the user.
+    func testADifferentDeviceAtTheSavedAddressWaitsForTheUserWhenTheScanDoesNotFindTheCamera() async throws {
         let host = "192.168.79.50"
-        let requests = stubCamera(at: host, identity: "5f0c1d2e-0000-4000-8000-0000000000aa")
+        let requests = stubCamera(at: host, identity: Self.otherDevice)
         let (harness, camera) = try makeHarness(saving: Self.camera(at: host))
 
         harness.coordinator.previewStore.isPreviewEnabled = true
@@ -111,9 +113,43 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
         XCTAssertTrue(failed)
         XCTAssertEqual(harness.manager.errorMessages[camera], "A different device answered at 192.168.79.50.")
         XCTAssertEqual(requests.all.count, 1)
-        let sent = requests.all.compactMap { String(bytes: $0, encoding: .utf8) }
-        XCTAssertFalse(sent.contains { $0.contains("UsernameToken") }, "the login must not go to another device")
-        assertWaitsForTheUser(harness)
+        XCTAssertFalse(Self.anySigned(requests), "the login must not go to another device")
+        assertWaitsForTheUser(harness, scans: 1)
+        XCTAssertEqual(Self.savedHost(of: camera, in: harness), host)
+    }
+
+    /// After a DHCP swap another device took the camera's address and the camera has a
+    /// new one, where the scan finds it. It streams from there with the saved login,
+    /// and the move is saved only once it answered there (a scan reply can come from a
+    /// device with a cloned UUID). The other device never gets the login.
+    func testADifferentDeviceAtTheSavedAddressLeadsToTheCameraAtTheAddressTheScanFinds() async throws {
+        let (oldHost, newHost) = ("192.168.79.52", "192.168.79.53")
+        let wrongDevice = stubCamera(at: oldHost, identity: Self.otherDevice)
+        let (harness, camera) = try makeHarness(
+            saving: Self.camera(at: oldHost), scanFinding: [ONVIFResolveFixture.device(host: newHost)]
+        )
+        let sourcesFile = harness.sourcesFile
+        let savedWhileAsked = OSAllocatedUnfairLock(initialState: [Bool]())
+        let movedCamera = stubCamera(at: newHost, identity: ONVIFResolveFixture.deviceUUID) {
+            let saved = (try? String(contentsOf: sourcesFile, encoding: .utf8))?.contains(newHost) == true
+            savedWhileAsked.withLock { $0.append(saved) }
+        }
+
+        harness.coordinator.previewStore.isPreviewEnabled = true
+        let connected = await waitUntil(timeout: 5) { !harness.pipeline.connectedURLs.isEmpty }
+
+        XCTAssertTrue(connected)
+        XCTAssertEqual(harness.pipeline.connectedURLs, ["rtsp://\(newHost):554/main"])
+        XCTAssertEqual(harness.pipeline.connectedCredentials, [ONVIFResolveFixture.credentials])
+        XCTAssertNil(harness.manager.errorMessages[camera])
+        XCTAssertEqual(scans.withLock { $0 }, 1)
+        XCTAssertEqual(wrongDevice.all.count, 1)
+        XCTAssertFalse(Self.anySigned(wrongDevice), "the login must not go to another device")
+        XCTAssertTrue(Self.anySigned(movedCamera), "the camera is asked with the saved login")
+        let whileAsked = savedWhileAsked.withLock { $0 }
+        XCTAssertFalse(whileAsked.isEmpty)
+        XCTAssertFalse(whileAsked.contains(true), "the move is saved only once the camera answered")
+        XCTAssertEqual(Self.savedHost(of: camera, in: harness), newHost)
     }
 
     /// The camera saved there answers: one unsigned question more, then as before.
@@ -135,14 +171,20 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
 
     // MARK: - Helpers
 
+    private static let otherDevice = "5f0c1d2e-0000-4000-8000-0000000000aa"
+
     /// A camera at `host` whose endpoint reference is `identity` and whose stream URI
-    /// is `rtsp://<host>:554/main`, and the request bodies it receives.
-    private func stubCamera(at host: String, identity: String) -> CapturedBodies {
+    /// is `rtsp://<host>:554/main`, and the request bodies it receives. `onRequest`
+    /// runs as each request arrives.
+    private func stubCamera(
+        at host: String, identity: String, onRequest: @escaping @Sendable () -> Void = {}
+    ) -> CapturedBodies {
         let requests = CapturedBodies()
         stubHosts.append(host)
         let endpoint = ONVIFResolveFixture.endpointReferenceReply(identity)
         let stream = ONVIFResolveFixture.streamURIReply("rtsp://\(host):554/main")
         ONVIFStubURLProtocol.register(host: host) { _, body in
+            onRequest()
             requests.append(body)
             let isIdentityQuestion = String(bytes: body, encoding: .utf8)?.contains("GetEndpointReference") == true
             return isIdentityQuestion ? endpoint : stream
@@ -150,14 +192,27 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
         return requests
     }
 
-    /// Nothing connected, nothing scanned, and no retry scheduled.
+    /// Nothing connected, no retry scheduled, and `scans` scans run: none, unless the
+    /// camera was looked for.
     private func assertWaitsForTheUser(
-        _ harness: CoordinatorHarness, file: StaticString = #filePath, line: UInt = #line
+        _ harness: CoordinatorHarness, scans expected: Int = 0, file: StaticString = #filePath, line: UInt = #line
     ) {
         XCTAssertTrue(harness.pipeline.connectedURLs.isEmpty, "nothing may connect", file: file, line: line)
-        XCTAssertEqual(scans.withLock { $0 }, 0, "no scan", file: file, line: line)
+        XCTAssertEqual(scans.withLock { $0 }, expected, "scans", file: file, line: line)
         XCTAssertFalse(harness.coordinator.hasPendingRetry, "no retry", file: file, line: line)
         XCTAssertEqual(harness.coordinator.placeholderMessage, "Connection error in LemurCam", file: file, line: line)
+    }
+
+    /// Whether any request carried the WS-Security login.
+    private static func anySigned(_ requests: CapturedBodies) -> Bool {
+        requests.all.contains { String(bytes: $0, encoding: .utf8)?.contains("UsernameToken") == true }
+    }
+
+    private static func savedHost(of camera: UUID, in harness: CoordinatorHarness) -> String? {
+        guard case .onvif(let info)? = harness.manager.sources.first(where: { $0.id == camera })?.sourceType else {
+            return nil
+        }
+        return info.host
     }
 
     private static func camera(at host: String) -> ONVIFSourceInfo {
@@ -173,17 +228,18 @@ internal final class StreamCoordinatorUserDecisionTests: XCTestCase {
     }
 
     /// A coordinator with the camera `info` saved, with credentials, whose clients are
-    /// made as the app makes them, and whose scans find nothing. When `presenting` is
-    /// given, each client's certificate check meets that certificate first.
+    /// made as the app makes them, and whose scans find `scanFinding`. When
+    /// `presenting` is given, each client's certificate check meets that certificate
+    /// first.
     private func makeHarness(
-        saving info: ONVIFSourceInfo, presenting trust: SecTrust? = nil
+        saving info: ONVIFSourceInfo, presenting trust: SecTrust? = nil, scanFinding found: [DiscoveredDevice] = []
     ) throws -> (CoordinatorHarness, UUID) {
         let scanCounter = scans
         let presented = trust.map(SendableTrust.init)
         let harness = CoordinatorHarness(onvifEnvironment: ONVIFResolveEnvironment(
             scan: {
                 scanCounter.withLock { $0 += 1 }
-                return []
+                return found
             },
             makeClient: { info, credentials in
                 let client = StreamCoordinator.makeONVIFClient(

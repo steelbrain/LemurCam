@@ -32,11 +32,15 @@ internal final class ONVIFRediscoveryDecisionTests: XCTestCase {
     }
 
     /// A rejected login or a SOAP fault may come from another camera that now has this
-    /// camera's address (two cameras can swap addresses after a router reset). It
+    /// camera's address (two cameras can swap addresses after a router reset), and a
+    /// device that reports another identity there is one. It
     /// leads to a scan only for a camera that a scan can find (it has a device UUID)
     /// and that is saved by its LAN IP address, which DHCP can hand to another device.
     func testRefusalsTriggerRediscoveryOnlyAtALANAddressWithADeviceUUID() {
-        let refusals: [Error] = [ONVIFError.authenticationFailed, ONVIFError.soapFault("Sender not authorized")]
+        let refusals: [Error] = [
+            ONVIFError.authenticationFailed, ONVIFError.soapFault("Sender not authorized"),
+            ONVIFError.differentDevice(host: "192.168.1.20")
+        ]
         let canMove = [
             ONVIFSourceInfo(deviceUUID: Self.uuid, host: "192.168.1.20", port: 80),
             ONVIFSourceInfo(deviceUUID: Self.uuid, host: "10.0.0.7", port: 8080, useHTTPS: true),

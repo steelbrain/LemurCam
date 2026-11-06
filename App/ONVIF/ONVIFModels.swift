@@ -71,7 +71,9 @@ internal enum ONVIFError: LocalizedError {
     /// (`ONVIFLocalNetwork`).
     case plainHTTPRefused(host: String)
     /// Another device than the camera saved there answers at `host`
-    /// (`ONVIFClient.checkIdentity(of:)`). Nothing signed was sent to it.
+    /// (`ONVIFClient.checkIdentity(of:)`). Nothing signed was sent to it. The resolve
+    /// looks for the camera with a scan (`ONVIFRediscovery.shouldRediscover`), and the
+    /// error stands when the scan doesn't find it elsewhere.
     case differentDevice(host: String)
 
     /// True when no answer came back from the device at all, as opposed to the
@@ -95,7 +97,12 @@ internal enum ONVIFError: LocalizedError {
     }
 
     /// Whether only the user can clear the error, in the camera's settings: trying
-    /// again, or looking for the camera elsewhere, would fail the same way.
+    /// again would fail the same way, so it is not retried. A refused certificate or
+    /// plain HTTP refused would fail the same way at any address the camera moved to
+    /// as well, so it is not looked for. Another device at the saved address is
+    /// different: the camera may answer elsewhere, so the resolve looks for it first
+    /// (`ONVIFRediscovery.shouldRediscover`), and the error is the user's to clear only
+    /// once the scan didn't find it.
     var needsUserDecision: Bool {
         switch self {
         case .certificateNotTrusted, .plainHTTPRefused, .differentDevice:

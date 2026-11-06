@@ -2,7 +2,8 @@ extension ONVIFClient {
     /// Checks that the device at the client's address is the camera saved as `info`,
     /// before anything signed goes to it. After a DHCP change another camera can answer
     /// at the saved address: the stream then came from the wrong camera, and it got the
-    /// saved login.
+    /// saved login. The resolve then looks for the camera elsewhere
+    /// (`ONVIFRediscovery.shouldRediscover`).
     ///
     /// Asks GetEndpointReference once, unsigned, so no credentials go along, and only
     /// when the saved identity can be compared (`ONVIFDeviceIdentity.canCompare`).

@@ -377,7 +377,9 @@ private extension StreamCoordinator {
             }
             // Retry like any failed connect, so a camera that was offline when we
             // tried is picked up once it is back instead of staying in error. Not
-            // when only the user can clear the error: an edit reconnects.
+            // when only the user can clear the error (another device at the saved
+            // address included, once the scan didn't find the camera): an edit
+            // reconnects.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
             sourceManager.updateErrorMessage(for: sourceID, onvifResolveFailure: failure.error)
             if failure.needsUserDecision {

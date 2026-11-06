@@ -29,20 +29,25 @@ internal enum ONVIFRediscovery {
     /// A rejected login or a SOAP fault can come from the camera itself, but also from
     /// another ONVIF camera: after a router reset two cameras can swap addresses, and
     /// this camera's login then went to the other one on every retry (which can lock
-    /// its account) and was never looked for again. So these lead to a scan too when
-    /// the camera can be looked for (it has a device UUID) and is saved by its LAN IP
-    /// address, the kind DHCP reassigns. A scan sends no login, and a camera it finds
+    /// its account) and was never looked for again. A device at the saved address that
+    /// reports another identity (`ONVIFError.differentDevice`) is the surest sign of
+    /// such a swap: the camera is likely at another address. So these lead to a scan
+    /// when the camera can be looked for (it has a device UUID) and is saved by its LAN
+    /// IP address, the kind DHCP reassigns. A scan sends no login, and a camera it finds
     /// at the saved address leaves everything as it is.
+    ///
+    /// A refused certificate or plain HTTP refused is about the address the user chose,
+    /// not about which device answers there, so it leads to no scan.
     static func shouldRediscover(after error: Error, at info: ONVIFSourceInfo) -> Bool {
         if error is ONVIFXML.Rejection { return true }
         guard let onvifError = error as? ONVIFError else { return false }
         switch onvifError {
         case .networkError, .timedOut, .httpStatus, .parseError:
             return true
-        case .soapFault, .authenticationFailed:
+        case .soapFault, .authenticationFailed, .differentDevice:
             guard let uuid = info.deviceUUID, !uuid.isEmpty else { return false }
             return isLANAddress(info.host)
-        case .invalidURL, .certificateNotTrusted, .plainHTTPRefused, .differentDevice:
+        case .invalidURL, .certificateNotTrusted, .plainHTTPRefused:
             return false
         }
     }
@@ -52,16 +57,18 @@ internal enum ONVIFRediscovery {
     /// fault the saved address still answers, maybe as this camera itself, and the scan
     /// reply that matched may come from another device claiming the same UUID (cloned
     /// firmware) while the camera's own reply was lost: saved at once, the source was
-    /// re-pointed for good, and could flip between the two on retries. After a
-    /// transport failure, or an answer that is not this camera's ONVIF service,
-    /// nothing at the saved address is the camera, so the move is saved before asking.
+    /// re-pointed for good, and could flip between the two on retries. The same holds
+    /// after another device answered at the saved address: the scan reply may be such
+    /// a clone's. After a transport failure, or an answer that is not this camera's
+    /// ONVIF service, nothing at the saved address is the camera, so the move is saved
+    /// before asking.
     static func savesMoveOnlyOnceAnswered(after error: Error) -> Bool {
         guard let onvifError = error as? ONVIFError else { return false }
         switch onvifError {
-        case .soapFault, .authenticationFailed:
+        case .soapFault, .authenticationFailed, .differentDevice:
             return true
         case .networkError, .timedOut, .httpStatus, .parseError, .invalidURL, .certificateNotTrusted,
-             .plainHTTPRefused, .differentDevice:
+             .plainHTTPRefused:
             return false
         }
     }

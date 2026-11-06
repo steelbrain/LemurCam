@@ -4,7 +4,8 @@ import SwiftUI
 /// camera being edited (`ONVIFDeviceIdentity`): whether to use it for the camera. Use
 /// takes the fetched profiles and the device's identity, which Save stores; Cancel
 /// keeps the camera as it was saved. Connecting refuses such a device
-/// (`ONVIFError.differentDevice`) until the user has answered here.
+/// (`ONVIFError.differentDevice`) and looks for the camera with a scan; when the scan
+/// doesn't find it, the camera waits until the user has answered here.
 internal struct DeviceIdentityPrompt: Identifiable {
     let cameraName: String
     let address: SourceFormONVIFAddressEdits.Address

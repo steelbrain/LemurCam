@@ -117,6 +117,31 @@ internal final class ONVIFMoveSaveTests: XCTestCase {
         XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.89")
     }
 
+    /// Another device answers at the saved address, and the scan finds the camera's
+    /// UUID elsewhere, where nothing answers: the reply may have come from a device with
+    /// a cloned UUID. The saved address is kept, and neither device got the login.
+    func testAMoveAfterAnotherDeviceAnsweredIsNotSavedWhenNothingAnswersAtTheNewAddress() async throws {
+        let harness = try XCTUnwrap(fixture)
+        let otherDevice = "5f0c1d2e-0000-4000-8000-0000000000aa"
+        harness.stub(host: "192.168.77.93", ONVIFResolveFixture.endpointReferenceReply(otherDevice))
+        let source = try harness.addCamera(host: "192.168.77.93")
+        let fileBefore = try harness.savedFile()
+
+        let result = try await StreamCoordinator.attemptONVIFResolve(
+            params: harness.params(for: source, scanResult: [ONVIFResolveFixture.device(host: "192.168.77.94")])
+        )
+
+        guard case .failure(let failure) = result else {
+            XCTFail("nothing answers at the new address, got \(result)")
+            return
+        }
+        XCTAssertTrue(failure.cameraMoved)
+        XCTAssertFalse(failure.allowsStoredURI)
+        XCTAssertEqual(harness.scanCount, 1)
+        XCTAssertEqual(harness.savedInfo(source)?.host, "192.168.77.93")
+        XCTAssertEqual(try harness.savedFile(), fileBefore)
+    }
+
     /// After a transport failure nothing at the saved address is the camera, so the
     /// move is saved before the new address is asked, as before: even when the camera
     /// does not answer there yet.
@@ -156,6 +181,7 @@ internal final class ONVIFMoveSaveTests: XCTestCase {
     func testWhichFailuresSaveAMoveOnlyOnceAnswered() {
         XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: ONVIFError.authenticationFailed))
         XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: ONVIFError.soapFault("Sender not Authorized")))
+        XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: ONVIFError.differentDevice(host: "h")))
         let before: [Error] = [
             ONVIFError.networkError("offline"), ONVIFError.timedOut, ONVIFError.httpStatus(404),
             ONVIFError.parseError, ONVIFError.invalidURL, CancellationError()

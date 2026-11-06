@@ -318,13 +318,17 @@ which passes the camera's `connectionPolicy`, and don't bypass the gates.
   (`ONVIFLocalNetwork`) unless the camera's Allow Unencrypted HTTP checkbox is
   on. Any other URL load added to the app must be HTTPS only.
 - Identity: before anything signed goes to a camera's saved address, the
-  resolve asks the device for its endpoint reference, unsigned, and stops with
-  `ONVIFError.differentDevice` when another device answers (`ONVIFDeviceIdentity`).
+  resolve asks the device for its endpoint reference, unsigned. When another
+  device answers (`ONVIFError.differentDevice`, see `ONVIFDeviceIdentity`), it
+  looks for the camera with a WS-Discovery scan, as after a refused login, and
+  saves a move only once the camera answered at the new address.
 
 The certificate and the checkbox belong to one address: a move or an address
 edit drops them (`ONVIFSourceInfo.clearAddressDecisions()`). An error only the
-user can clear (`ONVIFError.needsUserDecision`) is not retried, rescanned for, or
-answered by falling back to the stored stream URI.
+user can clear (`ONVIFError.needsUserDecision`) is not retried or answered by
+falling back to the stored stream URI. A refused certificate or plain HTTP is
+not rescanned for either; another device at the saved address is, and stays the
+error when the scan doesn't find the camera elsewhere.
 
 ## Tests And Coverage
 

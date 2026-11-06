@@ -186,17 +186,18 @@ extension StreamCoordinator {
         )
     }
 
-    /// Asks the camera for the stream URI at its saved address. Only when the address
-    /// gives no answer, or an answer that may not be this camera's ONVIF service (see
-    /// `ONVIFRediscovery.shouldRediscover`), does it look for the camera with
-    /// WS-Discovery, and it asks again only where the scan finds the camera moved to.
-    /// An address the scan reports is saved only when it differs from the saved one and
-    /// `ONVIFRediscovery.shouldSave` allows it (after a rejected login or a SOAP fault,
-    /// only once the camera answered there); otherwise it is used for this connection
-    /// only. A failure carries the error from
-    /// the saved address, unless the camera was found elsewhere and failed there, which
-    /// the failure records (`ONVIFResolveFailure.cameraMoved`), as `progress` does as
-    /// soon as the scan found it there. Throws only when cancelled.
+    /// Asks the camera for the stream URI at its saved address, once the device there
+    /// proved to be the camera (`ONVIFClient.checkIdentity(of:)`). Only when the address
+    /// gives no answer, an answer that may not be this camera's ONVIF service, or the
+    /// answer of another device (see `ONVIFRediscovery.shouldRediscover`), does it look
+    /// for the camera with WS-Discovery, and it asks again only where the scan finds
+    /// the camera moved to. An address the scan reports is saved only when it differs
+    /// from the saved one and `ONVIFRediscovery.shouldSave` allows it (after a rejected
+    /// login, a SOAP fault or another device's answer, only once the camera answered
+    /// there); otherwise it is used for this connection only. A failure carries the
+    /// error from the saved address, unless the camera was found elsewhere and failed
+    /// there, which the failure records (`ONVIFResolveFailure.cameraMoved`), as
+    /// `progress` does as soon as the scan found it there. Throws only when cancelled.
     static func attemptONVIFResolve(
         params: ONVIFResolveParams, progress: ONVIFResolveProgress = ONVIFResolveProgress()
     ) async throws -> ONVIFStreamURIResult {
@@ -255,8 +256,8 @@ extension StreamCoordinator {
     }
 
     /// Asks the camera at the address the scan found. A move `ONVIFRediscovery.shouldSave`
-    /// allows is saved before asking, or, after a rejected login or a SOAP fault at the
-    /// saved address, only once the camera answered there
+    /// allows is saved before asking, or, after a rejected login, a SOAP fault or
+    /// another device's answer at the saved address, only once the camera answered there
     /// (`ONVIFRediscovery.savesMoveOnlyOnceAnswered`).
     private static func connect(
         movedTo moved: ONVIFSourceInfo, after savedAddressError: any Error, params: ONVIFResolveParams

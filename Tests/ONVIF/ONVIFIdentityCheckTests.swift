@@ -88,7 +88,12 @@ internal final class ONVIFIdentityCheckTests: XCTestCase {
         XCTAssertEqual(error.localizedDescription, "A different device answered at 192.168.1.20.")
         XCTAssertTrue(error.needsUserDecision)
         XCTAssertFalse(StreamCoordinator.mayFallBackToStoredURI(after: error))
+        // The camera is looked for, as after a refused login, and a move found is saved
+        // only once it answered there.
+        let savedCamera = ONVIFSourceInfo(deviceUUID: Self.saved, host: "192.168.1.20")
+        XCTAssertTrue(ONVIFRediscovery.shouldRediscover(after: error, at: savedCamera))
         XCTAssertFalse(ONVIFRediscovery.shouldRediscover(after: error, at: ONVIFSourceInfo(host: "192.168.1.20")))
+        XCTAssertTrue(ONVIFRediscovery.savesMoveOnlyOnceAnswered(after: error))
     }
 
     // MARK: - Asking the device
