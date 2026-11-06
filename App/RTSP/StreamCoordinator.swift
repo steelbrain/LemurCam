@@ -376,10 +376,15 @@ private extension StreamCoordinator {
                 return
             }
             // Retry like any failed connect, so a camera that was offline when we
-            // tried is picked up once it is back instead of staying in error.
+            // tried is picked up once it is back instead of staying in error. Not
+            // when only the user can clear the error: an edit reconnects.
             sourceManager.updateConnectionStatus(for: sourceID, status: .error)
             sourceManager.updateErrorMessage(for: sourceID, onvifResolveFailure: failure.error)
-            scheduleRetry()
+            if failure.needsUserDecision {
+                fallbackGenerator.start(message: "Connection error in LemurCam")
+            } else {
+                scheduleRetry()
+            }
         }
     }
 

@@ -28,6 +28,12 @@ internal struct ONVIFResolveFailure: Error {
     var allowsStoredURI: Bool {
         !cameraMoved && StreamCoordinator.mayFallBackToStoredURI(after: error)
     }
+
+    /// Whether only the user can clear the failure (`ONVIFError.needsUserDecision`),
+    /// so it is not retried.
+    var needsUserDecision: Bool {
+        (error as? ONVIFError)?.needsUserDecision == true
+    }
 }
 
 /// A stream URI an ONVIF camera reported, and the host of the ONVIF service that
@@ -144,10 +150,12 @@ extension StreamCoordinator {
     /// two cameras swap addresses the stored URI's address belongs to the other one,
     /// and connecting there sent it an RTSP login on every retry. When it is this
     /// camera refusing the login, the RTSP connect would send the same credentials again.
+    /// An error only the user can clear (`ONVIFError.needsUserDecision`) rules it out
+    /// as well: a refused certificate may belong to another device.
     nonisolated static func mayFallBackToStoredURI(after error: any Error) -> Bool {
         guard let onvifError = error as? ONVIFError else { return true }
         switch onvifError {
-        case .authenticationFailed, .soapFault:
+        case .authenticationFailed, .soapFault, .certificateNotTrusted:
             return false
         case .invalidURL, .networkError, .httpStatus, .parseError, .timedOut:
             return true
@@ -164,11 +172,16 @@ extension StreamCoordinator {
         return described
     }
 
-    nonisolated static func makeONVIFClient(for info: ONVIFSourceInfo, credentials: SourceCredentials?) -> ONVIFClient {
+    /// A client for the saved camera, with what the user decided about it
+    /// (`ONVIFSourceInfo.connectionPolicy`). `configuration` exists for tests.
+    nonisolated static func makeONVIFClient(
+        for info: ONVIFSourceInfo, credentials: SourceCredentials?,
+        configuration: URLSessionConfiguration = .default
+    ) -> ONVIFClient {
         ONVIFClient(
             host: info.host, port: info.port,
             username: credentials?.username, password: credentials?.password,
-            useHTTPS: info.useHTTPS
+            useHTTPS: info.useHTTPS, policy: info.connectionPolicy, configuration: configuration
         )
     }
 

@@ -83,12 +83,7 @@ internal final class BootSanityChecker {
     private static func probeONVIF(
         info: ONVIFSourceInfo, credentials: SourceCredentials?
     ) async throws {
-        let client = ONVIFClient(
-            host: info.host, port: info.port,
-            username: credentials?.username,
-            password: credentials?.password,
-            useHTTPS: info.useHTTPS
-        )
+        let client = StreamCoordinator.makeONVIFClient(for: info, credentials: credentials)
         _ = try await ONVIFTimeout.run(seconds: ONVIFTimeout.launchProbe) {
             try await client.getProfiles()
         }

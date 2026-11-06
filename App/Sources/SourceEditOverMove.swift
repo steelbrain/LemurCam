@@ -9,8 +9,10 @@
 extension SourceType {
     /// This edited type, with the address saved now kept when the edit left the
     /// address the form loaded (`loaded`) as it was and the camera was moved since
-    /// (`saved`): host, port and HTTPS, and the stored stream URI. A stream URI the
-    /// form fetched since (another profile picked) follows the move as a move's does
+    /// (`saved`): host, port and HTTPS, the stored stream URI, and what the user
+    /// decided for the address (a certificate trusted at the old address, the form's,
+    /// would follow the camera to the new one). A stream URI the form fetched since
+    /// (another profile picked) follows the move as a move's does
     /// (`SourceCredentials.storedStreamURI(_:movedFrom:to:)`). Everything else is the
     /// form's: the move changes nothing else. An address the user edited wins, and so
     /// does any other type.
@@ -27,6 +29,7 @@ extension SourceType {
         edited.host = now.host
         edited.port = now.port
         edited.useHTTPS = now.useHTTPS
+        edited.takeAddressDecisions(of: now)
         return .onvif(edited)
     }
 }

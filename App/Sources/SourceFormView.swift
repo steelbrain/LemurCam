@@ -28,8 +28,12 @@ internal struct SourceFormView: View {
     @State private var urlFieldEdits = SourceFormURLFieldEdits()
     @State private var fetchTickets = SourceFormFetchTickets()
     @State private var onvifAddressEdits = SourceFormONVIFAddressEdits()
-    @State private var resolvedType: ResolvedType?
-    @State private var editSourceType: EditSourceType?
+    /// What Connect found at the URL, for a camera being added.
+    @State private var resolvedType: SourceKind?
+    /// The kind of the camera being edited.
+    @State private var editSourceType: SourceKind?
+    /// A certificate a fetch met that macOS doesn't trust, while the user is asked.
+    @State private var trustPrompt: CertificateTrustPrompt?
 
     init(
         sourceManager: SourceManager, editing: CameraSource? = nil,
@@ -49,6 +53,7 @@ internal struct SourceFormView: View {
         .onAppear {
             if let source = editing { populateFrom(source) }
         }
+        .certificateTrustDialog($trustPrompt, onTrust: trustCertificate)
     }
 
     private var formContent: some View {
@@ -138,7 +143,7 @@ internal struct SourceFormView: View {
     }
 
     @ViewBuilder
-    private func editSection(_ editType: EditSourceType) -> some View {
+    private func editSection(_ editType: SourceKind) -> some View {
         Section {
             switch editType {
             case .rtsp:
@@ -186,8 +191,12 @@ internal struct SourceFormView: View {
         .onChange(of: onvifPort) { onvifAddressEdited() }
         .onChange(of: onvifUseHTTPS) { onvifAddressEdited() }
     }
+}
 
-    private var probeProgressRow: some View {
+// MARK: - Rows
+
+private extension SourceFormView {
+    var probeProgressRow: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Connecting\u{2026}").font(.caption).foregroundStyle(.secondary)
@@ -195,7 +204,7 @@ internal struct SourceFormView: View {
     }
 
     @ViewBuilder
-    private var onvifProfilePicker: some View {
+    var onvifProfilePicker: some View {
         if !onvifDetails.profiles.isEmpty {
             Picker("Profile", selection: $onvifDetails.selectedProfileToken) {
                 Text("Select a profile").tag(nil as String?)
@@ -210,7 +219,7 @@ internal struct SourceFormView: View {
     }
 
     @ViewBuilder
-    private var streamURILabel: some View {
+    var streamURILabel: some View {
         if let streamURI = onvifDetails.streamURI {
             LabeledContent("Stream URL") {
                 Text(DisplayedURL.redacted(streamURI))
@@ -225,23 +234,21 @@ internal struct SourceFormView: View {
 // MARK: - Types & Helpers
 
 private extension SourceFormView {
-    enum ResolvedType { case rtsp, onvif }
-    enum EditSourceType { case rtsp, onvif }
+    enum SourceKind { case rtsp, onvif }
+
+    /// The kind of camera the form saves: the edited camera's, or what Connect found.
+    var sourceKind: SourceKind? {
+        editing != nil ? editSourceType : resolvedType
+    }
 
     var isValid: Bool {
         guard !name.isEmpty else { return false }
-        if editing != nil {
-            switch editSourceType {
-            case .rtsp: return isValidRTSPURL(inputText)
-            case .onvif:
-                return !onvifHost.isEmpty && ONVIFHostInput.problem(with: onvifHost) == nil
-                    && onvifDetails.selectedProfileToken != nil
-                    && onvifAddressEdits.allowsSave(at: onvifAddress)
-            case nil: return false
-            }
-        }
-        switch resolvedType {
+        switch sourceKind {
         case .rtsp: return isValidRTSPURL(inputText)
+        case .onvif where editing != nil:
+            return !onvifHost.isEmpty && ONVIFHostInput.problem(with: onvifHost) == nil
+                && onvifDetails.selectedProfileToken != nil
+                && onvifAddressEdits.allowsSave(at: onvifAddress)
         case .onvif: return onvifDetails.selectedProfileToken != nil
         case nil: return false
         }
@@ -276,8 +283,25 @@ private extension SourceFormView {
             host: onvifHost, port: onvifPort,
             username: hasCredentials ? username : nil,
             password: hasCredentials ? password : nil,
-            useHTTPS: onvifUseHTTPS
+            useHTTPS: onvifUseHTTPS, policy: onvifDetails.connectionPolicy
         )
+    }
+
+    /// Trust in the certificate prompt: fetch again, accepting the certificate.
+    func trustCertificate(_ prompt: CertificateTrustPrompt) {
+        guard fetchTickets.isCurrent(prompt.ticket) else { return }
+        onvifDetails.trust(prompt.problem.fingerprint)
+        fetchProfiles()
+    }
+
+    /// A fetch failed: asks about a certificate macOS doesn't trust, or shows the error.
+    func fetchFailed(_ error: any Error, ticket: Int) {
+        if let prompt = CertificateTrustPrompt(error: error, ticket: ticket) {
+            probeError = CertificateTrustPrompt.notTrustedMessage
+            trustPrompt = prompt
+        } else {
+            probeError = error.localizedDescription
+        }
     }
 
     func connect() {
@@ -350,7 +374,7 @@ private extension SourceFormView {
             } catch {
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
-                    probeError = error.localizedDescription
+                    fetchFailed(error, ticket: ticket)
                     isProbing = false
                 }
             }
@@ -374,39 +398,18 @@ private extension SourceFormView {
             } catch {
                 await MainActor.run {
                     guard fetchTickets.isCurrent(ticket) else { return }
-                    probeError = error.localizedDescription
+                    fetchFailed(error, ticket: ticket)
                 }
             }
         }
     }
 
     func resolvedSourceType() -> SourceType? {
-        let useRTSP: Bool
-        if editing != nil {
-            switch editSourceType {
-            case .rtsp:
-                useRTSP = true
-            case .onvif:
-                useRTSP = false
-            case nil: return nil
-            }
-        } else {
-            switch resolvedType {
-            case .rtsp:
-                useRTSP = true
-            case .onvif:
-                useRTSP = false
-            case nil: return nil
-            }
+        switch sourceKind {
+        case .rtsp: .rtsp(RTSPSourceInfo(url: RTSPURLInput.normalized(inputText)))
+        case .onvif: .onvif(onvifDetails.sourceInfo(at: onvifAddress))
+        case nil: nil
         }
-        if useRTSP {
-            return .rtsp(RTSPSourceInfo(url: RTSPURLInput.normalized(inputText)))
-        }
-        return .onvif(ONVIFSourceInfo(
-            deviceUUID: onvifDetails.deviceUUID, host: onvifHost, port: onvifPort,
-            selectedProfileToken: onvifDetails.selectedProfileToken, streamURI: onvifDetails.streamURI,
-            useHTTPS: onvifUseHTTPS, serialNumber: onvifDetails.serialNumber
-        ))
     }
 
     /// Saves the camera, and returns whether the form closes: it was saved. When it was
@@ -454,7 +457,8 @@ private extension SourceFormView {
             onvifUseHTTPS = info.useHTTPS
             let saved = SourceFormONVIFAddressEdits.SavedDetails(
                 selectedProfileToken: info.selectedProfileToken, streamURI: info.streamURI,
-                deviceUUID: info.deviceUUID, serialNumber: info.serialNumber
+                deviceUUID: info.deviceUUID, serialNumber: info.serialNumber,
+                pinnedCertificate: info.pinnedCertificate
             )
             onvifDetails = SourceFormONVIFDetails(saved: saved)
             onvifAddressEdits = SourceFormONVIFAddressEdits(savedAt: onvifAddress, details: saved)
@@ -468,32 +472,5 @@ private extension SourceFormView {
         } catch {
             credentialsUnreadable = true
         }
-    }
-}
-
-/// Tells the user's edits of the URL field apart from the form rewriting it. Connect
-/// moves `user:password@` out of an RTSP URL by rewriting the field; the field's
-/// change handler resets the form after a user edit, and without this it also
-/// treated the rewrite as one, undoing the Connect and hiding the Add button.
-internal struct SourceFormURLFieldEdits {
-    private var pendingRewrite: String?
-
-    /// Call just before the form sets the field to `text` itself.
-    mutating func rewrite(to text: String) {
-        pendingRewrite = text
-    }
-
-    /// Sets `field` to `text` as the form's own change. Compares with what the field
-    /// holds, so a URL that only lost its surrounding spaces is written back too.
-    mutating func replace(_ field: inout String, with text: String) {
-        guard field != text else { return }
-        rewrite(to: text)
-        field = text
-    }
-
-    /// Whether the field's new value came from the user.
-    mutating func isUserEdit(_ newText: String) -> Bool {
-        defer { pendingRewrite = nil }
-        return pendingRewrite != newText
     }
 }

@@ -62,6 +62,10 @@ internal enum ONVIFError: LocalizedError {
     case parseError
     case authenticationFailed
     case timedOut
+    /// The camera's TLS certificate was refused (`ONVIFServerTrust`): macOS doesn't
+    /// trust it, and it is not the one the user trusted for the camera, if any. The
+    /// handshake failed, so nothing was sent.
+    case certificateNotTrusted(ONVIFCertificateProblem)
 
     /// True when no answer came back from the device at all, as opposed to the
     /// device answering with an error. Not the same as the host being out of reach
@@ -70,7 +74,25 @@ internal enum ONVIFError: LocalizedError {
         switch self {
         case .networkError, .timedOut:
             return true
-        case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed:
+        case .invalidURL, .httpStatus, .soapFault, .parseError, .authenticationFailed, .certificateNotTrusted:
+            return false
+        }
+    }
+
+    /// Whether every further request to the device fails the same way: nothing
+    /// answers, or only the user can clear the error. A fallback that sends another
+    /// request (the default media path, the Mac's clock) is no use then.
+    var failsEveryRequest: Bool {
+        isTransportFailure || needsUserDecision
+    }
+
+    /// Whether only the user can clear the error, in the camera's settings: trying
+    /// again, or looking for the camera elsewhere, would fail the same way.
+    var needsUserDecision: Bool {
+        switch self {
+        case .certificateNotTrusted:
+            return true
+        case .invalidURL, .networkError, .httpStatus, .soapFault, .parseError, .authenticationFailed, .timedOut:
             return false
         }
     }
@@ -118,6 +140,8 @@ internal enum ONVIFError: LocalizedError {
             return "Authentication failed"
         case .timedOut:
             return "The camera did not respond in time"
+        case .certificateNotTrusted(let problem):
+            return problem.statusMessage
         }
     }
 }

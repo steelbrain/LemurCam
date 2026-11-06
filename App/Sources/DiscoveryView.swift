@@ -15,6 +15,10 @@ internal struct DiscoveryView: View {
     @State private var selectedProfileToken: String?
     @State private var fetches = DiscoveryFetches()
     @State private var deviceUUID: String?
+    /// The certificate the user trusted for the camera picked (`CertificateTrustPrompt`).
+    @State private var pinnedCertificate: CertificateFingerprint?
+    /// A certificate a fetch met that macOS doesn't trust, while the user is asked.
+    @State private var trustPrompt: CertificateTrustPrompt?
     @State private var cameraName = ""
     /// Why Save did not save the camera; the sheet stays open.
     @State private var saveError: String?
@@ -33,6 +37,11 @@ internal struct DiscoveryView: View {
         .frame(width: 400)
         .frame(minHeight: 300)
         .onAppear { startScan() }
+        .certificateTrustDialog($trustPrompt) { prompt in
+            guard fetches.isCurrent(prompt.ticket) else { return }
+            pinnedCertificate = prompt.problem.fingerprint
+            fetchDeviceProfiles()
+        }
     }
 
     // MARK: - Scanning
@@ -268,6 +277,7 @@ private extension DiscoveryView {
     func selectDevice(_ device: DiscoveredDevice) {
         selectedDevice = device
         deviceUUID = device.endpointUUID
+        pinnedCertificate = nil
         username = ""
         password = ""
         hasCredentials = false
@@ -293,8 +303,18 @@ private extension DiscoveryView {
             host: device.host, port: device.port,
             username: hasCredentials ? username : nil,
             password: hasCredentials ? password : nil,
-            useHTTPS: device.useHTTPS
+            useHTTPS: device.useHTTPS, policy: ONVIFConnectionPolicy(pinnedCertificate: pinnedCertificate)
         )
+    }
+
+    /// A fetch failed: asks about a certificate macOS doesn't trust, or shows the error.
+    func fetchFailed(_ error: any Error, ticket: Int) {
+        guard let prompt = CertificateTrustPrompt(error: error, ticket: ticket) else {
+            fetches.fetchFailed(error.localizedDescription, ticket: ticket)
+            return
+        }
+        fetches.fetchFailed(CertificateTrustPrompt.notTrustedMessage, ticket: ticket)
+        if fetches.isCurrent(ticket) { trustPrompt = prompt }
     }
 
     func fetchDeviceProfiles() {
@@ -311,7 +331,7 @@ private extension DiscoveryView {
                 }
                 await MainActor.run { fetches.detailsFetched(fetched, ticket: ticket) }
             } catch {
-                await MainActor.run { fetches.fetchFailed(error.localizedDescription, ticket: ticket) }
+                await MainActor.run { fetchFailed(error, ticket: ticket) }
             }
         }
     }
@@ -327,7 +347,7 @@ private extension DiscoveryView {
                 }
                 await MainActor.run { fetches.streamURIFetched(uri, ticket: ticket) }
             } catch {
-                await MainActor.run { fetches.fetchFailed(error.localizedDescription, ticket: ticket) }
+                await MainActor.run { fetchFailed(error, ticket: ticket) }
             }
         }
     }
@@ -353,7 +373,8 @@ private extension DiscoveryView {
         let sourceType = SourceType.onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: device.host, port: device.port,
             selectedProfileToken: selectedProfileToken, streamURI: fetches.streamURI, useHTTPS: device.useHTTPS,
-            serialNumber: fetches.deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
+            serialNumber: fetches.deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 },
+            pinnedCertificate: pinnedCertificate
         ))
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty

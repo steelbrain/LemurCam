@@ -17,8 +17,12 @@ internal final class ONVIFClient: Sendable {
     private let username: String?
     private let password: String?
     private let session: URLSession
+    /// The session's delegate, which decides on the camera's certificate. Not private
+    /// so tests can hand it a certificate: a stub `URLProtocol` can't present one.
+    let serverTrust: ONVIFServerTrustDelegate
 
     private let useHTTPS: Bool
+    private let policy: ONVIFConnectionPolicy
 
     /// Seconds to add to the Mac's clock to get the device's, measured once per
     /// client with GetSystemDateAndTime before the first signed request.
@@ -27,10 +31,13 @@ internal final class ONVIFClient: Sendable {
     /// Path of the media service, read once per client from GetCapabilities.
     private let mediaPath = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    /// `configuration` exists so tests can install a stub `URLProtocol`; the app
-    /// always uses the default configuration.
+    /// `policy` holds the user's decisions about this camera (a trusted certificate,
+    /// plain HTTP outside the local network); a client for a saved camera takes the
+    /// saved ones (`ONVIFSourceInfo.connectionPolicy`). `configuration` exists so tests
+    /// can install a stub `URLProtocol`; the app always uses the default configuration.
     init(
         host: String, port: Int, username: String?, password: String?, useHTTPS: Bool = false,
+        policy: ONVIFConnectionPolicy = ONVIFConnectionPolicy(),
         configuration: URLSessionConfiguration = .default
     ) {
         self.host = host
@@ -38,10 +45,13 @@ internal final class ONVIFClient: Sendable {
         self.username = username
         self.password = password
         self.useHTTPS = useHTTPS
+        self.policy = policy
 
         configuration.timeoutIntervalForRequest = Tuning.onvifRequestTimeout
         configuration.timeoutIntervalForResource = ONVIFTimeout.resource
-        self.session = URLSession(configuration: configuration)
+        let trustDelegate = ONVIFServerTrustDelegate(host: host, pin: policy.pinnedCertificate)
+        self.serverTrust = trustDelegate
+        self.session = URLSession(configuration: configuration, delegate: trustDelegate, delegateQueue: nil)
     }
 
     deinit {
@@ -100,7 +110,7 @@ internal final class ONVIFClient: Sendable {
             let data = try await capabilities()
             if let path = Self.parseMediaServicePath(data) { return path }
             Log.app.info("ONVIF device listed no media service; using \(fallback)")
-        } catch let error as ONVIFError where error.isTransportFailure {
+        } catch let error as ONVIFError where error.failsEveryRequest {
             throw error
         } catch is SignedRequestRefused {
             throw ONVIFError.authenticationFailed
@@ -171,15 +181,16 @@ internal final class ONVIFClient: Sendable {
         return measured
     }
 
-    /// A device that cannot be reached throws, so callers see the same error the
-    /// real request would have produced without waiting for a second timeout. A
-    /// device that answers without a usable time leaves the Mac's clock in use.
+    /// A device that cannot be reached, or whose certificate is refused, throws, so
+    /// callers see the same error the real request would have produced without
+    /// waiting for a second timeout (`ONVIFError.failsEveryRequest`). A device that
+    /// answers without a usable time leaves the Mac's clock in use.
     private func measureClockOffset() async throws -> TimeInterval {
         let sent = Date()
         let data: Data
         do {
             data = try await post(path: Self.deviceServicePath, body: ONVIFSOAP.getSystemDateAndTime(), signed: false)
-        } catch let error as ONVIFError where error.isTransportFailure {
+        } catch let error as ONVIFError where error.failsEveryRequest {
             throw error
         } catch {
             Log.app.info("ONVIF device did not report its time (\(error.localizedDescription)); using the Mac's clock")
@@ -248,13 +259,15 @@ internal final class ONVIFClient: Sendable {
     }
 
     /// Reads the response body, giving up once it exceeds `ONVIFXML.maxDocumentBytes`
-    /// so a hostile or broken device cannot make the app buffer an unbounded body.
+    /// so a hostile or broken device cannot make the app buffer an unbounded body. A
+    /// request whose certificate the delegate refused fails with that certificate.
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
             (bytes, response) = try await session.bytes(for: request)
         } catch {
+            if let refusal = serverTrust.lastRefusal { throw ONVIFError.certificateNotTrusted(refusal) }
             throw ONVIFError.networkError(error.localizedDescription, code: (error as? URLError)?.code)
         }
         let limit = ONVIFXML.maxDocumentBytes

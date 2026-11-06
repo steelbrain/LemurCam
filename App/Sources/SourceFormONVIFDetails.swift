@@ -1,7 +1,8 @@
 /// What the add/edit form read from an ONVIF camera, to be saved with it: the profiles
 /// to pick from, the profile picked and its stream URL (the saved fallback), and the
 /// device UUID and serial number that rediscovery tells the camera apart by. All of it
-/// must come from the camera the form last connected to.
+/// must come from the camera the form last connected to. So must the certificate the
+/// user trusted for the camera's address (`CertificateTrustPrompt`).
 ///
 /// Adding a camera, connecting to one, then editing the URL and connecting to another
 /// kept the first one's device UUID and serial number: the edit and the new Connect
@@ -16,6 +17,7 @@ internal struct SourceFormONVIFDetails {
     private(set) var streamURI: String?
     private(set) var deviceUUID: String?
     private(set) var serialNumber: String?
+    private(set) var pinnedCertificate: CertificateFingerprint?
 
     /// For a camera being added: nothing is read yet.
     init() {}
@@ -26,17 +28,33 @@ internal struct SourceFormONVIFDetails {
         streamURI = saved.streamURI
         deviceUUID = saved.deviceUUID
         serialNumber = saved.serialNumber
+        pinnedCertificate = saved.pinnedCertificate
+    }
+
+    /// What a client for the camera at the form's address may accept.
+    var connectionPolicy: ONVIFConnectionPolicy {
+        ONVIFConnectionPolicy(pinnedCertificate: pinnedCertificate)
+    }
+
+    /// The camera as the form saves it at `address`.
+    func sourceInfo(at address: SourceFormONVIFAddressEdits.Address) -> ONVIFSourceInfo {
+        ONVIFSourceInfo(
+            deviceUUID: deviceUUID, host: address.host, port: address.port,
+            selectedProfileToken: selectedProfileToken, streamURI: streamURI,
+            useHTTPS: address.useHTTPS, serialNumber: serialNumber, pinnedCertificate: pinnedCertificate
+        )
     }
 
     /// The URL was edited, or Connect starts for a camera being added: nothing read
-    /// from the camera before is kept, its device UUID and serial number included.
+    /// from the camera before is kept, its device UUID, serial number and trusted
+    /// certificate included.
     mutating func clear() {
         self = Self()
     }
 
     /// The camera's profiles are fetched anew. Its device UUID and serial number stay:
     /// a saved camera keeps the ones it was saved with unless the camera reports its
-    /// own (see `profilesFetched`).
+    /// own (see `profilesFetched`). So does the certificate the user trusted.
     mutating func startFetchingProfiles() {
         profiles = []
         selectedProfileToken = nil
@@ -62,5 +80,10 @@ internal struct SourceFormONVIFDetails {
 
     mutating func streamURIFetched(_ uri: String) {
         streamURI = uri
+    }
+
+    /// The user trusted the certificate with `fingerprint` for the camera.
+    mutating func trust(_ fingerprint: CertificateFingerprint) {
+        pinnedCertificate = fingerprint
     }
 }

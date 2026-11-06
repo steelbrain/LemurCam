@@ -209,7 +209,9 @@ internal final class SourceManager {
     /// (`SourceCredentials.storedStreamURI(_:movedFrom:to:)`): name, profile and
     /// credentials are left alone, nothing is written when the address is the same,
     /// and no config change is signalled, because the resolve that found the address
-    /// goes on to connect there. `updatedAt` marks user edits and stays as it is.
+    /// goes on to connect there. `updatedAt` marks user edits and stays as it is. What
+    /// the user decided for the old address, a trusted certificate, is dropped
+    /// (`ONVIFSourceInfo.clearAddressDecisions()`): it is asked again at the new one.
     func updateONVIFAddress(id: UUID, from previous: ONVIFSourceInfo, to moved: ONVIFSourceInfo) {
         guard let index = sources.firstIndex(where: { $0.id == id }),
               case .onvif(var info) = sources[index].sourceType else { return }
@@ -225,6 +227,7 @@ internal final class SourceManager {
         info.host = moved.host
         info.port = moved.port
         info.useHTTPS = moved.useHTTPS
+        info.clearAddressDecisions()
         sources[index].sourceType = .onvif(info)
         persist()
         Log.app.info("Camera '\(sources[index].name)' now answers at \(moved.host):\(moved.port)")

@@ -1,5 +1,6 @@
 /// Ties the edit form's ONVIF details (the profile chosen, its stream URL, the device
-/// UUID and the serial number) to the address they were read from. Editing Host, Port
+/// UUID, the serial number and the trusted certificate) to the address they were read
+/// from. Editing Host, Port
 /// or Use HTTPS used to leave the old camera's details in place, and Save stored them
 /// with the new address, so a later rediscovery looked for the old camera's UUID and
 /// could move the source back to it. Moving the address away clears them; they come
@@ -18,6 +19,7 @@ internal struct SourceFormONVIFAddressEdits {
         let streamURI: String?
         let deviceUUID: String?
         let serialNumber: String?
+        var pinnedCertificate: CertificateFingerprint?
     }
 
     /// What the form does with its details after an address edit.

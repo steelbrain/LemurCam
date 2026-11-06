@@ -20,12 +20,17 @@ internal struct ONVIFSourceInfo: Codable, Equatable {
     /// The serial number from GetDeviceInformation. Kept apart from `deviceUUID`,
     /// which must be the WS-Discovery endpoint UUID for rediscovery to match.
     var serialNumber: String?
+    /// The camera's certificate the user trusted for this address, accepted though
+    /// macOS doesn't trust it (`ONVIFServerTrust`).
+    var pinnedCertificate: CertificateFingerprint?
 }
 
 extension ONVIFSourceInfo {
-    /// Decodes sources saved before a field existed: `useHTTPS` and `serialNumber`
-    /// were added later and default to HTTP and nil when absent. `host` and `port`
-    /// stay required.
+    /// Decodes sources saved before a field existed: `useHTTPS`, `serialNumber` and
+    /// `pinnedCertificate` were added later and default to HTTP, nil and nil when
+    /// absent. `host` and `port` stay required. A pinned certificate that can't be read
+    /// is dropped, so the camera's certificate is asked about again, rather than the
+    /// whole cameras file failing to load.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         deviceUUID = try container.decodeIfPresent(String.self, forKey: .deviceUUID)
@@ -35,6 +40,24 @@ extension ONVIFSourceInfo {
         streamURI = try container.decodeIfPresent(String.self, forKey: .streamURI)
         useHTTPS = try container.decodeIfPresent(Bool.self, forKey: .useHTTPS) ?? false
         serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
+        pinnedCertificate = try? container.decodeIfPresent(CertificateFingerprint.self, forKey: .pinnedCertificate)
+    }
+
+    /// What a client for this camera may accept beyond what macOS allows on its own.
+    var connectionPolicy: ONVIFConnectionPolicy {
+        ONVIFConnectionPolicy(pinnedCertificate: pinnedCertificate)
+    }
+
+    /// Forgets the decisions the user made about the camera at its saved address,
+    /// for a camera that now answers somewhere else: a certificate trusted at one
+    /// address is not trusted at another without the user seeing it.
+    mutating func clearAddressDecisions() {
+        pinnedCertificate = nil
+    }
+
+    /// Takes the decisions saved with `other`, whose address these settings take.
+    mutating func takeAddressDecisions(of other: Self) {
+        pinnedCertificate = other.pinnedCertificate
     }
 
     /// The device UUID to keep after the form fetches a camera's details.

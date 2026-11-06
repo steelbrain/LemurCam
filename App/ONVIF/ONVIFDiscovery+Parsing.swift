@@ -72,8 +72,8 @@ internal extension ONVIFDiscovery {
     /// whitespace, including newlines, separates entries). See `parseProbeMatch`.
     ///
     /// When a device lists both, plain HTTP is preferred over HTTPS: cameras ship with
-    /// self-signed certificates, which the app has no way to trust yet, so the HTTPS
-    /// address fails where the HTTP one works. Among addresses of the preferred scheme,
+    /// self-signed certificates, which macOS doesn't trust, so the HTTPS address works
+    /// only once the user has trusted the camera's certificate. Among addresses of the preferred scheme,
     /// the one whose host matches the sender is preferred.
     static func endpoint(fromXAddrs xaddrs: String, sender: String) -> (url: String, host: String, port: Int)? {
         let candidates = xaddrs.split(whereSeparator: \.isWhitespace).compactMap { entry -> URLComponents? in

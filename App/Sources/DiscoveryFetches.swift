@@ -58,4 +58,9 @@ internal struct DiscoveryFetches {
         error = message
         isFetchingProfiles = false
     }
+
+    /// Whether `ticket` is the latest fetch's, and nothing made it stale since.
+    func isCurrent(_ ticket: Int) -> Bool {
+        tickets.isCurrent(ticket)
+    }
 }
