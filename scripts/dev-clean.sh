@@ -152,7 +152,7 @@ sudo_run_allow_fail() {
 confirm() {
   local message="$1"
   if [[ "$EXECUTE" -ne 1 || "$ASSUME_YES" -eq 1 ]]; then
-    return
+    return 0
   fi
 
   printf '%s [y/N] ' "$message"
@@ -350,7 +350,7 @@ delete_apps() {
 
   if [[ "${#apps[@]}" -eq 0 ]]; then
     echo "No ${APP_NAME}.app bundles found."
-    return
+    return 0
   fi
 
   printf 'Found app bundle(s):\n'
@@ -468,7 +468,7 @@ clean_derived_data() {
   delete_path "$REPO_ROOT/build"
 
   local derived_root="${HOME}/Library/Developer/Xcode/DerivedData"
-  [[ -d "$derived_root" ]] || return
+  [[ -d "$derived_root" ]] || return 0
 
   local dirs=()
   while IFS= read -r dir; do
@@ -477,7 +477,7 @@ clean_derived_data() {
 
   if [[ "${#dirs[@]}" -eq 0 ]]; then
     echo "No ${APP_NAME} DerivedData folders found."
-    return
+    return 0
   fi
 
   printf 'Found DerivedData folder(s):\n'
