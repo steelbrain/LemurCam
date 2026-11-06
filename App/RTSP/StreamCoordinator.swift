@@ -12,7 +12,8 @@ internal final class StreamCoordinator {
     private var currentSourceID: UUID?
     private var currentSourceUpdatedAt: Date?
     /// The pipeline connection this coordinator runs, as `connect` named it; nil
-    /// once it cancelled that connection and has not started another.
+    /// once it cancelled that connection and has not started another. The frame
+    /// dispatcher lets through only this connection's frames.
     private var currentConnection: StreamConnectionID?
     private var retryTask: Task<Void, Never>?
     private var onvifTask: Task<Void, Never>?
@@ -124,8 +125,8 @@ internal final class StreamCoordinator {
         let dispatcher = frameDispatcher
         let firstFrame = firstDecodedFrame
         let resetBackoff: @MainActor @Sendable () -> Void = { [weak self] in self?.backoff.reset() }
-        pipeline.onPixelBuffer = { pixelBuffer in
-            dispatcher.handleDecodedFrame(pixelBuffer)
+        pipeline.onPixelBuffer = { pixelBuffer, connection in
+            guard dispatcher.handleDecodedFrame(pixelBuffer, from: connection) else { return }
             if firstFrame.take() {
                 Task { @MainActor in resetBackoff() }
             }
@@ -147,15 +148,17 @@ internal final class StreamCoordinator {
             Task { @MainActor in handleStateChange(state, connection) }
         }
 
+        // Hops like a state change, so it can land after its connection was replaced.
         let updateStreamInfo: @MainActor @Sendable (
-            RTSPStreamPipeline.StreamInfo
-        ) -> Void = { [weak previewStore] info in
-            previewStore?.sourceWidth = info.width
-            previewStore?.sourceHeight = info.height
-            previewStore?.sourceCodec = info.codec
+            RTSPStreamPipeline.StreamInfo, StreamConnectionID
+        ) -> Void = { [weak self] info, connection in
+            guard let self, connection == self.currentConnection else { return }
+            self.previewStore.sourceWidth = info.width
+            self.previewStore.sourceHeight = info.height
+            self.previewStore.sourceCodec = info.codec
         }
-        pipeline.onStreamInfo = { info in
-            Task { @MainActor in updateStreamInfo(info) }
+        pipeline.onStreamInfo = { info, connection in
+            Task { @MainActor in updateStreamInfo(info, connection) }
         }
     }
 
@@ -176,43 +179,16 @@ internal final class StreamCoordinator {
 
 // MARK: - Demand Tracking
 
-private extension StreamCoordinator {
-    func observeConsumerChanges() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer = Unmanaged.passUnretained(self).toOpaque()
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord._hasConsumers = true; coord.demandChanged() }
-            },
-            LemurCamConfig.consumerStartedNotification, nil, .deliverImmediately
-        )
-
-        CFNotificationCenterAddObserver(
-            center, observer,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let coord = Unmanaged<StreamCoordinator>.fromOpaque(observer)
-                    .takeUnretainedValue()
-                DispatchQueue.main.async { coord._hasConsumers = false; coord.demandChanged() }
-            },
-            LemurCamConfig.consumerStoppedNotification, nil, .deliverImmediately
-        )
-
-        // The extension posts nothing when it dies or its device is replaced, and
-        // the model's discovery probe decides whether the sink stream starts: take
-        // both from the model, so a consumer that is gone stops the stream and one
-        // the sink serves gets frames.
-        model.onExternalConsumerChange = { [weak self] hasConsumer in
-            self?._hasConsumers = hasConsumer
-            self?.demandChanged()
-        }
+extension StreamCoordinator {
+    /// An external app started or stopped using the virtual camera, as a Darwin
+    /// consumer notification or the model reported it.
+    func cameraConsumerChanged(active: Bool) {
+        _hasConsumers = active
+        demandChanged()
     }
+}
 
+private extension StreamCoordinator {
     func demandChanged() {
         reconcileDemand()
     }
@@ -242,9 +218,11 @@ private extension StreamCoordinator {
             syncToActiveSource(force: true)
         } else {
             Log.rtsp.info("No demand — pausing RTSP pipeline")
-            frameDispatcher.reset()
             cancelAllTasks()
+            // Cancelled first, so the dispatcher drops the old connection's frames
+            // before the reset empties its queue.
             cancelPipeline()
+            frameDispatcher.reset()
             fallbackGenerator.stop()
             showActiveSourceIdle()
         }
@@ -269,14 +247,17 @@ private extension StreamCoordinator {
 
     /// Start a pipeline connection and record it as the current one.
     func connectPipeline(url: String, credentials: SourceCredentials?) {
-        currentConnection = pipeline.connect(url: url, credentials: credentials)
+        let connection = pipeline.connect(url: url, credentials: credentials)
+        currentConnection = connection
+        frameDispatcher.accept(connection)
     }
 
-    /// Cancel the pipeline's connection without a state change. State changes it
-    /// already reported, still on their way to the main actor, are dropped.
+    /// Cancel the pipeline's connection without a state change. State changes,
+    /// stream info and frames it already reported, still on their way, are dropped.
     func cancelPipeline() {
         pipeline.cancelSilently()
         currentConnection = nil
+        frameDispatcher.accept(nil)
     }
 }
 
@@ -481,8 +462,7 @@ extension StreamCoordinator {
     /// Apply a camera consumer edge the way `observeConsumerChanges`' Darwin
     /// observers do, without posting the system-wide notification.
     func simulateCameraConsumerChange(active: Bool) {
-        _hasConsumers = active
-        demandChanged()
+        cameraConsumerChanged(active: active)
     }
 
     /// Apply a microphone consumer edge the way `VirtualMicDemand`'s Darwin

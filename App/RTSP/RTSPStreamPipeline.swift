@@ -21,11 +21,14 @@ internal struct StreamConnectionID: Hashable, Sendable {
 /// production conformer; tests substitute a recording fake to exercise retry and
 /// demand handling without a camera.
 internal protocol StreamPipeline: AnyObject, Sendable {
-    var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? { get set }
+    /// Called with each decoded frame and the connection it came from, on the
+    /// decoder's output thread.
+    var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)? { get set }
     /// Called with each state change and the connection it belongs to: the ID the
     /// `connect` call that started it returned.
     var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)? { get set }
-    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)? { get set }
+    /// Called with a connected stream's video format and the connection it describes.
+    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)? { get set }
     var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? { get set }
 
     /// Starts a new connection, replacing any current one, and returns its ID.
@@ -74,7 +77,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         let codec: String
     }
 
-    var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? {
+    var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)? {
         get { callbacks.withLock { $0.onPixelBuffer } }
         set { callbacks.withLock { $0.onPixelBuffer = newValue } }
     }
@@ -84,7 +87,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         set { callbacks.withLock { $0.onStateChanged = newValue } }
     }
 
-    var onStreamInfo: (@Sendable (StreamInfo) -> Void)? {
+    var onStreamInfo: (@Sendable (StreamInfo, StreamConnectionID) -> Void)? {
         get { callbacks.withLock { $0.onStreamInfo } }
         set { callbacks.withLock { $0.onStreamInfo = newValue } }
     }
@@ -98,9 +101,9 @@ internal final class RTSPStreamPipeline: StreamPipeline {
     }
 
     private struct Callbacks: Sendable {
-        var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)?
+        var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)?
         var onStateChanged: (@Sendable (State, StreamConnectionID) -> Void)?
-        var onStreamInfo: (@Sendable (StreamInfo) -> Void)?
+        var onStreamInfo: (@Sendable (StreamInfo, StreamConnectionID) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
     }
 
@@ -169,14 +172,14 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 
             let watchdog = StreamWatchdog()
             let processor = makeProcessor(for: video)
-            let decoder = makeVideoDecoder(watchdog: watchdog)
+            let decoder = makeVideoDecoder(watchdog: watchdog, connection: connection)
             defer { decoder.tearDown() }
             let audioDecoder = description.audio.map(makeAudioDecoder)
             defer { audioDecoder?.tearDown() }
 
             setState(.streaming, connection: connection)
             Log.rtsp.info("Stream connected: \(video.codec)")
-            publishStreamInfo(video)
+            publishStreamInfo(video, connection: connection)
 
             try await consumeFrames(
                 session: session, watchdog: watchdog, processor: processor,
@@ -207,11 +210,11 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         )
     }
 
-    private func makeVideoDecoder(watchdog: StreamWatchdog) -> VideoDecoder {
+    private func makeVideoDecoder(watchdog: StreamWatchdog, connection: StreamConnectionID) -> VideoDecoder {
         let decoder = VideoDecoder()
         decoder.onDecodedFrame = { [weak self] pixelBuffer in
             watchdog.markFrameDecoded()
-            self?.emitPixelBuffer(pixelBuffer)
+            self?.emitPixelBuffer(pixelBuffer, connection: connection)
         }
         return decoder
     }
@@ -233,7 +236,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         )
     }
 
-    private func publishStreamInfo(_ video: VideoStream) {
+    private func publishStreamInfo(_ video: VideoStream, connection: StreamConnectionID) {
         let codecName: String
         switch video.codec {
         case .h264: codecName = "H.264"
@@ -244,7 +247,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
             height: video.resolution?.height,
             codec: codecName
         )
-        emitStreamInfo(info)
+        emitStreamInfo(info, connection: connection)
     }
 
     private func cancelStreamTask() {
@@ -261,12 +264,12 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         callbacks.withLock { $0.onStateChanged }?(newValue, connection)
     }
 
-    private func emitPixelBuffer(_ pixelBuffer: CVPixelBuffer) {
-        callbacks.withLock { $0.onPixelBuffer }?(pixelBuffer)
+    private func emitPixelBuffer(_ pixelBuffer: CVPixelBuffer, connection: StreamConnectionID) {
+        callbacks.withLock { $0.onPixelBuffer }?(pixelBuffer, connection)
     }
 
-    private func emitStreamInfo(_ info: StreamInfo) {
-        callbacks.withLock { $0.onStreamInfo }?(info)
+    private func emitStreamInfo(_ info: StreamInfo, connection: StreamConnectionID) {
+        callbacks.withLock { $0.onStreamInfo }?(info, connection)
     }
 
     private func emitAudioPCM(_ samples: UnsafePointer<Float>, frames: Int) {

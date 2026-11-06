@@ -33,9 +33,9 @@ internal enum H264TestStream {
 /// `connect` reports `.connecting` straight away, and numbers its connections.
 internal final class FakeStreamPipeline: StreamPipeline {
     private struct State {
-        var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)?
+        var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)?
         var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)?
-        var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)?
+        var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
         var connectedURLs: [String] = []
         var connectedCredentials: [SourceCredentials?] = []
@@ -45,7 +45,7 @@ internal final class FakeStreamPipeline: StreamPipeline {
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    var onPixelBuffer: (@Sendable (CVPixelBuffer) -> Void)? {
+    var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)? {
         get { state.withLock { $0.onPixelBuffer } }
         set { state.withLock { $0.onPixelBuffer = newValue } }
     }
@@ -55,7 +55,7 @@ internal final class FakeStreamPipeline: StreamPipeline {
         set { state.withLock { $0.onStateChanged = newValue } }
     }
 
-    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo) -> Void)? {
+    var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)? {
         get { state.withLock { $0.onStreamInfo } }
         set { state.withLock { $0.onStreamInfo = newValue } }
     }
@@ -110,6 +110,12 @@ internal final class FakeStreamPipeline: StreamPipeline {
     /// Fire `onStateChanged` for `connection`, which may be an earlier one.
     func emit(_ newState: RTSPStreamPipeline.State, connection: StreamConnectionID) {
         onStateChanged?(newState, connection)
+    }
+
+    /// Fire `onStreamInfo` for `connection` (the latest one by default), as the
+    /// real pipeline does once a stream is connected.
+    func emitStreamInfo(_ info: RTSPStreamPipeline.StreamInfo, connection: StreamConnectionID? = nil) {
+        onStreamInfo?(info, connection ?? latestConnection)
     }
 }
 
@@ -236,15 +242,17 @@ internal final class CoordinatorHarness {
         audioDeviceListChange.withLock { $0 }?()
     }
 
-    /// Send `count` decoded frames to the coordinator, as the real pipeline does
-    /// from VideoToolbox's output thread.
-    func deliverDecodedFrames(_ count: Int) throws {
+    /// Send `count` decoded frames to the coordinator from `connection` (the
+    /// pipeline's latest by default), as the real pipeline does from VideoToolbox's
+    /// output thread.
+    func deliverDecodedFrames(_ count: Int, from connection: StreamConnectionID? = nil) throws {
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA, nil, &buffer)
         XCTAssertEqual(status, kCVReturnSuccess)
         let frame = try XCTUnwrap(buffer)
+        let source = connection ?? pipeline.latestConnection
         for _ in 0..<count {
-            pipeline.onPixelBuffer?(frame)
+            pipeline.onPixelBuffer?(frame, source)
         }
     }
 }

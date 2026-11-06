@@ -24,18 +24,21 @@ internal final class PreviewFrameRenderer: Sendable {
         self.context = device.map { CIContext(mtlDevice: $0) } ?? CIContext()
     }
 
+    /// Updates are passed the connection `pixelBuffer` came from, so a caller can
+    /// drop one that lands after that connection was replaced.
     func process(
         _ pixelBuffer: CVPixelBuffer,
+        from connection: StreamConnectionID,
         previewEnabled: Bool,
-        updateFPS: @escaping @MainActor @Sendable (Int) -> Void,
-        updateImage: @escaping @MainActor @Sendable (CGImage) -> Void
+        updateFPS: @escaping @MainActor @Sendable (Int, StreamConnectionID) -> Void,
+        updateImage: @escaping @MainActor @Sendable (CGImage, StreamConnectionID) -> Void
     ) {
         let now = CACurrentMediaTime()
         let (fps, shouldUpdatePreview) = updateFPSAndCheckPreview(
             now: now, isPreviewEnabled: previewEnabled
         )
         if let fps {
-            Task { @MainActor in updateFPS(fps) }
+            Task { @MainActor in updateFPS(fps, connection) }
         }
         guard shouldUpdatePreview, markRenderingStarted() else { return }
 
@@ -49,7 +52,7 @@ internal final class PreviewFrameRenderer: Sendable {
             }
             self.markRenderingFinished()
             if let cgImage {
-                Task { @MainActor in updateImage(cgImage) }
+                Task { @MainActor in updateImage(cgImage, connection) }
             }
         }
     }
