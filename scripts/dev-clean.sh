@@ -42,6 +42,8 @@ INCLUDE_ARCHIVES=0
 KEEP_DERIVED_DATA=0
 KEEP_EXTENSION=0
 KEEP_DRIVER=0
+KEEP_USER_STATE=0
+KEEP_KEYCHAIN=0
 DEVELOPER_ON=0
 GLOBAL_TCC_RESET=0
 GLOBAL_SYSEXT_RESET=0
@@ -62,9 +64,13 @@ By default --execute will:
   - remove the installed audio driver (${DRIVER_BUNDLE_NAME}) from
     ${HAL_PLUGINS_DIR} and restart coreaudiod so it drops the plug-in
   - reset Camera (TCC) authorization for the app and extension
-  - remove app-group / container / defaults user state
+  - remove app-group / container / defaults user state, including the saved
+    camera list (~/Library/Application Support/${APP_NAME}/sources.json)
   - delete Keychain credentials (${KEYCHAIN_SERVICE})
   - delete DerivedData and repo build/ outputs
+
+Without --yes, each of these steps asks before it runs; any answer other than
+"y" stops the script there. Use the --keep-* options to skip a step instead.
 
 Options:
   --execute              Actually run the commands. Without this, only prints them.
@@ -77,6 +83,9 @@ Options:
   --keep-derived-data    Do not delete DerivedData / repo build outputs.
   --keep-extension       Do not run 'systemextensionsctl uninstall'.
   --keep-driver          Do not remove the installed audio driver.
+  --keep-user-state      Do not delete defaults, containers, or Application
+                         Support data (the saved camera list).
+  --keep-keychain        Do not delete Keychain credentials.
   --developer-on         Enable system extension developer mode (eases reloading
                          locally-built extensions; needs SIP off).
   --global-tcc-reset     Reset Camera permission for ALL apps, not just LemurCam.
@@ -104,6 +113,8 @@ while [[ $# -gt 0 ]]; do
     --keep-derived-data) KEEP_DERIVED_DATA=1 ;;
     --keep-extension) KEEP_EXTENSION=1 ;;
     --keep-driver) KEEP_DRIVER=1 ;;
+    --keep-user-state) KEEP_USER_STATE=1 ;;
+    --keep-keychain) KEEP_KEYCHAIN=1 ;;
     --developer-on) DEVELOPER_ON=1 ;;
     --global-tcc-reset) GLOBAL_TCC_RESET=1 ;;
     --global-sysext-reset) GLOBAL_SYSEXT_RESET=1 ;;
@@ -170,7 +181,7 @@ confirm() {
   read -r reply || reply=""
   case "$reply" in
     y|Y|yes|YES) ;;
-    *) echo "Aborted."; exit 1 ;;
+    *) echo "Aborted; this step and the remaining steps were skipped."; exit 1 ;;
   esac
 }
 
@@ -342,6 +353,7 @@ is_archived_bundle() {
 
 stop_processes() {
   log "Stopping running LemurCam processes"
+  confirm "Stop the running ${APP_NAME} app and camera extension? (sudo)"
   run_allow_fail pkill -x "$APP_NAME"
   # The extension runs as _cmiodalassistants, so killing it (and even reading
   # its command line for -f matching) needs sudo.
@@ -355,6 +367,7 @@ uninstall_extension() {
 
   log "Uninstalling system extension ${EXT_BUNDLE_ID}"
   echo "Requires SIP disabled; failure here is non-fatal (staged copies are purged below)."
+  confirm "Uninstall ${EXT_BUNDLE_ID} with systemextensionsctl? (sudo)"
   sudo_run_allow_fail systemextensionsctl uninstall "$TEAM_ID" "$EXT_BUNDLE_ID"
 }
 
@@ -478,13 +491,28 @@ reset_tcc() {
     confirm "Reset Camera privacy permission for ALL apps?"
     run tccutil reset Camera
   else
+    confirm "Reset Camera privacy permission for ${APP_BUNDLE_ID} and ${EXT_BUNDLE_ID}?"
     reset_tcc_target "$APP_BUNDLE_ID"
     reset_tcc_target "$EXT_BUNDLE_ID"
   fi
 }
 
 reset_user_state() {
+  if [[ "$KEEP_USER_STATE" -eq 1 ]]; then
+    return 0
+  fi
+
   log "Removing LemurCam user state"
+  if [[ "$EXECUTE" -eq 1 ]]; then
+    printf 'Will remove:\n'
+    printf '  defaults domain %s\n' "$APP_BUNDLE_ID" "$APP_GROUP_ID"
+    printf '  %s\n' \
+      "${HOME}/Library/Application Support/${APP_NAME} (saved camera list)" \
+      "${HOME}/Library/Containers/${APP_BUNDLE_ID}" \
+      "${HOME}/Library/Group Containers/${APP_GROUP_ID}"
+  fi
+  confirm "Delete LemurCam settings and the saved camera list?"
+
   delete_defaults_domain "$APP_BUNDLE_ID"
   delete_defaults_domain "$APP_GROUP_ID"
   delete_path "${HOME}/Library/Application Support/${APP_NAME}"
@@ -493,11 +521,21 @@ reset_user_state() {
 }
 
 reset_keychain() {
+  if [[ "$KEEP_KEYCHAIN" -eq 1 ]]; then
+    return 0
+  fi
+
   log "Deleting LemurCam Keychain credentials"
   if [[ "$EXECUTE" -ne 1 ]]; then
     echo "DRY-RUN: delete all generic-password items with service ${KEYCHAIN_SERVICE}"
     return 0
   fi
+
+  if ! security find-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1; then
+    echo "No Keychain items found for service ${KEYCHAIN_SERVICE}."
+    return 0
+  fi
+  confirm "Delete every Keychain item for service ${KEYCHAIN_SERVICE} (saved camera credentials)?"
 
   local deleted=0
   while security delete-generic-password -s "$KEYCHAIN_SERVICE" >/dev/null 2>&1; do
