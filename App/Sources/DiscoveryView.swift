@@ -191,7 +191,7 @@ internal struct DiscoveryView: View {
                 if let streamURI {
                     Section {
                         LabeledContent("Stream URL") {
-                            Text(streamURI)
+                            Text(DisplayedURL.redacted(streamURI))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)

@@ -198,7 +198,10 @@ internal struct SourceFormView: View {
     private var streamURILabel: some View {
         if let streamURI {
             LabeledContent("Stream URL") {
-                Text(streamURI).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(DisplayedURL.redacted(streamURI))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
     }

@@ -184,7 +184,7 @@ internal struct SourceListView: View {
     private func sourceSubtitle(_ source: CameraSource) -> String {
         switch source.sourceType {
         case .rtsp(let info):
-            return SourceCredentials.strippingUserInfo(from: info.url)
+            return DisplayedURL.redacted(info.url)
         case .onvif(let info):
             return "\(info.host):\(info.port)"
         }
