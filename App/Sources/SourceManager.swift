@@ -208,10 +208,14 @@ internal final class SourceManager {
     }
 
     /// Older versions could leave credentials inside saved URLs (an RTSP URL with an
-    /// empty user name, or an ONVIF stream URI reported by the camera). Moves them out
-    /// once on load: RTSP credentials go to the Keychain unless it already holds some
-    /// for the source. If the Keychain can't be used, the URL is left as it is rather
-    /// than losing the only copy of the credentials.
+    /// empty user name or with a `/`, `?`, `#` or `@` in its userinfo, or an ONVIF
+    /// stream URI reported by the camera). Moves them out once on load: RTSP
+    /// credentials go to the Keychain unless it already holds some for the source. If
+    /// the Keychain can't be used, the URL is left as it is rather than losing the only
+    /// copy of the credentials. So is an ambiguous URL (see
+    /// `SourceCredentials.hasAmbiguousUserInfo`) whose source already has saved
+    /// credentials: what it holds before its last `@` is only a reading, and may be
+    /// part of the address rather than a login to drop.
     private func moveEmbeddedCredentialsToKeychain() {
         var migrated = 0
         for index in sources.indices {
@@ -222,6 +226,10 @@ internal final class SourceManager {
                 do {
                     if try keychain.retrieve(for: source.id) == nil {
                         try keychain.save(credentials: urlCredentials, for: source.id)
+                    } else if case .rtsp(let info) = source.sourceType,
+                              SourceCredentials.hasAmbiguousUserInfo(info.url) {
+                        Log.app.error("Left the saved URL of '\(source.name)' as it is: it can't be read reliably")
+                        continue
                     }
                 } catch {
                     Log.app.error("Left credentials in the saved URL of '\(source.name)': Keychain unavailable")

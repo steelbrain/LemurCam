@@ -132,6 +132,9 @@ internal struct SourceFormView: View {
             switch editType {
             case .rtsp:
                 TextField("RTSP URL", text: $inputText).textContentType(.URL)
+                if !inputText.isEmpty, let problem = RTSPURLInput.problem(with: inputText) {
+                    Text(problem).font(.caption).foregroundStyle(.red)
+                }
             case .onvif:
                 editONVIFFields
             }
@@ -225,11 +228,7 @@ private extension SourceFormView {
     }
 
     func isValidRTSPURL(_ urlString: String) -> Bool {
-        guard !urlString.isEmpty,
-              let components = URLComponents(string: urlString),
-              let scheme = components.scheme?.lowercased(),
-              let host = components.host, !host.isEmpty else { return false }
-        return scheme == "rtsp" || scheme == "rtsps"
+        RTSPURLInput.problem(with: urlString) == nil
     }
 
     func makeONVIFClient() -> ONVIFClient {
@@ -257,8 +256,8 @@ private extension SourceFormView {
     /// Moves any `user:password@` in the URL into the credential fields, including a
     /// password with an empty user name, so it is not kept in the URL.
     func handleDirectRTSP(_ url: String) {
-        guard isValidRTSPURL(url) else {
-            probeError = "Enter a valid RTSP URL (e.g. rtsp://192.168.1.100:554/stream)"
+        if let problem = RTSPURLInput.problem(with: url) {
+            probeError = problem
             return
         }
         resolvedType = .rtsp
