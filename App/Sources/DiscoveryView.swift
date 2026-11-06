@@ -12,12 +12,8 @@ internal struct DiscoveryView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var hasCredentials = false
-    @State private var profiles: [ONVIFProfile] = []
     @State private var selectedProfileToken: String?
-    @State private var isFetchingProfiles = false
-    @State private var fetchError: String?
-    @State private var streamURI: String?
-    @State private var deviceInfo: ONVIFDeviceInfo?
+    @State private var fetches = DiscoveryFetches()
     @State private var deviceUUID: String?
     @State private var cameraName = ""
     /// Why Save did not save the camera; the sheet stays open.
@@ -145,7 +141,7 @@ internal struct DiscoveryView: View {
             }
             .formStyle(.grouped)
             HStack {
-                Button("Back") { step = .scanning }
+                Button("Back") { goBack(to: .scanning) }
                 Spacer()
                 Button("Connect") { fetchDeviceProfiles() }.keyboardShortcut(.defaultAction)
             }
@@ -170,25 +166,25 @@ internal struct DiscoveryView: View {
             Section {
                 HStack { Text("Select Profile").font(.headline); Spacer() }
             }
-            if isFetchingProfiles {
+            if fetches.isFetchingProfiles {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Fetching profiles\u{2026}").foregroundStyle(.secondary)
                 }
             }
-            if let fetchError {
+            if let fetchError = fetches.error {
                 Text(fetchError).font(.caption).foregroundStyle(.red)
             }
-            if !profiles.isEmpty {
+            if !fetches.profiles.isEmpty {
                 Section {
                     Picker("Profile", selection: $selectedProfileToken) {
                         Text("Select a profile").tag(nil as String?)
-                        ForEach(profiles) { profile in
+                        ForEach(fetches.profiles) { profile in
                             Text(profile.displayName).tag(profile.token as String?)
                         }
                     }
                 }
-                if let streamURI {
+                if let streamURI = fetches.streamURI {
                     Section {
                         LabeledContent("Stream URL") {
                             Text(DisplayedURL.redacted(streamURI))
@@ -205,7 +201,7 @@ internal struct DiscoveryView: View {
 
     private var profilesFooter: some View {
         HStack {
-            Button("Back") { step = .credentials }
+            Button("Back") { goBack(to: .credentials) }
             Spacer()
             Button("Next") { prepareNaming() }
                 .keyboardShortcut(.defaultAction)
@@ -234,10 +230,10 @@ private extension DiscoveryView {
                 if let device = selectedDevice {
                     Section("Details") {
                         LabeledContent("Host", value: "\(device.host):\(device.port)")
-                        if let manufacturer = deviceInfo?.manufacturer {
+                        if let manufacturer = fetches.deviceInfo?.manufacturer {
                             LabeledContent("Manufacturer", value: manufacturer)
                         }
-                        if let model = deviceInfo?.model {
+                        if let model = fetches.deviceInfo?.model {
                             LabeledContent("Model", value: model)
                         }
                     }
@@ -275,7 +271,21 @@ private extension DiscoveryView {
         username = ""
         password = ""
         hasCredentials = false
+        dropFetches()
         step = .credentials
+    }
+
+    /// Back from the credentials or profiles step, whose fetches are for the camera
+    /// and login entered before.
+    private func goBack(to previous: Step) {
+        dropFetches()
+        step = previous
+    }
+
+    /// Drops the fetches in flight and what was fetched (see `DiscoveryFetches`).
+    func dropFetches() {
+        fetches.reset()
+        selectedProfileToken = nil
     }
 
     func makeClient(for device: DiscoveredDevice) -> ONVIFClient {
@@ -289,11 +299,8 @@ private extension DiscoveryView {
 
     func fetchDeviceProfiles() {
         guard let device = selectedDevice else { return }
-        isFetchingProfiles = true
-        fetchError = nil
-        profiles = []
+        let ticket = fetches.startFetchingDetails()
         selectedProfileToken = nil
-        streamURI = nil
         step = .profiles
         let client = makeClient(for: device)
         Task {
@@ -302,26 +309,25 @@ private extension DiscoveryView {
                 let fetched = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     try await client.fetchDeviceDetails(includingEndpointReference: false)
                 }
-                await MainActor.run {
-                    profiles = fetched.profiles; deviceInfo = fetched.info; isFetchingProfiles = false
-                }
+                await MainActor.run { fetches.detailsFetched(fetched, ticket: ticket) }
             } catch {
-                await MainActor.run { fetchError = error.localizedDescription; isFetchingProfiles = false }
+                await MainActor.run { fetches.fetchFailed(error.localizedDescription, ticket: ticket) }
             }
         }
     }
 
     func fetchStream(profileToken: String) {
         guard let device = selectedDevice else { return }
+        let ticket = fetches.startFetchingStreamURI()
         let client = makeClient(for: device)
         Task {
             do {
                 let uri = try await ONVIFTimeout.run(seconds: ONVIFTimeout.interactiveFetch) {
                     try await client.getStreamURI(profileToken: profileToken)
                 }
-                await MainActor.run { streamURI = uri }
+                await MainActor.run { fetches.streamURIFetched(uri, ticket: ticket) }
             } catch {
-                await MainActor.run { fetchError = error.localizedDescription }
+                await MainActor.run { fetches.fetchFailed(error.localizedDescription, ticket: ticket) }
             }
         }
     }
@@ -330,7 +336,7 @@ private extension DiscoveryView {
         if cameraName.isEmpty {
             if let name = selectedDevice?.name {
                 cameraName = name
-            } else if let manufacturer = deviceInfo?.manufacturer, let model = deviceInfo?.model {
+            } else if let manufacturer = fetches.deviceInfo?.manufacturer, let model = fetches.deviceInfo?.model {
                 cameraName = "\(manufacturer) \(model)"
             } else if let manufacturer = selectedDevice?.manufacturer {
                 cameraName = manufacturer
@@ -346,8 +352,8 @@ private extension DiscoveryView {
         guard let device = selectedDevice else { return false }
         let sourceType = SourceType.onvif(ONVIFSourceInfo(
             deviceUUID: deviceUUID, host: device.host, port: device.port,
-            selectedProfileToken: selectedProfileToken, streamURI: streamURI, useHTTPS: device.useHTTPS,
-            serialNumber: deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
+            selectedProfileToken: selectedProfileToken, streamURI: fetches.streamURI, useHTTPS: device.useHTTPS,
+            serialNumber: fetches.deviceInfo?.serialNumber.flatMap { $0.isEmpty ? nil : $0 }
         ))
         let credentials: SourceCredentials? =
             hasCredentials && !username.isEmpty
