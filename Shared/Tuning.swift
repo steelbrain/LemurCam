@@ -164,17 +164,24 @@ internal enum Tuning {
     /// Minimum buffers required before the sink stream starts.
     static let sinkBuffersForStartup = 1
 
+    /// How many times per frame interval (at the fastest frame rate) the extension
+    /// asks the app again for a frame after finding none. Two keeps a frame's wait
+    /// in the app's queue under half a frame, which the source stream's pacing
+    /// absorbs (`framePacingBurst`), without busy-polling.
+    static let sinkEmptyPollsPerFrame = 2
+
     // MARK: - Extension Formats
 
     /// How far (as a fraction of the duration) a frame duration a client sets may be
     /// from a valid one and still count as it: 1/29.97 s is 30 fps.
     static let frameDurationMatchTolerance = 0.02
 
-    /// How early (as a fraction of the frame duration) the extension still sends a
-    /// frame. A camera at the active rate delivers with some jitter; without this
-    /// slack, every frame that came a little early would be dropped and a 30 fps
-    /// camera at 30 fps would come out near 15.
-    static let framePacingTolerance = 0.25
+    /// How many frames of credit the extension's pacing keeps (`FramePacer`): frames
+    /// may go out this many back to back. A camera at the active rate reaches the
+    /// extension with jitter (the app's drain timer, a poll for frames, two processes),
+    /// so one frame can arrive late and the next right behind it; with two frames of
+    /// credit both go out. Below two, a camera at the active rate would lose frames.
+    static let framePacingBurst = 2.0
 
     // MARK: - Settings Window
 

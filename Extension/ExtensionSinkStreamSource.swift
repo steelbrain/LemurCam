@@ -170,8 +170,9 @@ internal final class ExtensionSinkStreamSource: NSObject, CMIOExtensionStreamSou
         //
         // Empty completions (the producer has no frame ready) must not re-arm
         // immediately: that turns the pull into a busy XPC poll that pegs CPU in
-        // both this extension and the app. Throttle empty polls to one frame
-        // interval; real frames still re-arm immediately so bursts drain fast.
+        // both this extension and the app. Throttle empty polls to half a frame
+        // interval (SinkConsumeScheduler); real frames still re-arm immediately so
+        // bursts drain fast.
         switch context.state.completionAction(
             generation: context.generation,
             hasBuffer: completion.sampleBuffer != nil,

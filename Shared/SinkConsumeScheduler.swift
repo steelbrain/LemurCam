@@ -16,14 +16,18 @@ internal enum SinkConsumeAction: Equatable {
 /// "always re-arm immediately" loop turns that into a busy XPC poll that pegs CPU
 /// in both the extension and the app (the app is left replying to thousands of
 /// empty `pullSample` requests per second). Re-arming immediately only when a
-/// buffer was actually delivered — and otherwise waiting one frame interval —
-/// caps empty polls at the frame rate while adding zero latency for real frames.
+/// buffer was actually delivered — and otherwise waiting a fraction of a frame
+/// interval (`Tuning.sinkEmptyPollsPerFrame`) — caps empty polls at a small multiple
+/// of the frame rate. A frame waits at most that long in the app's queue, which the
+/// source stream's pacing absorbs; a wait of a whole frame at 60 fps did not leave
+/// it enough room.
 internal enum SinkConsumeScheduler {
-    /// One frame interval in nanoseconds. `frameRate` is clamped to ≥ 1 so a bad
-    /// or zero stored value can never divide by zero or spin without a delay.
+    /// One frame interval at `frameRate`, divided by `Tuning.sinkEmptyPollsPerFrame`,
+    /// in nanoseconds. Both are clamped to ≥ 1 so a bad or zero value can never
+    /// divide by zero or spin without a delay.
     static func emptyPollDelayNanoseconds(frameRate: Int) -> UInt64 {
-        let safeRate = max(1, frameRate)
-        return UInt64(1_000_000_000 / safeRate)
+        let pollsPerSecond = max(1, frameRate) * max(1, Tuning.sinkEmptyPollsPerFrame)
+        return UInt64(1_000_000_000 / pollsPerSecond)
     }
 
     /// Pure mapping from a `consumeSampleBuffer` completion to the next action.

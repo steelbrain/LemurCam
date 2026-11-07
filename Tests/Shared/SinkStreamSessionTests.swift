@@ -59,7 +59,7 @@ internal final class SinkStreamSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             session.completionAction(generation: generation, hasBuffer: false, hasError: false, frameRate: 60),
-            .proceed(.resubscribeAfter(nanoseconds: 16_666_666))
+            .proceed(.resubscribeAfter(nanoseconds: 8_333_333))
         )
         XCTAssertEqual(
             session.completionAction(generation: generation, hasBuffer: false, hasError: true, frameRate: 60),

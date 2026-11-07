@@ -4,41 +4,44 @@
 /// app asked for (a 60 fps camera at 30 fps). Pure, CMIO-free and unit-tested
 /// through the app module; `ExtensionDeviceRuntime` keeps one per source stream.
 ///
-/// Frames are held to a schedule, one slot per frame duration. A frame is sent
-/// when it arrives no earlier than its slot, less `Tuning.framePacingTolerance`
-/// of a duration, so a camera at the active rate isn't halved by its jitter. A
-/// frame sent late doesn't let the next ones catch up in a burst: the next slot
-/// is at least a duration, less the tolerance, after it.
+/// It keeps a credit of frames: earned at the active rate, spent one per frame
+/// sent, and capped at `Tuning.framePacingBurst`. A faster camera is thinned to the
+/// active rate, and after a stall at most that many frames go out back to back. A
+/// camera at the active rate keeps every frame although its frames reach the
+/// extension with jitter: one can come late (the extension polls the app for
+/// frames, and they cross two processes) and the next right behind it, and the
+/// credit pays for both. A schedule of fixed slots did not: each late frame moved
+/// the slots later for good, until a frame on time counted as early and was dropped.
 internal struct FramePacer: Equatable, Sendable {
-    /// When the next frame is due, in host-clock nanoseconds; nil until a frame is sent.
-    private(set) var nextDueNanoseconds: UInt64?
+    /// Frames that may go out, as of `lastNanoseconds`. Starts full.
+    private(set) var credit = Self.burst
+    /// When `credit` was last brought up to date, in host-clock nanoseconds; nil
+    /// until the first frame.
+    private(set) var lastNanoseconds: UInt64?
 
     /// Whether to send a frame that arrives at `now` (host-clock nanoseconds) when
-    /// frames are `duration` nanoseconds apart. A sent frame books the next slot.
-    /// A zero duration paces nothing.
+    /// frames are `duration` nanoseconds apart. A zero duration paces nothing.
     mutating func admit(atNanoseconds now: UInt64, frameDurationNanoseconds duration: UInt64) -> Bool {
         guard duration > 0 else { return true }
-        // At most half a frame, which also keeps the product in range of UInt64.
-        let tolerance = min(max(Tuning.framePacingTolerance, 0), 0.5)
-        let slack = UInt64(Double(duration) * tolerance)
-        if let due = nextDueNanoseconds, now.saturatingAdd(slack) < due {
-            return false
+        if let last = lastNanoseconds, now > last {
+            credit = min(Self.burst, credit + Double(now - last) / Double(duration))
         }
-        let onSchedule = (nextDueNanoseconds ?? now).saturatingAdd(duration)
-        let afterThisFrame = now.saturatingAdd(duration - slack)
-        nextDueNanoseconds = max(onSchedule, afterThisFrame)
+        lastNanoseconds = max(lastNanoseconds ?? now, now)
+        // A hair under one frame still counts, so floating-point rounding on a camera
+        // exactly at the active rate never costs a frame.
+        guard credit >= 1 - 1e-9 else { return false }
+        credit -= 1
         return true
     }
 
-    /// Forget the schedule, so the next frame is sent whenever it comes.
+    /// Start over with full credit, so the next frame is sent whenever it comes.
     mutating func reset() {
-        nextDueNanoseconds = nil
+        credit = Self.burst
+        lastNanoseconds = nil
     }
-}
 
-private extension UInt64 {
-    func saturatingAdd(_ other: UInt64) -> UInt64 {
-        let (sum, overflow) = addingReportingOverflow(other)
-        return overflow ? .max : sum
+    /// `Tuning.framePacingBurst`, at least one frame.
+    private static var burst: Double {
+        max(Tuning.framePacingBurst, 1)
     }
 }

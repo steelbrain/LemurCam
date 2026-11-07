@@ -210,14 +210,21 @@ source stream gets it at once, and keeps it until the next change. The
 extension scales the app's frames to the active resolution, letterboxed, with a
 `VTPixelTransferSession` and a pixel buffer pool per format, passes frames that
 already match through without a copy, and paces them to the active frame rate
-(`ExtensionDeviceRuntime`, `FramePacer`). Its own placeholder is drawn at the
-active resolution.
+(`ExtensionDeviceRuntime`, `FramePacer`). The pacing keeps two frames of credit,
+so a camera at the active rate keeps every frame although its frames reach the
+extension with jitter, and a faster camera is thinned to the active rate. Its own
+placeholder is drawn at the active resolution.
 
 ## Streaming And Demand
 
 The app supports direct RTSP URLs and ONVIF cameras. ONVIF discovery uses
 WS-Discovery UDP probing. Stream decoding uses `IPCamKit`, VideoToolbox, and a
 jitter buffer before frames are converted to sample buffers for the extension.
+The jitter buffer drains at the camera's own frame rate, up to 60 fps: the
+pipeline measures it from the frames' RTP-derived timestamps
+(`VideoFrameRateEstimator`), and the buffer keeps the same windows in time at any
+rate (`JitterBufferSizing`). Each new connection starts at 30 fps until its rate is
+known.
 
 Demand matters. The RTSP pipeline should run only when an external app is using
 the virtual camera or the virtual microphone, or when in-app preview is enabled.
