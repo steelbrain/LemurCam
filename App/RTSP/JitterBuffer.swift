@@ -5,13 +5,15 @@ import os
 ///
 /// IP cameras stall for ~300-400ms during keyframe encoding, creating visible
 /// stutters. This buffer accumulates frames during bursts and drains them at a
-/// steady rate, absorbing timing gaps.
+/// steady rate, absorbing timing gaps. The rate is the camera's own frame rate once
+/// it is measured (`setDrainRate(_:)`), so every frame of a 60 fps camera goes out.
 internal final class JitterBuffer: Sendable {
     private struct State: Sendable {
         var buffer: [SendablePixelBuffer] = []
         var lastFrame: SendablePixelBuffer?
         var drainTimer: DispatchSourceTimer?
         var isPrimed = false
+        var sizing: JitterBufferSizing
         var depthTracker: JitterDepthTracker
     }
 
@@ -21,18 +23,23 @@ internal final class JitterBuffer: Sendable {
         label: "com.steelbrain.LemurCam.jitterDrain", qos: .userInteractive
     )
     private let onDrain: @Sendable (CVPixelBuffer) -> Void
+    private let catchUpWindowTicks: Int?
 
     /// - Parameter catchUpWindowTicks: drain ticks per catch-up window (see
-    ///   `JitterDepthTracker`); tests pass a short one.
+    ///   `JitterDepthTracker`) at any drain rate; tests pass a short one. Nil sizes it
+    ///   from `Tuning.jitterBufferCatchUpWindow` at the drain rate.
     init(
-        catchUpWindowTicks: Int = Int(Tuning.jitterBufferCatchUpWindow * Tuning.jitterBufferDrainFPS),
+        catchUpWindowTicks: Int? = nil,
         onDrain: @escaping @Sendable (CVPixelBuffer) -> Void
     ) {
-        let tracker = JitterDepthTracker(
-            windowTicks: catchUpWindowTicks, targetDepth: Tuning.jitterBufferPrimingThreshold
+        let sizing = JitterBufferSizing(
+            drainFPS: Tuning.jitterBufferDefaultDrainFPS, catchUpWindowTicks: catchUpWindowTicks
         )
-        self.state = OSAllocatedUnfairLock(initialState: State(depthTracker: tracker))
+        self.state = OSAllocatedUnfairLock(
+            initialState: State(sizing: sizing, depthTracker: Self.depthTracker(for: sizing))
+        )
         self.onDrain = onDrain
+        self.catchUpWindowTicks = catchUpWindowTicks
     }
 
     deinit {
@@ -46,8 +53,8 @@ internal final class JitterBuffer: Sendable {
     func enqueue(_ pixelBuffer: CVPixelBuffer) {
         let frame = SendablePixelBuffer(pixelBuffer)
         state.withLock {
-            if $0.buffer.count >= Tuning.jitterBufferCapacity {
-                $0.buffer.removeFirst()
+            if $0.buffer.count >= $0.sizing.capacity {
+                $0.buffer.removeFirst($0.buffer.count - $0.sizing.capacity + 1)
             }
             $0.buffer.append(frame)
 
@@ -56,12 +63,36 @@ internal final class JitterBuffer: Sendable {
             // and `reset()` on the main actor; both touch `drainTimer`, so the priming
             // decision and the timer start must be atomic with respect to a reset that
             // could otherwise clear `isPrimed`/`drainTimer` in between.
-            if !$0.isPrimed && $0.buffer.count >= Tuning.jitterBufferPrimingThreshold {
-                $0.isPrimed = true
-                $0.drainTimer?.cancel()
-                $0.drainTimer = makeDrainTimer()
+            primeIfReady(&$0)
+        }
+    }
+
+    /// Drain at `fps` from now on (held to `Tuning.jitterBufferMinDrainFPS`...
+    /// `jitterBufferMaxDrainFPS`): the camera's frame rate, as measured from its
+    /// frames' timestamps. The capacity, priming threshold and catch-up window scale
+    /// with it (`JitterBufferSizing`). A running drain timer is re-armed at the new
+    /// interval; frames beyond the new capacity are dropped, oldest first.
+    func setDrainRate(_ fps: Double) {
+        state.withLock { state in
+            let sizing = JitterBufferSizing(drainFPS: fps, catchUpWindowTicks: catchUpWindowTicks)
+            guard sizing != state.sizing else { return }
+            state.sizing = sizing
+            state.depthTracker = Self.depthTracker(for: sizing)
+            if state.buffer.count > sizing.capacity {
+                state.buffer.removeFirst(state.buffer.count - sizing.capacity)
+            }
+            if state.drainTimer != nil {
+                state.drainTimer?.cancel()
+                state.drainTimer = makeDrainTimer(interval: sizing.drainInterval)
+            } else {
+                primeIfReady(&state)
             }
         }
+    }
+
+    /// The rate the buffer drains at.
+    var drainRate: Double {
+        state.withLock { $0.sizing.drainFPS }
     }
 
     /// Whether the drain timer runs, re-sending the last frame when none is queued.
@@ -83,8 +114,20 @@ internal final class JitterBuffer: Sendable {
 
     // MARK: - Private
 
-    private func makeDrainTimer() -> DispatchSourceTimer {
-        let interval = 1.0 / Tuning.jitterBufferDrainFPS
+    private static func depthTracker(for sizing: JitterBufferSizing) -> JitterDepthTracker {
+        JitterDepthTracker(windowTicks: sizing.catchUpWindowTicks, targetDepth: sizing.primingThreshold)
+    }
+
+    /// Start draining once enough frames are held. Called under the lock, so the
+    /// priming decision and the timer start are atomic with respect to `reset()`.
+    private func primeIfReady(_ state: inout State) {
+        guard !state.isPrimed, state.buffer.count >= state.sizing.primingThreshold else { return }
+        state.isPrimed = true
+        state.drainTimer?.cancel()
+        state.drainTimer = makeDrainTimer(interval: state.sizing.drainInterval)
+    }
+
+    private func makeDrainTimer(interval: TimeInterval) -> DispatchSourceTimer {
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: drainQueue)
         timer.schedule(
             deadline: .now() + interval,

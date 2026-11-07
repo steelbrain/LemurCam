@@ -94,17 +94,29 @@ internal enum Tuning {
 
     // MARK: - Jitter Buffer
 
-    /// Fixed drain rate for the jitter buffer (fps). Caps the virtual camera's
-    /// output frame rate; the capacity/priming below are scaled to keep the same
-    /// smoothing/priming *time* windows at this rate.
-    static let jitterBufferDrainFPS: Double = 30.0
+    /// The jitter buffer's drain rate (fps) until the camera's own frame rate is
+    /// known. The buffer then drains at the camera's rate (`VideoFrameRateEstimator`),
+    /// between `jitterBufferMinDrainFPS` and `jitterBufferMaxDrainFPS`.
+    static let jitterBufferDefaultDrainFPS: Double = 30.0
 
-    /// Maximum frames the jitter buffer can hold (~530ms at 30fps). Sized to absorb
-    /// the ~300-400ms keyframe-encoding stalls IP cameras exhibit without dropping
-    /// the catch-up burst.
+    /// The fastest the jitter buffer drains: the fastest frame rate the virtual camera
+    /// offers (`StreamFormatTable.fastestFrameRate`). A faster camera is drained at
+    /// this rate.
+    static let jitterBufferMaxDrainFPS: Double = 60.0
+
+    /// The slowest the jitter buffer drains. A slower camera's last frame is sent again
+    /// between its frames.
+    static let jitterBufferMinDrainFPS: Double = 1.0
+
+    /// Maximum frames the jitter buffer holds at `jitterBufferDefaultDrainFPS` (~530ms).
+    /// Sized to absorb the ~300-400ms keyframe-encoding stalls IP cameras exhibit
+    /// without dropping the catch-up burst. At another drain rate it scales with the
+    /// rate, so the window stays the same length in time (`JitterBufferSizing`).
     static let jitterBufferCapacity: Int = 16
 
-    /// Frames to accumulate before starting the drain timer (~200ms at 30fps).
+    /// Frames to accumulate before starting the drain timer, at
+    /// `jitterBufferDefaultDrainFPS` (~200ms); scaled with the drain rate like
+    /// `jitterBufferCapacity`.
     static let jitterBufferPrimingThreshold: Int = 6
 
     /// Window (seconds) over which the jitter buffer watches its lowest depth. If the
@@ -117,6 +129,32 @@ internal enum Tuning {
 
     /// Timer leeway for the jitter buffer drain timer (milliseconds).
     static let jitterBufferTimerLeewayMs: Int = 2
+
+    // MARK: - Camera Frame Rate
+
+    /// How many recent video frames the camera's frame rate is measured over: one
+    /// second at 60 fps, two at 30.
+    static let frameRateWindowFrames = 60
+
+    /// Frames needed before the camera's frame rate is first reported. Five gaps
+    /// between them, so a single lost frame doesn't skew the median gap. At 30 fps
+    /// the rate is known by the time the jitter buffer primes.
+    static let frameRateMinimumFrames = 6
+
+    /// How much (as a fraction) the measured frame rate must move from the one last
+    /// reported before it is reported again, while fewer than `frameRateWindowFrames`
+    /// frames are measured: a few frames from a camera that stamps them a little early
+    /// and late can be a few percent off, and the drain timer isn't re-armed for that.
+    static let frameRateChangeThreshold = 0.05
+
+    /// The same, once a whole window of frames is measured: the rate is then within a
+    /// fraction of a percent, so a first estimate a few percent off is corrected, and a
+    /// drain rate off by more than this would repeat or drop a frame every few seconds.
+    static let frameRateSettledChangeThreshold = 0.01
+
+    /// A gap (seconds) between two frames' timestamps beyond which the measurement
+    /// starts over: the camera restarted its clock, or the stream was interrupted.
+    static let frameRateDiscontinuity: Double = 5
 
     // MARK: - Extension Buffers
 

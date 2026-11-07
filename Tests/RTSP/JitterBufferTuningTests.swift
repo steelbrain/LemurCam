@@ -3,19 +3,21 @@ import XCTest
 
 /// Pins the jitter buffer's timing design: it is sized in *time*, not frames. The
 /// capacity gives a ~0.5s smoothing window to absorb the ~300-400ms keyframe stalls
-/// IP cameras exhibit, and priming a ~0.2s cushion. Raising `jitterBufferDrainFPS`
+/// IP cameras exhibit, and priming a ~0.2s cushion. Raising `jitterBufferDefaultDrainFPS`
 /// without rescaling capacity/priming would shrink those windows and reintroduce
 /// keyframe-stall stutter, so lock the relationship rather than the raw counts.
+/// The counts are at `jitterBufferDefaultDrainFPS`; `JitterBufferSizingTests` pins
+/// that they keep the same windows at the camera's own rate.
 internal final class JitterBufferTuningTests: XCTestCase {
 
     func testSmoothingWindowCoversKeyframeStalls() {
-        let windowSeconds = Double(Tuning.jitterBufferCapacity) / Tuning.jitterBufferDrainFPS
+        let windowSeconds = Double(Tuning.jitterBufferCapacity) / Tuning.jitterBufferDefaultDrainFPS
         XCTAssertGreaterThanOrEqual(windowSeconds, 0.4, "must absorb a ~400ms keyframe stall")
         XCTAssertLessThanOrEqual(windowSeconds, 0.7, "too deep adds latency/memory")
     }
 
     func testPrimingWindowIsModest() {
-        let primingSeconds = Double(Tuning.jitterBufferPrimingThreshold) / Tuning.jitterBufferDrainFPS
+        let primingSeconds = Double(Tuning.jitterBufferPrimingThreshold) / Tuning.jitterBufferDefaultDrainFPS
         XCTAssertGreaterThanOrEqual(primingSeconds, 0.15, "needs a cushion to avoid immediate underrun")
         XCTAssertLessThanOrEqual(primingSeconds, 0.3, "too high adds start-up latency")
     }
@@ -27,7 +29,7 @@ internal final class JitterBufferTuningTests: XCTestCase {
     /// The catch-up window decides whether a cushion was needed, so it must be far
     /// longer than the cushion itself, or it would trim frames a stall is about to use.
     func testCatchUpWindowIsMuchLongerThanTheSmoothingWindow() {
-        let smoothingSeconds = Double(Tuning.jitterBufferCapacity) / Tuning.jitterBufferDrainFPS
+        let smoothingSeconds = Double(Tuning.jitterBufferCapacity) / Tuning.jitterBufferDefaultDrainFPS
         XCTAssertGreaterThanOrEqual(Tuning.jitterBufferCatchUpWindow, smoothingSeconds * 10)
     }
 }

@@ -36,6 +36,7 @@ internal final class FakeStreamPipeline: StreamPipeline {
         var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)?
         var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)?
         var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)?
+        var onVideoFrameRate: (@Sendable (Double, StreamConnectionID) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
         var connectedURLs: [String] = []
         var connectedCredentials: [SourceCredentials?] = []
@@ -58,6 +59,11 @@ internal final class FakeStreamPipeline: StreamPipeline {
     var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)? {
         get { state.withLock { $0.onStreamInfo } }
         set { state.withLock { $0.onStreamInfo = newValue } }
+    }
+
+    var onVideoFrameRate: (@Sendable (Double, StreamConnectionID) -> Void)? {
+        get { state.withLock { $0.onVideoFrameRate } }
+        set { state.withLock { $0.onVideoFrameRate = newValue } }
     }
 
     var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? {
@@ -116,6 +122,12 @@ internal final class FakeStreamPipeline: StreamPipeline {
     /// real pipeline does once a stream is connected.
     func emitStreamInfo(_ info: RTSPStreamPipeline.StreamInfo, connection: StreamConnectionID? = nil) {
         onStreamInfo?(info, connection ?? latestConnection)
+    }
+
+    /// Fire `onVideoFrameRate` for `connection` (the latest one by default), as the
+    /// real pipeline does once it has measured the camera's frame rate.
+    func emitVideoFrameRate(_ fps: Double, connection: StreamConnectionID? = nil) {
+        onVideoFrameRate?(fps, connection ?? latestConnection)
     }
 }
 

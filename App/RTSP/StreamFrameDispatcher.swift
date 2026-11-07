@@ -51,9 +51,17 @@ internal final class StreamFrameDispatcher: Sendable {
     }
 
     /// Let through frames from `connection` only, or from none when nil. Call
-    /// `reset()` after it to also drop the frames already queued.
+    /// `reset()` after it to also drop the frames already queued. Another connection
+    /// may be another camera, so its frames drain at the default rate until its own
+    /// rate is measured (`setSourceFrameRate`): one camera's rate never outlives its
+    /// connection, and a rate reported for the new connection can't be undone by a
+    /// reset that lands after it.
     func accept(_ connection: StreamConnectionID?) {
-        acceptedConnection.withLock { $0 = connection }
+        acceptedConnection.withLockUnchecked { accepted in
+            guard accepted != connection else { return }
+            accepted = connection
+            jitterBuffer.setDrainRate(Tuning.jitterBufferDefaultDrainFPS)
+        }
     }
 
     /// Queue a frame from `connection` for the virtual camera and the preview.
@@ -78,8 +86,24 @@ internal final class StreamFrameDispatcher: Sendable {
         return true
     }
 
+    /// Drain the frames of `connection` at its camera's frame rate, `fps`. Ignored
+    /// when `connection` is not the accepted one: a replaced camera's rate can still
+    /// arrive after the switch.
+    func setSourceFrameRate(_ fps: Double, from connection: StreamConnectionID) {
+        // Under the lock, so it can't land after `accept` switched to another camera.
+        acceptedConnection.withLockUnchecked { accepted in
+            guard accepted == connection else { return }
+            jitterBuffer.setDrainRate(fps)
+        }
+    }
+
     func reset() {
         jitterBuffer.reset()
+    }
+
+    /// The rate frames are sent on to the virtual camera at.
+    var drainRate: Double {
+        jitterBuffer.drainRate
     }
 
     /// Whether decoded frames are being sent on to the virtual camera.

@@ -143,6 +143,10 @@ internal final class StreamCoordinator {
             }
         }
 
+        pipeline.onVideoFrameRate = { fps, connection in
+            dispatcher.setSourceFrameRate(fps, from: connection)
+        }
+
         let ringBuffer = audioRing
         pipeline.onAudioPCM = { samples, frames in
             ringBuffer.write(samples, frames: frames)

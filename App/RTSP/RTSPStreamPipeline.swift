@@ -29,6 +29,10 @@ internal protocol StreamPipeline: AnyObject, Sendable {
     var onStateChanged: (@Sendable (RTSPStreamPipeline.State, StreamConnectionID) -> Void)? { get set }
     /// Called with a connected stream's video format and the connection it describes.
     var onStreamInfo: (@Sendable (RTSPStreamPipeline.StreamInfo, StreamConnectionID) -> Void)? { get set }
+    /// Called with the camera's video frame rate, measured from its frames'
+    /// timestamps (`VideoFrameRateEstimator`), when first known and whenever it
+    /// changes, and the connection it belongs to; on the frame-consuming task.
+    var onVideoFrameRate: (@Sendable (Double, StreamConnectionID) -> Void)? { get set }
     var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)? { get set }
 
     /// Starts a new connection, replacing any current one, and returns its ID.
@@ -94,6 +98,11 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         set { callbacks.withLock { $0.onStreamInfo = newValue } }
     }
 
+    var onVideoFrameRate: (@Sendable (Double, StreamConnectionID) -> Void)? {
+        get { callbacks.withLock { $0.onVideoFrameRate } }
+        set { callbacks.withLock { $0.onVideoFrameRate = newValue } }
+    }
+
     /// Decoded camera audio as 48 kHz Float32 interleaved stereo PCM, ready for the
     /// virtual-microphone ring. Called from the frame-consuming task (not the main
     /// actor); the pointer is valid only for the duration of the call.
@@ -106,6 +115,7 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         var onPixelBuffer: (@Sendable (CVPixelBuffer, StreamConnectionID) -> Void)?
         var onStateChanged: (@Sendable (State, StreamConnectionID) -> Void)?
         var onStreamInfo: (@Sendable (StreamInfo, StreamConnectionID) -> Void)?
+        var onVideoFrameRate: (@Sendable (Double, StreamConnectionID) -> Void)?
         var onAudioPCM: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
     }
 
@@ -186,8 +196,9 @@ internal final class RTSPStreamPipeline: StreamPipeline {
             publishStreamInfo(video, connection: connection)
 
             try await consumeFrames(
-                session: session, watchdog: watchdog, processor: processor,
-                decoder: decoder, audioDecoder: audioDecoder
+                session: session, watchdog: watchdog,
+                stages: FrameStages(processor: processor, video: decoder, audio: audioDecoder),
+                connection: connection
             )
 
             await session.stop()
@@ -275,6 +286,11 @@ internal final class RTSPStreamPipeline: StreamPipeline {
         callbacks.withLock { $0.onStreamInfo }?(info, connection)
     }
 
+    private func emitVideoFrameRate(_ fps: Double, connection: StreamConnectionID) {
+        Log.rtsp.info("Camera frame rate: \(String(format: "%.2f", fps)) fps")
+        callbacks.withLock { $0.onVideoFrameRate }?(fps, connection)
+    }
+
     private func emitAudioPCM(_ samples: UnsafePointer<Float>, frames: Int) {
         callbacks.withLock { $0.onAudioPCM }?(samples, frames)
     }
@@ -282,23 +298,33 @@ internal final class RTSPStreamPipeline: StreamPipeline {
 }
 
 private extension RTSPStreamPipeline {
+    /// What a stream's frames go through: the NAL processor and video decoder, and
+    /// the audio decoder when the stream has audio.
+    struct FrameStages {
+        let processor: NALProcessor
+        let video: VideoDecoder
+        let audio: AudioDecoder?
+    }
+
+    /// Feeds the session's frames to `stages` until the stream ends, and reports the
+    /// camera's frame rate, measured from the video frames' timestamps, for `connection`.
     func consumeFrames(
         session: RTSPClientSession,
         watchdog: StreamWatchdog,
-        processor: NALProcessor,
-        decoder: VideoDecoder,
-        audioDecoder: AudioDecoder?
+        stages: FrameStages,
+        connection: StreamConnectionID
     ) async throws {
         let stallTask = makeStallTask(session: session, watchdog: watchdog)
         defer { stallTask.cancel() }
 
+        var frameRate = VideoFrameRateEstimator()
         do {
             for try await item in session.frames() {
                 if Task.isCancelled { break }
-                consumeFrameItem(
-                    item, watchdog: watchdog, processor: processor,
-                    decoder: decoder, audioDecoder: audioDecoder
-                )
+                if case .video(let frame) = item, let fps = frameRate.record(timestamp: frame.timestamp) {
+                    emitVideoFrameRate(fps, connection: connection)
+                }
+                consumeFrameItem(item, watchdog: watchdog, stages: stages)
             }
         } catch {
             if let stall = watchdog.stall { throw stall.error }
@@ -328,25 +354,19 @@ private extension RTSPStreamPipeline {
         }
     }
 
-    func consumeFrameItem(
-        _ item: PublicCodecItem,
-        watchdog: StreamWatchdog,
-        processor: NALProcessor,
-        decoder: VideoDecoder,
-        audioDecoder: AudioDecoder?
-    ) {
+    func consumeFrameItem(_ item: PublicCodecItem, watchdog: StreamWatchdog, stages: FrameStages) {
         switch item {
         case .video(let frame):
             watchdog.markFrameReceived(isKeyframe: frame.isKeyframe)
-            guard let processed = processor.process(frame) else { return }
-            decoder.updateFormatDescription(processed.formatDescription, isKeyframe: processed.isKeyframe)
-            decoder.decode(
+            guard let processed = stages.processor.process(frame) else { return }
+            stages.video.updateFormatDescription(processed.formatDescription, isKeyframe: processed.isKeyframe)
+            stages.video.decode(
                 blockBuffer: processed.blockBuffer,
                 formatDescription: processed.formatDescription,
                 isKeyframe: processed.isKeyframe
             )
         case .audio(let frame):
-            audioDecoder?.decode(frame)
+            stages.audio?.decode(frame)
         default:
             return
         }

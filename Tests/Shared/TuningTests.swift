@@ -62,7 +62,11 @@ internal final class TuningTests: XCTestCase {
 
     func testFrameRatesAndIntervalsArePositive() {
         XCTAssertGreaterThan(Tuning.placeholderFPS, 0)
-        XCTAssertGreaterThan(Tuning.jitterBufferDrainFPS, 0)
+        XCTAssertGreaterThan(Tuning.jitterBufferMinDrainFPS, 0)
+        XCTAssertLessThanOrEqual(Tuning.jitterBufferMinDrainFPS, Tuning.jitterBufferDefaultDrainFPS)
+        XCTAssertLessThanOrEqual(Tuning.jitterBufferDefaultDrainFPS, Tuning.jitterBufferMaxDrainFPS)
+        // The jitter buffer can feed the virtual camera's fastest format, and no faster.
+        XCTAssertEqual(Tuning.jitterBufferMaxDrainFPS, Double(StreamFormatTable.fastestFrameRate.rawValue))
         XCTAssertGreaterThan(Tuning.previewThrottleInterval, 0)
         XCTAssertGreaterThan(Tuning.fpsWindowDuration, 0)
         XCTAssertGreaterThan(Tuning.fpsUpdateInterval, 0)
