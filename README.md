@@ -9,8 +9,15 @@
 LemurCam turns RTSP and ONVIF IP cameras into a macOS virtual camera, with an
 optional virtual microphone for camera audio.
 
-**Website:** [lemur.cam](https://lemur.cam) ·
-**[Download Latest Release](https://github.com/steelbrain/LemurCam/releases/latest)**
+**Website:** [lemur.cam](https://lemur.cam)
+
+Install it with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask steelbrain/tap/lemurcam
+```
+
+Or **[download the latest release](https://github.com/steelbrain/LemurCam/releases/latest)**.
 
 ## Features
 
