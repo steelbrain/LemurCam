@@ -2,6 +2,7 @@ import Image from "next/image";
 import type { ReactNode } from "react";
 import AppWindow from "./components/AppWindow";
 import { BridgeProvider } from "./components/Bridge";
+import BrewInstall from "./components/BrewInstall";
 import OtherAppsDemo from "./components/OtherAppsDemo";
 import PopoverDemo from "./components/PopoverDemo";
 import SetupWindow from "./components/SetupWindow";
@@ -144,6 +145,7 @@ export default function Home() {
                 Free and open source under the MIT License. Requires macOS 14 Sonoma or later.
                 Universal app for Apple Silicon and Intel Macs.
               </p>
+              <BrewInstall />
             </div>
             <PopoverDemo />
           </div>
