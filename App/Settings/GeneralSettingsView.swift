@@ -93,14 +93,29 @@ internal struct GeneralSettingsView: View {
     }
 
     private var videoBufferSection: some View {
-        Section {
-            Picker("Video Buffer", selection: $selectedVideoBuffer) {
-                ForEach(VideoBufferSetting.allCases) { setting in
-                    Text(setting.label).tag(setting)
+        Section("Advanced") {
+            LabeledContent("Video Buffer") {
+                HStack {
+                    Picker("Video Buffer", selection: $selectedVideoBuffer) {
+                        ForEach(VideoBufferSetting.allCases) { setting in
+                            Text(setting.label).tag(setting)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+
+                    Button("Reset") {
+                        VideoBufferStore().reset()
+                        selectedVideoBuffer = .defaultValue
+                    }
+                    .disabled(selectedVideoBuffer == .defaultValue)
+                    .help("Go back to the default, \(VideoBufferSetting.defaultValue.label)")
                 }
             }
             .onChange(of: selectedVideoBuffer) { _, newValue in
-                VideoBufferStore().setting = newValue
+                // After Reset the store already reads as the default: nothing to save.
+                let store = VideoBufferStore()
+                if store.setting != newValue { store.setting = newValue }
                 onVideoBufferChange(newValue)
             }
 

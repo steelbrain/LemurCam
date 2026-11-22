@@ -30,6 +30,19 @@ internal final class VideoBufferSettingTests: XCTestCase {
         }
     }
 
+    /// Reset forgets the stored setting rather than storing the default, so the
+    /// default applies, including one a later version changes.
+    func testResetForgetsTheStoredSetting() throws {
+        let defaults = try freshDefaults("reset")
+        let store = VideoBufferStore(defaults: defaults)
+        store.setting = .off
+
+        store.reset()
+
+        XCTAssertEqual(store.setting, .defaultValue)
+        XCTAssertNil(defaults.object(forKey: "LemurCam.videoBuffer"))
+    }
+
     /// A value this version doesn't offer (from another version, or edited by hand)
     /// reads as the default.
     func testAnUnknownValueReadsAsTheDefault() throws {

@@ -4,7 +4,7 @@
 
 ### New
 
-- A Video Buffer setting in Settings > General sets how much of a camera's video LemurCam holds before sending it on: 200 ms as before, 100 ms, or Off. Less buffer means less delay, which helps when the picture lags behind a separate microphone, but pauses in the camera's video show as stutters.
+- A Video Buffer setting, under Advanced in Settings > General, sets how much of a camera's video LemurCam holds before sending it on: 200 ms as before, 100 ms, or Off. Less buffer means less delay, which helps when the picture lags behind a separate microphone, but pauses in the camera's video show as stutters. Reset next to it goes back to 200 ms.
 
 ## v1.6
 

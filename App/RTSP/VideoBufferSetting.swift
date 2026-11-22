@@ -47,4 +47,10 @@ internal struct VideoBufferStore {
             defaults.set(newValue.rawValue, forKey: Self.key)
         }
     }
+
+    /// Forget the stored setting (the Reset button), so the default applies, including
+    /// a default a later version changes.
+    func reset() {
+        defaults.removeObject(forKey: Self.key)
+    }
 }
