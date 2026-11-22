@@ -76,10 +76,11 @@ internal final class ConnectTimeoutTests: XCTestCase {
     /// connecting to the old camera.
     func testCancellingTheCallerCancelsStart() async {
         let cancelled = Flag()
+        // Made outside the task: Xcode 26's compiler fails on this call inside it
+        // ("pattern that the region-based isolation checker does not understand").
+        let start = Self.slowStart(cancelled: cancelled)
         let connect = Task {
-            try await RTSPStreamPipeline.withConnectTimeout(
-                nanoseconds: 10_000_000_000, start: Self.slowStart(cancelled: cancelled)
-            )
+            try await RTSPStreamPipeline.withConnectTimeout(nanoseconds: 10_000_000_000, start: start)
         }
         try? await Task.sleep(nanoseconds: 50_000_000)
         let started = Date()
