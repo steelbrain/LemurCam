@@ -21,15 +21,18 @@ internal final class StreamFrameDispatcher: Sendable {
     private let updatePreviewFPS: @MainActor @Sendable (Int, StreamConnectionID) -> Void
     private let updatePreviewImage: @MainActor @Sendable (CGImage, StreamConnectionID) -> Void
 
+    /// `videoBuffer` is how much video the jitter buffer holds until
+    /// `setVideoBuffer(_:)` says otherwise.
     init(
         model: LemurCamModel,
+        videoBuffer: VideoBufferSetting = .defaultValue,
         previewRenderer: PreviewFrameRenderer = PreviewFrameRenderer(),
         updatePreviewFPS: @escaping @MainActor @Sendable (Int) -> Void,
         updatePreviewImage: @escaping @MainActor @Sendable (CGImage) -> Void
     ) {
         let frameWriter = VirtualCameraFrameWriter(model: model)
         let accepted = OSAllocatedUnfairLock<StreamConnectionID?>(initialState: nil)
-        self.jitterBuffer = JitterBuffer { pixelBuffer in
+        self.jitterBuffer = JitterBuffer(videoBuffer: videoBuffer) { pixelBuffer in
             frameWriter.write(pixelBuffer)
         }
         self.previewRenderer = previewRenderer
@@ -97,8 +100,20 @@ internal final class StreamFrameDispatcher: Sendable {
         }
     }
 
+    /// Hold `setting` of video before sending frames on to the virtual camera: the
+    /// Video Buffer setting. It applies to the running stream at once, without a
+    /// reconnect, and to every connection after it.
+    func setVideoBuffer(_ setting: VideoBufferSetting) {
+        jitterBuffer.setVideoBuffer(setting)
+    }
+
     func reset() {
         jitterBuffer.reset()
+    }
+
+    /// How much video is held before frames are sent on to the virtual camera.
+    var videoBuffer: VideoBufferSetting {
+        jitterBuffer.videoBuffer
     }
 
     /// The rate frames are sent on to the virtual camera at.

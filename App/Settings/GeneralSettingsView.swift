@@ -5,14 +5,18 @@ internal struct GeneralSettingsView: View {
     /// Hands the camera the changed Resolution or Frame Rate
     /// (`StreamCoordinator.applyVirtualCameraFormat`).
     var onCameraFormatChange: () -> Void = {}
+    /// Hands the stream the changed Video Buffer (`StreamCoordinator.videoBuffer`).
+    var onVideoBufferChange: (VideoBufferSetting) -> Void = { _ in }
     @State private var selectedResolution = LemurCamConfig.storedResolution
     @State private var selectedFrameRate = LemurCamConfig.storedFrameRate
+    @State private var selectedVideoBuffer = VideoBufferStore().setting
 
     var body: some View {
         Form {
             aboutSection
             launchAtLoginSection
             virtualCameraSection
+            videoBufferSection
         }
         .formStyle(.grouped)
         // Login Items can change in System Settings while Settings is closed.
@@ -87,6 +91,32 @@ internal struct GeneralSettingsView: View {
                 .foregroundStyle(.secondary)
         }
     }
+
+    private var videoBufferSection: some View {
+        Section {
+            Picker("Video Buffer", selection: $selectedVideoBuffer) {
+                ForEach(VideoBufferSetting.allCases) { setting in
+                    Text(setting.label).tag(setting)
+                }
+            }
+            .onChange(of: selectedVideoBuffer) { _, newValue in
+                VideoBufferStore().setting = newValue
+                onVideoBufferChange(newValue)
+            }
+
+            Text(Self.videoBufferCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// What the Video Buffer picker does, as `JitterBuffer` implements it.
+    static let videoBufferCaption = """
+        LemurCam holds this much of the camera's video before sending it on, which \
+        smooths over short pauses in the camera's video. Less buffer means less delay, \
+        and pauses show as stutters. Off sends each frame on as soon as it's decoded. \
+        Lower it if the picture lags behind a separate microphone.
+        """
 
     /// What the two pickers do, as `SourceFormatState` implements it.
     static let formatCaption = """

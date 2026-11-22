@@ -13,6 +13,8 @@ internal struct SettingsView: View {
     var openSetup: (() -> Void)?
     /// Hands the camera a changed Resolution or Frame Rate (owned by `AppDelegate`).
     var onCameraFormatChange: (() -> Void)?
+    /// Hands the stream a changed Video Buffer (owned by `AppDelegate`).
+    var onVideoBufferChange: ((VideoBufferSetting) -> Void)?
     /// The selected pane. `AppDelegate` owns it, so it can switch an open window to
     /// a pane (e.g. Cameras) and start or stop preview demand with the Preview pane.
     var navigation: SettingsNavigation
@@ -51,7 +53,8 @@ internal struct SettingsView: View {
         case .general:
             GeneralSettingsView(
                 launchAtLoginManager: launchAtLoginManager,
-                onCameraFormatChange: { onCameraFormatChange?() }
+                onCameraFormatChange: { onCameraFormatChange?() },
+                onVideoBufferChange: { onVideoBufferChange?($0) }
             )
         case .logs:
             LogsSettingsView()

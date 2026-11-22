@@ -52,6 +52,47 @@ internal final class JitterBufferSizingTests: XCTestCase {
         XCTAssertEqual(JitterBufferSizing(drainFPS: .infinity).drainFPS, Tuning.jitterBufferDefaultDrainFPS)
     }
 
+    /// The default Video Buffer setting is the tuned buffer, at every rate.
+    func testTheDefaultSettingChangesNothing() {
+        for fps in [1.0, 15, 24, 25, 30, 50, 60] {
+            XCTAssertEqual(
+                JitterBufferSizing(drainFPS: fps, videoBuffer: .defaultValue), JitterBufferSizing(drainFPS: fps),
+                "\(fps) fps"
+            )
+        }
+    }
+
+    /// At 100 ms the start-up cushion and the capacity are half as long in time.
+    func testAHundredMillisecondsHoldsHalfAsLong() {
+        let thirty = JitterBufferSizing(drainFPS: 30, videoBuffer: .ms100)
+        XCTAssertEqual(thirty.primingThreshold, 3)
+        XCTAssertEqual(thirty.capacity, 8)
+        XCTAssertFalse(thirty.passesThrough)
+
+        let reference = JitterBufferSizing(drainFPS: Tuning.jitterBufferDefaultDrainFPS)
+        let smoothing = Double(reference.capacity) / reference.drainFPS / 2
+        for fps in [15.0, 20, 24, 25, 30, 50, 60] {
+            let sizing = JitterBufferSizing(drainFPS: fps, videoBuffer: .ms100)
+            // Rounding to whole frames can land half a frame off: 2.5 frames at 25 fps is 3.
+            let halfFrame = 0.5 / fps + 1e-9
+            XCTAssertEqual(Double(sizing.primingThreshold) / fps, 0.1, accuracy: halfFrame, "\(fps) fps")
+            XCTAssertEqual(Double(sizing.capacity) / fps, smoothing, accuracy: halfFrame, "\(fps) fps")
+            XCTAssertLessThan(sizing.primingThreshold, sizing.capacity, "\(fps) fps")
+            XCTAssertEqual(sizing.catchUpWindowTicks, JitterBufferSizing(drainFPS: fps).catchUpWindowTicks)
+        }
+    }
+
+    /// Off holds only the newest frame, which goes on as soon as it comes.
+    func testOffPassesFramesThrough() {
+        for fps in [1.0, 30, 60] {
+            let sizing = JitterBufferSizing(drainFPS: fps, videoBuffer: .off)
+            XCTAssertTrue(sizing.passesThrough, "\(fps) fps")
+            XCTAssertEqual(sizing.capacity, 1, "\(fps) fps")
+            XCTAssertEqual(sizing.drainFPS, fps, "\(fps) fps")
+        }
+        XCTAssertFalse(JitterBufferSizing(drainFPS: 30).passesThrough)
+    }
+
     func testAnOverriddenCatchUpWindowHoldsAtEveryRate() {
         XCTAssertEqual(JitterBufferSizing(drainFPS: 30, catchUpWindowTicks: 3).catchUpWindowTicks, 3)
         XCTAssertEqual(JitterBufferSizing(drainFPS: 60, catchUpWindowTicks: 3).catchUpWindowTicks, 3)

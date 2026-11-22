@@ -253,6 +253,7 @@ extension AppDelegate {
             setup: setupCoordinator,
             openSetup: { [weak self] in self?.openSetupWindow() },
             onCameraFormatChange: { [weak self] in self?.streamCoordinator?.applyVirtualCameraFormat() },
+            onVideoBufferChange: { [weak self] in self?.streamCoordinator?.videoBuffer = $0 },
             navigation: settingsNavigation
         )
         // The sidebar `NavigationSplitView` needs a full-size content view. Without

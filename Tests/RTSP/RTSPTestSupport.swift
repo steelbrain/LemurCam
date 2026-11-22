@@ -179,7 +179,9 @@ internal final class LogLineRecorder: Sendable {
 /// call `start()`. The launch probes default to "no consumer". `rtspSources` are
 /// added before the coordinator exists, as the app loads saved cameras before
 /// creating it. No HAL listener is installed: `start()` hands the harness the
-/// device-list callback, which `simulateAudioDeviceListChange()` fires. Neither
+/// device-list callback, which `simulateAudioDeviceListChange()` fires. The Video
+/// Buffer setting is the one given, never the one saved in the host app's
+/// defaults. Neither
 /// the coordinator nor its model listens to the extension's or the driver's
 /// system-wide consumer notifications: the coordinator registers with
 /// `cameraConsumerNotifications` and `audioConsumerNotifications` instead, and the
@@ -199,12 +201,14 @@ internal final class CoordinatorHarness {
     private let audioDeviceListChange = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     /// `onvifEnvironment` stands in for the network when an ONVIF camera's stream
-    /// URI is resolved; the default is the real one.
+    /// URI is resolved; the default is the real one. `videoBuffer` is the Video
+    /// Buffer setting the coordinator starts with.
     init(
         rtspSources: [String] = [],
         cameraConsumerProbe: @escaping () -> Bool = { false },
         audioConsumerProbe: @escaping @Sendable () -> Bool = { false },
-        onvifEnvironment: ONVIFResolveEnvironment = .live
+        onvifEnvironment: ONVIFResolveEnvironment = .live,
+        videoBuffer: VideoBufferSetting = .defaultValue
     ) {
         savedActiveID = UserDefaults.standard.string(forKey: LemurCamConfig.activeSourceKey)
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -232,7 +236,8 @@ internal final class CoordinatorHarness {
                 consumerProbe: { _ in false }, consumerObserver: { _ in nil }, formatWriter: { _, _ in }
             ),
             pipeline: fakePipeline,
-            onvifEnvironment: onvifEnvironment
+            onvifEnvironment: onvifEnvironment,
+            videoBuffer: videoBuffer
         )
     }
 

@@ -61,7 +61,8 @@ internal final class StreamCoordinator {
         audioRing: AudioRingBuffer = AudioRingBuffer(),
         model streamModel: LemurCamModel = LemurCamModel(),
         pipeline: any StreamPipeline = RTSPStreamPipeline(),
-        onvifEnvironment: ONVIFResolveEnvironment = .live
+        onvifEnvironment: ONVIFResolveEnvironment = .live,
+        videoBuffer: VideoBufferSetting = VideoBufferStore().setting
     ) {
         let previews = PreviewStore()
 
@@ -79,6 +80,7 @@ internal final class StreamCoordinator {
         self.fallbackGenerator = FrameGenerator(model: streamModel)
         self.frameDispatcher = StreamFrameDispatcher(
             model: streamModel,
+            videoBuffer: videoBuffer,
             updatePreviewFPS: { [weak previews] fps in
                 previews?.estimatedFPS = fps
             },
@@ -112,6 +114,13 @@ internal final class StreamCoordinator {
     /// shared region can outlive an earlier app run that left it marked as producing.
     func recoverAudioDemandOnLaunch() async {
         await micDemand.refreshFromDevice()
+    }
+
+    /// How much video the jitter buffer holds: the Video Buffer setting, stored by
+    /// Settings. A change applies to the running stream at once, without a reconnect.
+    var videoBuffer: VideoBufferSetting {
+        get { frameDispatcher.videoBuffer }
+        set { frameDispatcher.setVideoBuffer(newValue) }
     }
 
     deinit {

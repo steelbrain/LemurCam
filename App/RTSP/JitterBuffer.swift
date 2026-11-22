@@ -7,11 +7,16 @@ import os
 /// stutters. This buffer accumulates frames during bursts and drains them at a
 /// steady rate, absorbing timing gaps. The rate is the camera's own frame rate once
 /// it is measured (`setDrainRate(_:)`), so every frame of a 60 fps camera goes out.
+/// How much it holds is the Video Buffer setting (`setVideoBuffer(_:)`). With the
+/// setting off it holds nothing: each frame goes on as soon as it is enqueued, and
+/// the camera's pauses and bursts reach the virtual camera as they come.
 internal final class JitterBuffer: Sendable {
     private struct State: Sendable {
         var buffer: [SendablePixelBuffer] = []
         var lastFrame: SendablePixelBuffer?
         var drainTimer: DispatchSourceTimer?
+        /// Frames are being sent on: the drain timer was armed once enough frames
+        /// were held, or, with no buffer, a frame came since the last reset.
         var isPrimed = false
         var sizing: JitterBufferSizing
         var depthTracker: JitterDepthTracker
@@ -25,15 +30,19 @@ internal final class JitterBuffer: Sendable {
     private let onDrain: @Sendable (CVPixelBuffer) -> Void
     private let catchUpWindowTicks: Int?
 
-    /// - Parameter catchUpWindowTicks: drain ticks per catch-up window (see
-    ///   `JitterDepthTracker`) at any drain rate; tests pass a short one. Nil sizes it
-    ///   from `Tuning.jitterBufferCatchUpWindow` at the drain rate.
+    /// - Parameters:
+    ///   - videoBuffer: how much video to hold until `setVideoBuffer(_:)` says otherwise.
+    ///   - catchUpWindowTicks: drain ticks per catch-up window (see
+    ///     `JitterDepthTracker`) at any drain rate; tests pass a short one. Nil sizes
+    ///     it from `Tuning.jitterBufferCatchUpWindow` at the drain rate.
     init(
+        videoBuffer: VideoBufferSetting = .defaultValue,
         catchUpWindowTicks: Int? = nil,
         onDrain: @escaping @Sendable (CVPixelBuffer) -> Void
     ) {
         let sizing = JitterBufferSizing(
-            drainFPS: Tuning.jitterBufferDefaultDrainFPS, catchUpWindowTicks: catchUpWindowTicks
+            drainFPS: Tuning.jitterBufferDefaultDrainFPS, videoBuffer: videoBuffer,
+            catchUpWindowTicks: catchUpWindowTicks
         )
         self.state = OSAllocatedUnfairLock(
             initialState: State(sizing: sizing, depthTracker: Self.depthTracker(for: sizing))
@@ -52,11 +61,15 @@ internal final class JitterBuffer: Sendable {
     /// Enqueue a decoded frame. Called from the VTDecompression callback thread.
     func enqueue(_ pixelBuffer: CVPixelBuffer) {
         let frame = SendablePixelBuffer(pixelBuffer)
-        state.withLock {
+        let passesThrough = state.withLock {
             if $0.buffer.count >= $0.sizing.capacity {
                 $0.buffer.removeFirst($0.buffer.count - $0.sizing.capacity + 1)
             }
             $0.buffer.append(frame)
+            if $0.sizing.passesThrough {
+                $0.isPrimed = true
+                return true
+            }
 
             // Prime and arm the drain timer while still holding the lock so the timer
             // mutation is serialized with `reset()`. `enqueue` runs on the decode thread
@@ -64,6 +77,13 @@ internal final class JitterBuffer: Sendable {
             // decision and the timer start must be atomic with respect to a reset that
             // could otherwise clear `isPrimed`/`drainTimer` in between.
             primeIfReady(&$0)
+            return false
+        }
+        // With no buffer the frame goes on now, from the drain queue like a drained
+        // one. Only the newest frame is held, so a queue that falls behind sends the
+        // newest frame, not an older one late.
+        if passesThrough {
+            drainQueue.async { [weak self] in self?.passOn() }
         }
     }
 
@@ -74,7 +94,9 @@ internal final class JitterBuffer: Sendable {
     /// interval; frames beyond the new capacity are dropped, oldest first.
     func setDrainRate(_ fps: Double) {
         state.withLock { state in
-            let sizing = JitterBufferSizing(drainFPS: fps, catchUpWindowTicks: catchUpWindowTicks)
+            let sizing = JitterBufferSizing(
+                drainFPS: fps, videoBuffer: state.sizing.videoBuffer, catchUpWindowTicks: catchUpWindowTicks
+            )
             guard sizing != state.sizing else { return }
             state.sizing = sizing
             state.depthTracker = Self.depthTracker(for: sizing)
@@ -90,14 +112,48 @@ internal final class JitterBuffer: Sendable {
         }
     }
 
+    /// Hold `setting` of video from now on: the Video Buffer setting. It applies to
+    /// the frames already held. Less keeps the newest frames the new setting holds,
+    /// dropping older ones, and goes on draining; more stops sending until the
+    /// buffer holds the new amount. Off drops the held frames, all older than the
+    /// next one, and sends each frame on as it comes from then on.
+    func setVideoBuffer(_ setting: VideoBufferSetting) {
+        state.withLock { state in
+            guard setting != state.sizing.videoBuffer else { return }
+            let sizing = JitterBufferSizing(
+                drainFPS: state.sizing.drainFPS, videoBuffer: setting, catchUpWindowTicks: catchUpWindowTicks
+            )
+            state.sizing = sizing
+            state.depthTracker = Self.depthTracker(for: sizing)
+            state.drainTimer?.cancel()
+            state.drainTimer = nil
+            if sizing.passesThrough {
+                // Still sending on if it was: `isPrimed` stays as it is.
+                state.buffer.removeAll()
+                return
+            }
+            if state.buffer.count > sizing.primingThreshold {
+                state.buffer.removeFirst(state.buffer.count - sizing.primingThreshold)
+            }
+            state.isPrimed = false
+            primeIfReady(&state)
+        }
+    }
+
     /// The rate the buffer drains at.
     var drainRate: Double {
         state.withLock { $0.sizing.drainFPS }
     }
 
-    /// Whether the drain timer runs, re-sending the last frame when none is queued.
+    /// How much video the buffer holds.
+    var videoBuffer: VideoBufferSetting {
+        state.withLock { $0.sizing.videoBuffer }
+    }
+
+    /// Whether frames are being sent on: the drain timer runs, re-sending the last
+    /// frame when none is queued, or, with no buffer, a frame came since the last reset.
     var isDraining: Bool {
-        state.withLock { $0.drainTimer != nil }
+        state.withLock { $0.drainTimer != nil || ($0.sizing.passesThrough && $0.isPrimed) }
     }
 
     /// Clear the buffer and stop draining. Called on stream stop/reconnect.
@@ -120,8 +176,10 @@ internal final class JitterBuffer: Sendable {
 
     /// Start draining once enough frames are held. Called under the lock, so the
     /// priming decision and the timer start are atomic with respect to `reset()`.
+    /// With no buffer there is no timer to start.
     private func primeIfReady(_ state: inout State) {
-        guard !state.isPrimed, state.buffer.count >= state.sizing.primingThreshold else { return }
+        guard !state.sizing.passesThrough, !state.isPrimed,
+              state.buffer.count >= state.sizing.primingThreshold else { return }
         state.isPrimed = true
         state.drainTimer?.cancel()
         state.drainTimer = makeDrainTimer(interval: state.sizing.drainInterval)
@@ -141,6 +199,9 @@ internal final class JitterBuffer: Sendable {
 
     private func drain() {
         let frame: SendablePixelBuffer? = state.withLock {
+            // A tick already under way when `setVideoBuffer` turned the buffer off and
+            // cancelled the timer: frames now go on through `passOn`.
+            guard !$0.sizing.passesThrough else { return nil }
             let next = $0.buffer.first
             if next != nil {
                 $0.buffer.removeFirst()
@@ -155,6 +216,22 @@ internal final class JitterBuffer: Sendable {
                 return next
             }
             return $0.lastFrame
+        }
+
+        if let frame {
+            frame.withValue(onDrain)
+        }
+    }
+
+    /// Send on the frame `enqueue` just held, with no buffer. Sends nothing when a
+    /// reset or a change of setting came first, or an earlier call already sent the
+    /// newest frame.
+    private func passOn() {
+        let frame: SendablePixelBuffer? = state.withLock {
+            guard $0.sizing.passesThrough, !$0.buffer.isEmpty else { return nil }
+            let next = $0.buffer.removeFirst()
+            $0.lastFrame = next
+            return next
         }
 
         if let frame {
